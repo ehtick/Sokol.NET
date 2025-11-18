@@ -1,0 +1,106 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Desktop (Sokol)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "prepare-${input:exampleName}",
+            "program": "${workspaceFolder}/examples/${input:exampleName}/bin/Debug/net10.0/${input:exampleName}.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}/examples/${input:exampleName}/bin/Debug/net10.0",
+            "console": "internalConsole",
+            "stopAtEntry": false,
+            "env": {
+                "DOTNET_ENVIRONMENT": "Development"
+            }
+        },
+        {
+            "name": "Browser (Sokol)",
+            "type": "coreclr",
+            "request": "launch",
+            "program": "dotnet",
+            "args": [
+                "run", 
+                "--project", 
+                "${workspaceFolder}/tools/dotnet-serve/src/dotnet-serve/dotnet-serve.csproj", 
+                "--", 
+                "-d", 
+                "${workspaceFolder}/examples/${input:exampleName}/bin/Debug/net8.0/browser-wasm/AppBundle", 
+                "-p", 
+                "${input:browserPort}",
+                "-h",
+                "Cross-Origin-Opener-Policy: same-origin",
+                "-h",
+                "Cross-Origin-Embedder-Policy: require-corp",
+                "-h",
+                "Cache-Control: no-store, no-cache, must-revalidate, max-age=0",
+                "-h",
+                "Pragma: no-cache"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "preLaunchTask": "prepare-${input:exampleName}-web"
+        }
+    ],
+    "inputs": [
+        {
+            "id": "exampleName",
+            "type": "pickString",
+            "description": "Select an example to launch",
+            "options": [
+                "cube",
+                "dyntex",
+                "cimgui",
+                "loadpng",
+                "instancing",
+                "plmpeg",
+                "drawcallperf",
+                "sgl",
+                "sgl_lines",
+                "debugtext",
+                "debugtext_context",
+                "imgui_usercallback",
+                "offscreen",
+                "sdf",
+                "shadows",
+                "shapes_transform",
+                "cgltf",
+                "basisu",
+                "clear",
+                "texview",
+                "fontstash",
+                "fontstash_layers",
+                "cubemaprt",
+                "miprender",
+                "cubemap_jpeg",
+                "spine_simple",
+                "spine_skinsets",
+                "spine_inspector",
+                "ozz_shdfeatures",
+                "vertextexture",
+                "mrt",
+                "assimp_simple",
+                "assimp_animation",
+                "assimp_scene",
+                "GltfViewer"
+            ],
+            "default": "cube"
+        },
+        {
+            "id": "browserPort",
+            "type": "pickString",
+            "description": "Select browser port (to run multiple examples simultaneously)",
+            "options": [
+                "8080",
+                "8081",
+                "8082",
+                "8083",
+                "8084",
+                "8085",
+                "8086"
+            ],
+            "default": "8080"
+        }
+    ]
+}

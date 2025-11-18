@@ -1,0 +1,363 @@
+name: Build Spine-C Libraries
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:  # Allow manual triggering
+
+# Required permissions for private repositories
+permissions:
+  contents: write  # Allow workflow to push commits back to repository
+
+jobs:
+  # Check if spine-c source files have changed
+  check-changes:
+    name: Check for spine-c source changes
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check_sources.outputs.changed }}
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 2
+    
+    - name: Check for source changes
+      id: check_sources
+      run: |
+        SHOULD_BUILD=false
+        
+        # Check if this is a manual workflow dispatch - ALWAYS BUILD
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "🔨 Manual workflow dispatch - FORCING BUILD"
+          SHOULD_BUILD=true
+        # Check if this is the first commit
+        elif ! git rev-parse HEAD~1 >/dev/null 2>&1; then
+          echo "First commit - building all libraries"
+          SHOULD_BUILD=true
+        else
+          # Get changed files
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+          
+          # Check if spine-c source files changed
+          while IFS= read -r file; do
+            if [[ "$file" == ext/spine-c/src/* ]] || \
+               [[ "$file" == ext/spine-c/include/* ]] || \
+               [[ "$file" == ext/spine-c/CMakeLists.txt ]] || \
+               [[ "$file" == ext/spine-c/scripts/* ]] || \
+               [[ "$file" == ext/spine-c/sokol_spine_extension.c ]] || \
+               [[ "$file" == .github/workflows/build-spine-c.yml ]]; then
+              echo "Found spine-c source change: $file"
+              SHOULD_BUILD=true
+              break
+            fi
+          done <<< "$CHANGED_FILES"
+        fi
+        
+        if [ "$SHOULD_BUILD" = true ]; then
+          echo "changed=true" >> $GITHUB_OUTPUT
+          echo "✓ Will build spine-c libraries"
+        else
+          echo "changed=false" >> $GITHUB_OUTPUT
+          echo "✓ No source changes affecting spine-c libraries - skipping build"
+        fi
+
+  build-windows:
+    name: Build Windows (x64)
+    runs-on: windows-latest
+    needs: check-changes
+    if: needs.check-changes.outputs.should_build == 'true'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Build Release
+      shell: pwsh
+      run: |
+        cd ext/spine-c/scripts
+        .\build-spine-c-windows.ps1 -BuildType Release
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-x64
+        path: ext/spine-c/libs/windows/**/*
+        retention-days: 30
+
+  build-macos:
+    name: Build macOS (${{ matrix.arch }})
+    runs-on: macos-latest
+    needs: check-changes
+    if: needs.check-changes.outputs.should_build == 'true'
+    strategy:
+      matrix:
+        arch: [arm64, x86_64]
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Build Release
+      run: |
+        cd ext/spine-c/scripts
+        chmod +x build-spine-c-macos.sh
+        ./build-spine-c-macos.sh ${{ matrix.arch }} Release
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: macos-${{ matrix.arch }}
+        path: ext/spine-c/libs/macos/${{ matrix.arch }}/**/*
+        retention-days: 30
+
+  build-linux:
+    name: Build Linux (X64)
+    runs-on: ubuntu-22.04
+    needs: check-changes
+    if: needs.check-changes.outputs.should_build == 'true'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake
+    
+    - name: Build Release
+      run: |
+        cd ext/spine-c/scripts
+        chmod +x build-spine-c-linux.sh
+        ./build-spine-c-linux.sh Release
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: linux-X64
+        path: ext/spine-c/libs/linux/**/*
+        retention-days: 30
+
+  build-web:
+    name: Build Web (Emscripten)
+    runs-on: ubuntu-latest
+    needs: check-changes
+    if: needs.check-changes.outputs.should_build == 'true'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Setup Emscripten
+      uses: mymindstorm/setup-emsdk@v14
+      with:
+        version: '3.1.34'
+    
+    - name: Build Release
+      run: |
+        cd ext/spine-c/scripts
+        chmod +x build-spine-c-web.sh
+        ./build-spine-c-web.sh Release
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: emscripten-x86
+        path: ext/spine-c/libs/emscripten/**/*
+        retention-days: 30
+
+  build-android:
+    name: Build Android (${{ matrix.abi }})
+    runs-on: ubuntu-latest
+    needs: check-changes
+    if: needs.check-changes.outputs.should_build == 'true'
+    strategy:
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86_64]
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+    
+    - name: Install Android NDK
+      run: |
+        echo "Installing Android NDK..."
+        sdkmanager --install "ndk;27.2.12479018"
+        echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> $GITHUB_ENV
+        echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> $GITHUB_ENV
+    
+    - name: Build Release
+      run: |
+        cd ext/spine-c/scripts
+        chmod +x build-spine-c-android.sh
+        ./build-spine-c-android.sh ${{ matrix.abi }} Release
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: android-${{ matrix.abi }}
+        path: ext/spine-c/libs/android/${{ matrix.abi }}/**/*
+        retention-days: 30
+
+  build-ios:
+    name: Build iOS (arm64)
+    runs-on: macos-latest
+    needs: check-changes
+    if: needs.check-changes.outputs.should_build == 'true'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Build Release
+      run: |
+        cd ext/spine-c/scripts
+        chmod +x build-spine-c-ios.sh
+        ./build-spine-c-ios.sh arm64 Release
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ios-arm64
+        path: ext/spine-c/libs/ios/**/*
+        retention-days: 30
+
+  # Combine all artifacts
+  combine-artifacts:
+    name: Combine All Spine-C Libraries
+    needs: [check-changes, build-windows, build-macos, build-linux, build-web, build-android, build-ios]
+    runs-on: ubuntu-latest
+    if: |
+      always() &&
+      needs.check-changes.outputs.should_build == 'true' &&
+      (needs.build-windows.result == 'success' || needs.build-windows.result == 'skipped') &&
+      (needs.build-macos.result == 'success' || needs.build-macos.result == 'skipped') &&
+      (needs.build-linux.result == 'success' || needs.build-linux.result == 'skipped') &&
+      (needs.build-web.result == 'success' || needs.build-web.result == 'skipped') &&
+      (needs.build-android.result == 'success' || needs.build-android.result == 'skipped') &&
+      (needs.build-ios.result == 'success' || needs.build-ios.result == 'skipped')
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: libs
+    
+    - name: Reorganize artifacts
+      run: |
+        # Create final structure in main libs/ directory
+        mkdir -p combined-libs/windows/x64/release
+        mkdir -p combined-libs/macos/arm64/release
+        mkdir -p combined-libs/macos/x86_64/release
+        mkdir -p combined-libs/linux/X64/release
+        mkdir -p combined-libs/emscripten/x86/release
+        mkdir -p combined-libs/android/arm64-v8a/release
+        mkdir -p combined-libs/android/armeabi-v7a/release
+        mkdir -p combined-libs/android/x86_64/release
+        mkdir -p combined-libs/ios/release
+        
+        # Copy Windows artifacts
+        if [ -d "libs/windows-x64" ]; then
+          cp -r libs/windows-x64/* combined-libs/windows/ || true
+        fi
+        
+        # Copy macOS artifacts
+        if [ -d "libs/macos-arm64" ]; then
+          cp -r libs/macos-arm64/* combined-libs/macos/arm64/ || true
+        fi
+        if [ -d "libs/macos-x86_64" ]; then
+          cp -r libs/macos-x86_64/* combined-libs/macos/x86_64/ || true
+        fi
+        
+        # Copy Linux artifacts
+        if [ -d "libs/linux-X64" ]; then
+          cp -r libs/linux-X64/* combined-libs/linux/ || true
+        fi
+        
+        # Copy Web artifacts
+        if [ -d "libs/emscripten-x86" ]; then
+          cp -r libs/emscripten-x86/* combined-libs/emscripten/ || true
+        fi
+        
+        # Copy Android artifacts
+        if [ -d "libs/android-arm64-v8a" ]; then
+          cp -r libs/android-arm64-v8a/* combined-libs/android/arm64-v8a/ || true
+        fi
+        if [ -d "libs/android-armeabi-v7a" ]; then
+          cp -r libs/android-armeabi-v7a/* combined-libs/android/armeabi-v7a/ || true
+        fi
+        if [ -d "libs/android-x86_64" ]; then
+          cp -r libs/android-x86_64/* combined-libs/android/x86_64/ || true
+        fi
+        
+        # Copy iOS artifacts
+        if [ -d "libs/ios-arm64" ]; then
+          cp -r libs/ios-arm64/* combined-libs/ios/ || true
+        fi
+        
+        # Show final structure
+        echo "Final artifact structure:"
+        find combined-libs -type f
+    
+    - name: Upload combined artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: spine-c-libraries-all-platforms
+        path: combined-libs/**/*
+        retention-days: 90
+    
+    - name: Commit libraries to repository
+      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      run: |
+        # Checkout the repository
+        git clone https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git repo
+        cd repo
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # Copy new spine-c libraries to main libs/ directory
+        cp -r ../combined-libs/* libs/
+        
+        # Check if there are any changes
+        if git diff --quiet libs/; then
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "No spine-c library changes to commit"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          exit 0
+        fi
+        
+        # Stage and commit changes
+        git add libs/
+        
+        # Create commit message and commit
+        git commit -m "Auto-update built spine-c libraries [skip ci]" \
+                   -m "Generated from commit: ${{ github.sha }}" \
+                   -m "Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        
+        # Pull with rebase in case there were other commits
+        git pull --rebase origin main
+        
+        # Push changes
+        git push origin main
+        
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✓ Successfully committed spine-c libraries"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

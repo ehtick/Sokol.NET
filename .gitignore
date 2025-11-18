@@ -1,0 +1,8 @@
+
+.DS_Store
+bin/
+!tools/bin/
+!ext/ozz-animation/bin/
+ext/ozz-animation/bin/*
+!ext/ozz-animation/bin/emscripten/
+obj/

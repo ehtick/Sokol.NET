@@ -1,0 +1,533 @@
+name: Build Sokol Tools
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:  # Allow manual triggering
+
+# Required permissions for private repositories
+permissions:
+  contents: write  # Allow workflow to push commits back to repository
+
+jobs:
+  # Check if sokol-tools source changed or binaries are missing
+  check-changes:
+    name: Check for sokol-tools changes or missing binaries
+    runs-on: ubuntu-latest
+    outputs:
+      tools_changed: ${{ steps.check_tools.outputs.changed }}
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 2
+        submodules: recursive
+    
+    - name: Check for sokol-tools changes or missing binaries
+      id: check_tools
+      run: |
+        SHOULD_BUILD=false
+        
+        # Check if any binaries are missing
+        MISSING_BINARIES=""
+        
+        if [ ! -f "tools/bin/windows/x64/sokol-shdc.exe" ]; then
+          MISSING_BINARIES="$MISSING_BINARIES windows/x64"
+          SHOULD_BUILD=true
+        fi
+        
+        if [ ! -f "tools/bin/osx/arm64/sokol-shdc" ]; then
+          MISSING_BINARIES="$MISSING_BINARIES osx/arm64"
+          SHOULD_BUILD=true
+        fi
+        
+        if [ ! -f "tools/bin/osx/X64/sokol-shdc" ]; then
+          MISSING_BINARIES="$MISSING_BINARIES osx/X64"
+          SHOULD_BUILD=true
+        fi
+        
+        if [ ! -f "tools/bin/linux/X64/sokol-shdc" ]; then
+          MISSING_BINARIES="$MISSING_BINARIES linux/X64"
+          SHOULD_BUILD=true
+        fi
+        
+        if [ ! -f "tools/bin/linux/aarch64/sokol-shdc" ]; then
+          MISSING_BINARIES="$MISSING_BINARIES linux/aarch64"
+          SHOULD_BUILD=true
+        fi
+        
+        if [ -n "$MISSING_BINARIES" ]; then
+          echo "Missing binaries for:$MISSING_BINARIES"
+        fi
+        
+        # Check if sokol-tools source changed or submodule was updated
+        if git rev-parse HEAD~1 >/dev/null 2>&1; then
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+          
+          echo "Changed files in this commit:"
+          echo "$CHANGED_FILES"
+          
+          # Check if tools/sokol-tools appears as a changed file (submodule update)
+          if echo "$CHANGED_FILES" | grep -q "^tools/sokol-tools$"; then
+            echo "sokol-tools submodule updated"
+            SHOULD_BUILD=true
+          fi
+          
+          # Also check if any files within sokol-tools changed (for direct edits)
+          if echo "$CHANGED_FILES" | grep -q "^tools/sokol-tools/"; then
+            echo "sokol-tools source code changed"
+            SHOULD_BUILD=true
+          fi
+        else
+          # First commit, build everything
+          echo "First commit - building all tools"
+          SHOULD_BUILD=true
+        fi
+        
+        if [ "$SHOULD_BUILD" = true ]; then
+          echo "changed=true" >> $GITHUB_OUTPUT
+          echo "✓ Will build sokol-tools binaries"
+        else
+          echo "changed=false" >> $GITHUB_OUTPUT
+          echo "✓ All binaries exist and source unchanged - skipping build"
+        fi
+
+  build-windows-x64:
+    name: Build sokol-shdc (Windows x64)
+    runs-on: windows-latest
+    needs: check-changes
+    if: needs.check-changes.outputs.tools_changed == 'true'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Setup CMake
+      uses: lukka/get-cmake@latest
+    
+    - name: Build sokol-shdc
+      shell: cmd
+      run: |
+        cd tools\sokol-tools
+        python fips build win64-vstudio-release
+    
+    - name: Copy binary to tools/bin
+      shell: pwsh
+      run: |
+        $sourceDir = "tools\fips-deploy\sokol-tools\win64-vstudio-release"
+        $destDir = "tools\bin\windows\x64"
+        
+        New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+        
+        if (Test-Path "$sourceDir\sokol-shdc.exe") {
+          Copy-Item "$sourceDir\sokol-shdc.exe" "$destDir\sokol-shdc.exe"
+          Write-Output "✓ Copied sokol-shdc.exe to $destDir"
+        } else {
+          Write-Error "sokol-shdc.exe not found in $sourceDir"
+          exit 1
+        }
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: sokol-shdc-windows-x64
+        path: tools/bin/windows/x64/sokol-shdc.exe
+        retention-days: 30
+
+  build-macos-arm64:
+    name: Build sokol-shdc (macOS arm64)
+    runs-on: macos-latest
+    needs: check-changes
+    if: needs.check-changes.outputs.tools_changed == 'true'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Setup CMake
+      uses: lukka/get-cmake@latest
+    
+    - name: Build sokol-shdc
+      run: |
+        cd tools/sokol-tools
+        python3 fips build osx-xcode-release
+    
+    - name: Copy binary to tools/bin
+      run: |
+        SOURCE_DIR="tools/fips-deploy/sokol-tools/osx-xcode-release"
+        DEST_DIR="tools/bin/osx/arm64"
+        
+        mkdir -p "$DEST_DIR"
+        
+        if [ -f "$SOURCE_DIR/sokol-shdc" ]; then
+          cp "$SOURCE_DIR/sokol-shdc" "$DEST_DIR/sokol-shdc"
+          chmod +x "$DEST_DIR/sokol-shdc"
+          echo "✓ Copied sokol-shdc to $DEST_DIR"
+        else
+          echo "Error: sokol-shdc not found in $SOURCE_DIR"
+          exit 1
+        fi
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: sokol-shdc-macos-arm64
+        path: tools/bin/osx/arm64/sokol-shdc
+        retention-days: 30
+
+  build-macos-x64:
+    name: Build sokol-shdc (macOS X64)
+    runs-on: macos-13  # Use Intel runner
+    needs: check-changes
+    if: needs.check-changes.outputs.tools_changed == 'true'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Setup CMake
+      uses: lukka/get-cmake@latest
+    
+    - name: Build sokol-shdc
+      run: |
+        cd tools/sokol-tools
+        python3 fips build osx-xcode-release
+    
+    - name: Copy binary to tools/bin
+      run: |
+        SOURCE_DIR="tools/fips-deploy/sokol-tools/osx-xcode-release"
+        DEST_DIR="tools/bin/osx/X64"
+        
+        mkdir -p "$DEST_DIR"
+        
+        if [ -f "$SOURCE_DIR/sokol-shdc" ]; then
+          cp "$SOURCE_DIR/sokol-shdc" "$DEST_DIR/sokol-shdc"
+          chmod +x "$DEST_DIR/sokol-shdc"
+          echo "✓ Copied sokol-shdc to $DEST_DIR"
+        else
+          echo "Error: sokol-shdc not found in $SOURCE_DIR"
+          exit 1
+        fi
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: sokol-shdc-macos-x64
+        path: tools/bin/osx/X64/sokol-shdc
+        retention-days: 30
+
+  build-linux-x64:
+    name: Build sokol-shdc (Linux X64)
+    runs-on: ubuntu-latest
+    needs: check-changes
+    if: needs.check-changes.outputs.tools_changed == 'true'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Setup CMake
+      uses: lukka/get-cmake@latest
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential git python3 cmake ninja-build
+    
+    - name: Build sokol-shdc
+      run: |
+        cd tools/sokol-tools
+        python3 fips build linux-ninja-release
+    
+    - name: Strip binary
+      run: |
+        strip tools/fips-deploy/sokol-tools/linux-ninja-release/sokol-shdc
+    
+    - name: Copy binary to tools/bin
+      run: |
+        SOURCE_DIR="tools/fips-deploy/sokol-tools/linux-ninja-release"
+        DEST_DIR="tools/bin/linux/X64"
+        
+        mkdir -p "$DEST_DIR"
+        
+        if [ -f "$SOURCE_DIR/sokol-shdc" ]; then
+          cp "$SOURCE_DIR/sokol-shdc" "$DEST_DIR/sokol-shdc"
+          chmod +x "$DEST_DIR/sokol-shdc"
+          echo "✓ Copied sokol-shdc to $DEST_DIR"
+        else
+          echo "Error: sokol-shdc not found in $SOURCE_DIR"
+          exit 1
+        fi
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: sokol-shdc-linux-x64
+        path: tools/bin/linux/X64/sokol-shdc
+        retention-days: 30
+
+  build-linux-arm64:
+    name: Build sokol-shdc (Linux ARM64)
+    runs-on: ubuntu-latest  # Cross-compile on x86_64 - much faster than QEMU!
+    needs: check-changes
+    if: needs.check-changes.outputs.tools_changed == 'true'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Setup CMake
+      uses: lukka/get-cmake@latest
+    
+    - name: Install ARM64 cross-compilation tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          git \
+          python3 \
+          cmake \
+          ninja-build \
+          gcc-aarch64-linux-gnu \
+          g++-aarch64-linux-gnu
+    
+    - name: Create CMake toolchain file for ARM64
+      run: |
+        cat > $GITHUB_WORKSPACE/arm64-toolchain.cmake << 'EOF'
+        set(CMAKE_SYSTEM_NAME Linux)
+        set(CMAKE_SYSTEM_PROCESSOR aarch64)
+        
+        set(CMAKE_C_COMPILER aarch64-linux-gnu-gcc)
+        set(CMAKE_CXX_COMPILER aarch64-linux-gnu-g++)
+        
+        set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+        set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+        set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+        set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+        EOF
+    
+    - name: Build sokol-shdc for ARM64 (cross-compile directly with CMake)
+      run: |
+        cd tools/sokol-tools
+        
+        # Build directly with CMake, bypassing fips
+        mkdir -p fips-build/linux-arm64-ninja-release
+        cd fips-build/linux-arm64-ninja-release
+        
+        # Initialize fips first to get dependencies
+        cd ../..
+        python3 fips fetch
+        
+        # Now build with CMake using our toolchain
+        cd fips-build/linux-arm64-ninja-release
+        cmake ../.. \
+          -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/arm64-toolchain.cmake \
+          -DFIPS_CONFIG=linux-arm64-ninja-release \
+          -DFIPS_PLATFORM=linux
+        
+        # Build - ninja will automatically place it in fips-deploy directory
+        ninja sokol-shdc
+    
+    - name: Verify and strip binary
+      run: |
+        # Check what was actually built
+        echo "Checking build output directory:"
+        ls -la tools/fips-deploy/sokol-tools/linux-arm64-ninja-release/ || echo "Directory not found"
+        
+        # Check file type
+        if [ -f "tools/fips-deploy/sokol-tools/linux-arm64-ninja-release/sokol-shdc" ]; then
+          echo "File exists, checking type:"
+          file tools/fips-deploy/sokol-tools/linux-arm64-ninja-release/sokol-shdc
+          
+          # Only strip if it's actually an ARM64 binary
+          if file tools/fips-deploy/sokol-tools/linux-arm64-ninja-release/sokol-shdc | grep -q "aarch64"; then
+            echo "Stripping ARM64 binary..."
+            aarch64-linux-gnu-strip tools/fips-deploy/sokol-tools/linux-arm64-ninja-release/sokol-shdc
+          else
+            echo "WARNING: Binary is not ARM64, skipping strip"
+          fi
+        else
+          echo "ERROR: sokol-shdc not found!"
+          exit 1
+        fi
+    
+    - name: Copy binary to tools/bin
+      run: |
+        SOURCE_DIR="tools/fips-deploy/sokol-tools/linux-arm64-ninja-release"
+        DEST_DIR="tools/bin/linux/aarch64"
+        
+        mkdir -p "$DEST_DIR"
+        
+        if [ -f "$SOURCE_DIR/sokol-shdc" ]; then
+          cp "$SOURCE_DIR/sokol-shdc" "$DEST_DIR/sokol-shdc"
+          chmod +x "$DEST_DIR/sokol-shdc"
+          echo "✓ Copied sokol-shdc to $DEST_DIR"
+        else
+          echo "Error: sokol-shdc not found in $SOURCE_DIR"
+          exit 1
+        fi
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: sokol-shdc-linux-arm64
+        path: tools/bin/linux/aarch64/sokol-shdc
+        retention-days: 30
+
+  # Combine all binaries and commit to repository
+  combine-tools:
+    name: Combine All Tools
+    needs: [check-changes, build-windows-x64, build-macos-arm64, build-macos-x64, build-linux-x64, build-linux-arm64]
+    runs-on: ubuntu-latest
+    if: |
+      always() && 
+      needs.check-changes.outputs.tools_changed == 'true' &&
+      (needs.build-windows-x64.result == 'success' || needs.build-windows-x64.result == 'skipped') &&
+      (needs.build-macos-arm64.result == 'success' || needs.build-macos-arm64.result == 'skipped') &&
+      (needs.build-macos-x64.result == 'success' || needs.build-macos-x64.result == 'skipped') &&
+      (needs.build-linux-x64.result == 'success' || needs.build-linux-x64.result == 'skipped') &&
+      (needs.build-linux-arm64.result == 'success' || needs.build-linux-arm64.result == 'skipped')
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+    
+    - name: Organize binaries
+      run: |
+        # Create directory structure
+        mkdir -p tools/bin/windows/x64
+        mkdir -p tools/bin/osx/arm64
+        mkdir -p tools/bin/osx/X64
+        mkdir -p tools/bin/linux/X64
+        mkdir -p tools/bin/linux/aarch64
+        
+        # Copy downloaded artifacts if they exist
+        if [ -f "artifacts/sokol-shdc-windows-x64/sokol-shdc.exe" ]; then
+          cp artifacts/sokol-shdc-windows-x64/sokol-shdc.exe tools/bin/windows/x64/
+          echo "✓ Windows x64 binary added"
+        fi
+        
+        if [ -f "artifacts/sokol-shdc-macos-arm64/sokol-shdc" ]; then
+          cp artifacts/sokol-shdc-macos-arm64/sokol-shdc tools/bin/osx/arm64/
+          chmod +x tools/bin/osx/arm64/sokol-shdc
+          echo "✓ macOS ARM64 binary added"
+        fi
+        
+        if [ -f "artifacts/sokol-shdc-macos-x64/sokol-shdc" ]; then
+          cp artifacts/sokol-shdc-macos-x64/sokol-shdc tools/bin/osx/X64/
+          chmod +x tools/bin/osx/X64/sokol-shdc
+          echo "✓ macOS X64 binary added"
+        fi
+        
+        if [ -f "artifacts/sokol-shdc-linux-x64/sokol-shdc" ]; then
+          cp artifacts/sokol-shdc-linux-x64/sokol-shdc tools/bin/linux/X64/
+          chmod +x tools/bin/linux/X64/sokol-shdc
+          echo "✓ Linux X64 binary added"
+        fi
+        
+        if [ -f "artifacts/sokol-shdc-linux-arm64/sokol-shdc" ]; then
+          cp artifacts/sokol-shdc-linux-arm64/sokol-shdc tools/bin/linux/aarch64/
+          chmod +x tools/bin/linux/aarch64/sokol-shdc
+          echo "✓ Linux ARM64 binary added"
+        fi
+        
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "📦 Binary organization complete"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        
+        # Show what was copied
+        find tools/bin -type f -exec ls -lh {} \;
+    
+    - name: Upload combined artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: sokol-tools-all-platforms
+        path: tools/bin/**/*
+        retention-days: 90
+    
+    - name: Commit binaries to repository
+      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "📝 Checking git status before staging..."
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        git status tools/bin/ || echo "tools/bin/ doesn't exist yet"
+        
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "📦 Staging binary changes..."
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        git add -v tools/bin/
+        
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "🔍 Checking staged changes..."
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        git diff --cached --stat
+        
+        # Check if there are any changes to commit
+        if git diff --cached --quiet; then
+          echo ""
+          echo "⚠️  No changes to sokol-tools binaries detected"
+          exit 0
+        fi
+        
+        echo ""
+        echo "✓ Changes detected, preparing commit..."
+        echo ""
+        
+        # Create commit message with details
+        echo "Auto-update sokol-tools binaries [skip ci]" > commit_msg.txt
+        echo "" >> commit_msg.txt
+        echo "Built from commit: ${{ github.sha }}" >> commit_msg.txt
+        echo "Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> commit_msg.txt
+        echo "" >> commit_msg.txt
+        echo "Updated binaries:" >> commit_msg.txt
+        
+        # List what was updated
+        git diff --cached --name-only | while read file; do
+          echo "  - $file" >> commit_msg.txt
+        done
+        
+        git commit -F commit_msg.txt
+        
+        # Pull any changes that happened during workflow execution
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "🔄 Pulling latest changes from remote..."
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        git pull --rebase origin main
+        
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "⬆️  Pushing changes..."
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        git push origin main
+        
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✅ Binaries committed and pushed successfully"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

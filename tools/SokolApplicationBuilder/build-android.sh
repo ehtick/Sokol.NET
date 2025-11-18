@@ -1,0 +1,1 @@
+dotnet run -- --task build --subtask aab --type release --architecture android --orientation landscape --path /Users/elialoni/Development/Graphics/Sokol.NET/examples/drawcallperf --install --interactive

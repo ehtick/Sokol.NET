@@ -1,0 +1,84 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.example.native_activity'
+    compileSdk 34
+    // NDK version is dynamically set during build via -PndkVersionOverride
+    // Default is 29.0.14033849 if not specified
+    ndkVersion project.hasProperty('ndkVersionOverride') ? 
+        project.property('ndkVersionOverride') : "29.0.14033849"
+
+    defaultConfig {
+        applicationId = 'com.example.native_activity'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+
+       ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+        }
+        externalNativeBuild {
+            cmake {
+                def cmakeArgs = project.hasProperty('cmakeArgs') ? 
+                    project.property('cmakeArgs') : ""
+                if (cmakeArgs) {
+                    // Split cmakeArgs string into individual arguments
+                    def argList = cmakeArgs.split(/\s+/) as List
+                    arguments '-DANDROID_STL=c++_static', '-DANDROID_PLATFORM=android-26', *argList
+                } else {
+                    arguments '-DANDROID_STL=c++_static', '-DANDROID_PLATFORM=android-26'
+                }
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // Don't include debug symbols in release builds to keep APK size small
+            ndk {
+                debugSymbolLevel 'none'
+            }
+            externalNativeBuild {
+                cmake {
+                    arguments '-DCMAKE_BUILD_TYPE=Release'
+                }
+            }
+            packaging {
+                resources {
+                    excludes += '/META-INF/{AL2.0,LGPL2.1}'
+                }
+                // Let Gradle strip native libraries for smaller APK size
+                // doNotStrip '**/*.so'
+            }
+        }
+        debug {
+            ndk {
+                debugSymbolLevel 'full'
+            }
+            externalNativeBuild {
+                cmake {
+                    arguments '-DCMAKE_BUILD_TYPE=Debug'
+                }
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+        }
+    }
+}
+
+afterEvaluate {
+    tasks.whenTaskAdded { task ->
+        if (task.name == 'stripReleaseDebugSymbols') {
+            task.enabled = false
+        }
+    }
+}

@@ -1,0 +1,1 @@
+dotnet run --task build --architecture ios --orientation landscape --path /Users/elialoni/Development/Graphics/Sokol.NET/examples/drawcallperf --development-team U627U428U4 --compile --install --run --ios-device "Eli's iPad 2"
