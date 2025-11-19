@@ -98,6 +98,28 @@ namespace SokolApplicationBuilder
         [Option("interactive", Required = false, HelpText = "Enable interactive device selection when multiple devices are connected")]
         public bool Interactive { get; set; } = false;
 
+        // Image processing options
+        [Option("source", Required = false, HelpText = "Source image path for image processing task")]
+        public string SourceImage { get; set; } = "";
+
+        [Option("dest", Required = false, HelpText = "Destination image path for image processing task")]
+        public string DestImage { get; set; } = "";
+
+        [Option("width", Required = false, HelpText = "Target width for image processing (default: 800)")]
+        public int Width { get; set; } = 0;
+
+        [Option("height", Required = false, HelpText = "Target height for image processing (default: 600)")]
+        public int Height { get; set; } = 0;
+
+        [Option("mode", Required = false, HelpText = "Image processing mode: 'crop' (fill, may crop), 'fit' (contain entire image, may add padding), or 'cut' (extract region without resize). Default: 'crop'")]
+        public string ImageMode { get; set; } = "crop";
+
+        [Option("cutx", Required = false, HelpText = "X coordinate (starting point) for cut/crop/fit modes. Default: 0")]
+        public int CutX { get; set; } = 0;
+
+        [Option("cuty", Required = false, HelpText = "Y coordinate (starting point) for cut/crop/fit modes. Default: 0")]
+        public int CutY { get; set; } = 0;
+
         // Computed properties
         public string Path => ProjectPath;
         public string TemplatesPath => System.IO.Path.Combine(System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "", "templates");

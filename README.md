@@ -6,6 +6,12 @@ Sokol.NET is a comprehensive C# binding and application framework built on top o
 
 > **⚠️ Development Status**: This project is under ongoing development, primarily driven by the needs of my internal projects. Future development beyond my personal technical requirements will depend on public interest and community contributions.
 
+## 🌐 Live Examples
+
+**[✨ Try all 36 examples in your browser →](https://elix22.github.io/Sokol.NET/)**
+
+Experience Sokol.NET's capabilities instantly with interactive WebAssembly examples. No installation required!
+
 ## 🎯 Features
 
 - **Cross-Platform**: Deploy to Windows, macOS, Linux, Android, iOS, and WebAssembly from a single codebase
@@ -112,9 +118,18 @@ The `examples/` folder contains 36 sample applications demonstrating various fea
 - **[drawcallperf](examples/drawcallperf)** - Draw call performance testing
 - **[plmpeg](examples/plmpeg)** - MPEG1 video playback
 
+## 📜 Spine License Notice
+
+Some examples in this repository (`spine_simple`, `spine_skinsets`, `spine_inspector`) use the [Spine](http://esotericsoftware.com) runtime library. 
+
+**Important for Users**: While you are free to evaluate and build these examples, if you wish to use Spine in your own projects, you will need to purchase a [Spine license](https://esotericsoftware.com/spine-purchase). The Spine Runtimes are covered by the [Spine Runtimes License Agreement](http://esotericsoftware.com/spine-runtimes-license).
+
+This repository's maintainer has a valid Spine license for development and distribution of these examples.
+
 ## 🛠️ Prerequisites
 
 - **.NET 10.0 SDK** or later
+- **CMake 3.29.0** or later (required for building native libraries)
 - **Visual Studio Code** (primary development IDE)
   - **Required** for Android and iOS development (build/install/debug)
   - Supports all platforms: Desktop, Web, Android, and iOS

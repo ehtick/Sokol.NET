@@ -2,6 +2,22 @@
 
 This folder contains guides and reference documentation for building, running, and debugging Sokol.NET projects.
 
+## 🌐 Live Examples Showcase
+
+This directory also hosts the **interactive WebAssembly examples showcase** for GitHub Pages:
+
+- **[Live Showcase](https://elix22.github.io/Sokol.NET/)** - Try all 36 examples in your browser
+- **[GitHub Pages Setup Guide](GITHUB_PAGES_SETUP.md)** - Deploy the showcase
+- **[Build Script](../scripts/build-all-web-examples.sh)** - Build all WebAssembly examples
+
+### Showcase Files
+- `index.html` - Main showcase page
+- `examples-data.json` - Example metadata
+- `css/showcase.css` - Styles
+- `js/showcase.js` - Interactive functionality
+- `examples/` - WebAssembly builds (generated)
+- `thumbnails/` - Preview images
+
 ## Getting Started
 
 - **[Visual Studio Code Run Guide](VSCODE_RUN_GUIDE.md)** ⭐ - Complete step-by-step guide with screenshots showing how to run applications on Desktop, Web, Android, and iOS using VS Code

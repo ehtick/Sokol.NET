@@ -288,7 +288,7 @@ public static unsafe partial class GltfViewer
             width = 0,
             height = 0,
             sample_count = 4,
-            window_title = "SharpGLTF  (sokol-app)",
+            window_title = "GltfViewer  (sokol-app)",
             icon = { sokol_default = true },
             logger = {
                 func = &slog_func,
