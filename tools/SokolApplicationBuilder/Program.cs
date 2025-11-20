@@ -51,7 +51,7 @@ namespace SokolApplicationBuilder
             if (opts.Task != string.Empty)
             {
                 // Validate required options for specific tasks
-                if (opts.Task != "register" && opts.Task != "imageprocess" && string.IsNullOrEmpty(opts.ProjectPath))
+                if (opts.Task != "register" && opts.Task != "imageprocess" && opts.Task != "create" && string.IsNullOrEmpty(opts.ProjectPath))
                 {
                     Console.WriteLine("ERROR: --path is required for task '" + opts.Task + "'");
                     return 1;
@@ -171,6 +171,14 @@ namespace SokolApplicationBuilder
                     case "imageprocess":
                         {
                             var task = new ImageProcessTask(opts);
+                            task.BuildEngine = buildEngine;
+                            taskSuccess = task.Execute();
+                        }
+                        break;
+
+                    case "create":
+                        {
+                            var task = new CreateExampleTask(opts);
                             task.BuildEngine = buildEngine;
                             taskSuccess = task.Execute();
                         }

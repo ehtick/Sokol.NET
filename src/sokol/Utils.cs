@@ -26,16 +26,14 @@ namespace Sokol
         [DllImport(sokol_lib, CallingConvention = CallingConvention.Cdecl)]
         public static extern byte* fileutil_get_path(string filename, byte* buf, int buf_size);
 
-        static Random _random = new Random();
-
         public static int random()
         {
-            return _random.Next();
+            return Random.Shared.Next();
         }
 
         public static int rand()
         {
-            return _random.Next();
+            return Random.Shared.Next();
         }
 
         public static sg_range SG_RANGE<T>(Span<T> span) where T : unmanaged

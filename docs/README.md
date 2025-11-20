@@ -21,6 +21,8 @@ This directory also hosts the **interactive WebAssembly examples showcase** for 
 ## Getting Started
 
 - **[Visual Studio Code Run Guide](VSCODE_RUN_GUIDE.md)** ⭐ - Complete step-by-step guide with screenshots showing how to run applications on Desktop, Web, Android, and iOS using VS Code
+- **[Shader Programming Guide](SHADER_GUIDE.md)** 🎨 - Complete guide to writing cross-platform shaders with sokol-shdc
+- **[Creating New Examples](CREATE_EXAMPLE.md)** 🆕 - How to create new example projects from template
 
 ## Key Guides
 

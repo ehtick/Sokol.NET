@@ -224,6 +224,7 @@ Comprehensive documentation is available in the **[`docs/`](docs/)** folder:
 ### Getting Started
 - **[Visual Studio Code Run Guide](docs/VSCODE_RUN_GUIDE.md)** ⭐ - Step-by-step guide with screenshots for running apps on all platforms
 - **[Shader Programming Guide](docs/SHADER_GUIDE.md)** 🎨 - Complete guide to writing cross-platform shaders with sokol-shdc
+- **[Creating New Examples](docs/CREATE_EXAMPLE.md)** 🆕 - How to create new example projects from template
 
 ### Platform-Specific Guides
 - **Android**
