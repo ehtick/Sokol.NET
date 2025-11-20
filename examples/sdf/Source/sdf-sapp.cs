@@ -54,7 +54,9 @@ public static unsafe class SdfApp
         sg_setup(new sg_desc()
         {
             environment = sglue_environment(),
-            logger = new sg_logger()
+            logger =    {
+                func = &SLog.slog_func,
+            }
         });
 
         // a vertex buffer to render a 'fullscreen triangle'

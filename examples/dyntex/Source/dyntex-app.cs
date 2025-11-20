@@ -54,7 +54,9 @@ public static unsafe class DynTextApp
         sg_setup(new sg_desc()
         {
             environment = sglue_environment(),
-            logger = new sg_logger()
+            logger =    {
+                func = &SLog.slog_func,
+            }
         });
 
         // a 128x128 image with streaming update strategy

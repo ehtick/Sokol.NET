@@ -56,7 +56,9 @@ public static unsafe class LoadPngSApp
         sg_setup(new sg_desc()
         {
             environment = sglue_environment(),
-            logger = new sg_logger()
+            logger =    {
+                func = &SLog.slog_func,
+            }
         });
 
         // setup sokol-fetch with the minimal "resource limits"

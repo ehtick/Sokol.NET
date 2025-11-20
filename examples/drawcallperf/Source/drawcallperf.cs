@@ -50,13 +50,6 @@ public static unsafe class DrawcallPerf
 
     static _state state = new _state();
 
-    static sg_logger logger = new sg_logger();
-
-    [UnmanagedCallersOnly]
-    static void slog_func_wrapper(byte* tag, uint log_level, uint log_item, byte* message, uint line_nr, byte* filename, void* user_data)
-    {
-        logger.func(tag, log_level, log_item, message, line_nr, filename, user_data);
-    }
 
 
     [StructLayout(LayoutKind.Sequential)]
@@ -96,12 +89,14 @@ public static unsafe class DrawcallPerf
         {
             environment = sglue_environment(),
             uniform_buffer_size = MAX_INSTANCES * 256 + 1024,
-            logger = { func = &slog_func_wrapper, }
+               logger = {
+                func = &SLog.slog_func,
+            }
         });
 
         simgui_setup(new simgui_desc_t
         {
-            logger = { func = &slog_func_wrapper }
+            logger = { func = &SLog.slog_func }
         });
 
         state.sgimgui = sgimgui_init();

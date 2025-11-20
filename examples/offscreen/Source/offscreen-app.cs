@@ -76,7 +76,9 @@ public static unsafe class OffscreenApp
         sg_setup(new sg_desc()
         {
             environment = sglue_environment(),
-            logger = new sg_logger()
+            logger =    {
+                func = &SLog.slog_func,
+            }
         });
         __dbgui_setup(sapp_sample_count());
 

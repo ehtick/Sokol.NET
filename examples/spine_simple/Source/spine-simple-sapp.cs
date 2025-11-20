@@ -61,7 +61,9 @@ public static unsafe class SpineSimpleApp
         sg_setup(new sg_desc()
         {
             environment = sglue_environment(),
-            logger = new sg_logger()
+            logger =    {
+                func = &SLog.slog_func,
+            }
         });
 
         // Setup sokol_spine.h, if desired, memory usage can be tuned by

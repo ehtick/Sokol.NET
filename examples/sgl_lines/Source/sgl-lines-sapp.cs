@@ -41,7 +41,9 @@ public static unsafe class SglLinesApp
         sg_setup(new sg_desc()
         {
             environment = sglue_environment(),
-            logger = new sg_logger()
+            logger =    {
+                func = &SLog.slog_func,
+            }
         });
 
         sgl_setup(new sgl_desc_t()

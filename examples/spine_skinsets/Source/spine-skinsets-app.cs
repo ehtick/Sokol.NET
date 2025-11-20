@@ -144,14 +144,7 @@ public static unsafe class SpineSkinSetApp
         "nose/long",
         "nose/short",
     };
-    static sg_logger logger = new sg_logger();
 
-
-    [UnmanagedCallersOnly]
-    static void slog_func_wrapper(byte* tag, uint log_level, uint log_item, byte* message, uint line_nr, byte* filename, void* user_data)
-    {
-        logger.func(tag, log_level, log_item, message, line_nr, filename, user_data);
-    }
 
     [UnmanagedCallersOnly]
     private static unsafe void Init()
@@ -159,14 +152,16 @@ public static unsafe class SpineSkinSetApp
         sg_setup(new sg_desc()
         {
             environment = sglue_environment(),
-            logger = new sg_logger()
+            logger =    {
+                func = &SLog.slog_func,
+            }
         });
 
         stm_setup();
 
         sdtx_desc_t desc = default;
         desc.fonts[0] = sdtx_font_oric();
-        desc.logger.func = &slog_func_wrapper;
+        desc.logger.func = &SLog.slog_func;
 
         sdtx_setup(desc);
 
@@ -177,7 +172,7 @@ public static unsafe class SpineSkinSetApp
             instance_pool_size = NUM_INSTANCES,
             max_vertices = 256 * 1024,
             logger = {
-            func = &slog_func_wrapper,
+            func = &SLog.slog_func,
         },
         });
 
@@ -187,7 +182,7 @@ public static unsafe class SpineSkinSetApp
             num_channels = 2,
             num_lanes = 1,
             logger = {
-            func = &slog_func_wrapper,
+            func = &SLog.slog_func,
         },
         });
 

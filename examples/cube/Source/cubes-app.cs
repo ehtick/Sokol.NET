@@ -75,16 +75,13 @@ public static unsafe class CubeSapp
             1.0f,  1.0f, -1.0f,   1.0f, 0.0f, 0.5f, 1.0f
         };
 
-        sg_buffer vbuf;
-        fixed (float* ptr_vertices = vertices)
+        sg_buffer vbuf = sg_make_buffer(new sg_buffer_desc()
         {
-            vbuf = sg_make_buffer(new sg_buffer_desc()
-            {
-                data = SG_RANGE(vertices),
-                label = "cube-vertices"
-            }
-            );
+            data = SG_RANGE(vertices),
+            label = "cube-vertices"
         }
+            );
+
 
         UInt16[] indices = {
                 0, 1, 2,  0, 2, 3,
@@ -95,17 +92,14 @@ public static unsafe class CubeSapp
                 22, 21, 20,  23, 22, 20
             };
 
-        sg_buffer ibuf;
-        fixed (UInt16* ptr_indices = indices)
+        sg_buffer ibuf = sg_make_buffer(new sg_buffer_desc()
         {
-            ibuf = sg_make_buffer(new sg_buffer_desc()
-            {
-                usage = new sg_buffer_usage { index_buffer = true },
-                data = SG_RANGE(indices),
-                label = "cube-indices"
-            }
-            );
+            usage = new sg_buffer_usage { index_buffer = true },
+            data = SG_RANGE(indices),
+            label = "cube-indices"
         }
+            );
+
 
 
         sg_shader shd = sg_make_shader(cube_app_shader_cs.Shaders.cube_shader_desc(sg_query_backend()));
@@ -149,7 +143,7 @@ public static unsafe class CubeSapp
         var rotationMatrixY = Matrix4x4.CreateFromAxisAngle(Vector3.UnitY, state.ry);
         var modelMatrix = rotationMatrixX * rotationMatrixY;
 
-        
+
         var width = SApp.sapp_widthf();
         var height = SApp.sapp_heightf();
 
@@ -167,7 +161,7 @@ public static unsafe class CubeSapp
 
         sg_pass pass = default;
         pass.action.colors[0].load_action = sg_load_action.SG_LOADACTION_CLEAR;
-        pass.action.colors[0].clear_value =new  float[4] {  0.25f, 0.5f, 0.75f,  1.0f };
+        pass.action.colors[0].clear_value = new float[4] { 0.25f, 0.5f, 0.75f, 1.0f };
         pass.swapchain = sglue_swapchain();
         sg_begin_pass(pass);
 
@@ -197,7 +191,7 @@ public static unsafe class CubeSapp
     {
         __dbgui_shutdown();
         sg_shutdown();
-        
+
         // Force a complete shutdown if debugging
         if (Debugger.IsAttached)
         {
