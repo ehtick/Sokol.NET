@@ -848,19 +848,19 @@ The `layout(local_size_x=X, local_size_y=Y, local_size_z=Z) in;` declaration is 
 
 ```csharp
 // Create storage buffer
-var storageBuffer = sg.MakeBuffer(new sg_buffer_desc {
-    type = sg_buffer_type.SG_BUFFERTYPE_STORAGEBUFFER,
-    usage = sg_usage.SG_USAGE_DYNAMIC,
-    size = particleCount * Marshal.SizeOf<Particle>(),
-    data = particleData
+var storageBuffer = sg_make_buffer(new sg_buffer_desc {
+    usage = new sg_buffer_usage { 
+        storage_buffer = true, 
+        dynamic_update = true 
+    },
+    size = (nuint)(particleCount * Marshal.SizeOf<Particle>()),
+    data = SG_RANGE(particleData)
 });
 
 // Bind storage buffer
-sg.ApplyBindings(new sg_bindings {
-    vs = {
-        storage_buffers = new[] { storageBuffer }
-    }
-});
+var bindings = new sg_bindings();
+bindings.vs.storage_buffers[0] = storageBuffer;
+sg_apply_bindings(in bindings);
 ```
 
 **Storage Buffer Authoring Rules:**
