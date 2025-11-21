@@ -1,0 +1,67 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Desktop (Sokol)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "prepare-template",
+            "program": "${workspaceFolder}/bin/Debug/net10.0/template.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}/bin/Debug/net10.0",
+            "console": "internalConsole",
+            "stopAtEntry": false,
+            "env": {
+                "DOTNET_ENVIRONMENT": "Development"
+            }
+        },
+        {
+            "name": "Browser (Sokol)",
+            "type": "coreclr",
+            "request": "launch",
+            "program": "dotnet",
+            "windows": {
+                "program": "powershell",
+                "args": [
+                    "-Command",
+                    "dotnet run --project $(Get-Content $env:USERPROFILE\\.sokolnet_config\\sokolnet_home)\\tools\\dotnet-serve\\src\\dotnet-serve\\dotnet-serve.csproj -- -d ${workspaceFolder}\\bin\\Debug\\net8.0\\browser-wasm\\AppBundle -p ${input:browserPort} -h 'Cross-Origin-Opener-Policy: same-origin' -h 'Cross-Origin-Embedder-Policy: require-corp' -h 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0' -h 'Pragma: no-cache'"
+                ]
+            },
+            "linux": {
+                "program": "bash",
+                "args": [
+                    "-c",
+                    "dotnet run --project $(cat ~/.sokolnet_config/sokolnet_home)/tools/dotnet-serve/src/dotnet-serve/dotnet-serve.csproj -- -d ${workspaceFolder}/bin/Debug/net8.0/browser-wasm/AppBundle -p ${input:browserPort} -h 'Cross-Origin-Opener-Policy: same-origin' -h 'Cross-Origin-Embedder-Policy: require-corp' -h 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0' -h 'Pragma: no-cache'"
+                ]
+            },
+            "osx": {
+                "program": "bash",
+                "args": [
+                    "-c",
+                    "dotnet run --project $(cat ~/.sokolnet_config/sokolnet_home)/tools/dotnet-serve/src/dotnet-serve/dotnet-serve.csproj -- -d ${workspaceFolder}/bin/Debug/net8.0/browser-wasm/AppBundle -p ${input:browserPort} -h 'Cross-Origin-Opener-Policy: same-origin' -h 'Cross-Origin-Embedder-Policy: require-corp' -h 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0' -h 'Pragma: no-cache'"
+                ]
+            },
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "preLaunchTask": "prepare-template-web"
+        }
+    ]
+    ,
+    "inputs": [
+        {
+            "id": "browserPort",
+            "type": "pickString",
+            "description": "Select browser port (to run multiple examples simultaneously)",
+            "options": [
+                "8080",
+                "8081",
+                "8082",
+                "8083",
+                "8084",
+                "8085",
+                "8086"
+            ],
+            "default": "8080"
+        }
+    ]
+}

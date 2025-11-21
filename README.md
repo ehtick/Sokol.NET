@@ -197,7 +197,29 @@ dotnet run -p cube.csproj
 
 **Note**: Visual Studio and Rider support Desktop and Web development only. For Android and iOS, use Visual Studio Code.
 
-### 3. Build for Other Platforms
+### 3. Create Your Own Project
+
+📘 **[Complete Project Creation Guide](docs/CREATE_PROJECT.md)** - Learn how to create standalone Sokol.NET projects.
+
+Create a new standalone project outside the repository:
+
+**Using VS Code:**
+1. Open Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
+2. Select **Tasks: Run Task** → **Create New Project**
+3. Enter project name (e.g., `my_game`)
+4. Enter destination path (must be outside this repository)
+
+**Using Command Line:**
+```bash
+dotnet run --project tools/SokolApplicationBuilder -- \
+  --task createproject \
+  --project my_game \
+  --destination /path/to/projects
+```
+
+The project will be created with full VS Code configuration, ready to open and run independently.
+
+### 4. Build for Other Platforms
 
 #### Android APK/AAB
 ```bash
@@ -229,6 +251,7 @@ Comprehensive documentation is available in the **[`docs/`](docs/)** folder:
 ### Getting Started
 - **[Visual Studio Code Run Guide](docs/VSCODE_RUN_GUIDE.md)** ⭐ - Step-by-step guide with screenshots for running apps on all platforms
 - **[Shader Programming Guide](docs/SHADER_GUIDE.md)** 🎨 - Complete guide to writing cross-platform shaders with sokol-shdc
+- **[Creating New Projects](docs/CREATE_PROJECT.md)** 🚀 - How to create standalone Sokol.NET projects outside the repository
 - **[Creating New Examples](docs/CREATE_EXAMPLE.md)** 🆕 - How to create new example projects from template
 
 ### Platform-Specific Guides

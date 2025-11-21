@@ -98,6 +98,9 @@ namespace SokolApplicationBuilder
         [Option("interactive", Required = false, HelpText = "Enable interactive device selection when multiple devices are connected")]
         public bool Interactive { get; set; } = false;
 
+        [Option("destination", Required = false, HelpText = "Destination path for create project task")]
+        public string Destination { get; set; } = "";
+
         // Image processing options
         [Option("source", Required = false, HelpText = "Source image path for image processing task")]
         public string SourceImage { get; set; } = "";

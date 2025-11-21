@@ -736,6 +736,33 @@
 				"showReuseMessage": true,
 				"clear": false
 			}
+		},
+		{
+			"label": "Create New Project",
+			"type": "shell",
+			"command": "dotnet",
+			"args": [
+				"run",
+				"--project",
+				"${workspaceFolder}/tools/SokolApplicationBuilder",
+				"--",
+				"--task",
+				"createproject",
+				"--project",
+				"${input:newProjectName}",
+				"--destination",
+				"${input:projectDestination}"
+			],
+			"group": "build",
+			"problemMatcher": "$msCompile",
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": false,
+				"panel": "shared",
+				"showReuseMessage": true,
+				"clear": false
+			}
 		}
 	],
 	"inputs": [
@@ -900,6 +927,18 @@
 				"mrt",
 				"GltfViewer"
 			]
+		},
+		{
+			"id": "newProjectName",
+			"type": "promptString",
+			"description": "Enter the name for the new project (alphanumeric and underscore only, must start with letter)",
+			"default": "my_project"
+		},
+		{
+			"id": "projectDestination",
+			"type": "promptString",
+			"description": "Enter the destination path (must be outside this repository)",
+			"default": "${env:HOME}/Projects"
 		}
 	]
 }
