@@ -150,11 +150,16 @@ This repository's maintainer has a valid Spine license for development and distr
 git clone --recursive https://github.com/elix22/Sokol.NET.git
 cd Sokol.NET
 
+# Configure Git to automatically update submodules (IMPORTANT!)
+git config submodule.recurse true
+
 # Register the repository (creates ~/.sokolnet_config)
 ./register.sh  # macOS/Linux
 # or
 register.bat   # Windows
 ```
+
+> **⚠️ Important**: The `git config submodule.recurse true` command is **required** to automatically update nested submodules (like `cimgui/imgui`) when you pull changes. Without this, you'll need to manually run `git submodule update --init --recursive` after every `git pull`.
 
 ### 2. Run Examples
 
