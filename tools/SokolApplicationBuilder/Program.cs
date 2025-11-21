@@ -51,7 +51,7 @@ namespace SokolApplicationBuilder
             if (opts.Task != string.Empty)
             {
                 // Validate required options for specific tasks
-                if (opts.Task != "register" && opts.Task != "imageprocess" && opts.Task != "create" && opts.Task != "delete" && opts.Task != "createproject" && string.IsNullOrEmpty(opts.ProjectPath))
+                if (opts.Task != "register" && opts.Task != "imageprocess" && opts.Task != "create" && opts.Task != "delete" && opts.Task != "createproject" && opts.Task != "listdevices" && string.IsNullOrEmpty(opts.ProjectPath))
                 {
                     Console.WriteLine("ERROR: --path is required for task '" + opts.Task + "'");
                     return 1;
@@ -195,6 +195,14 @@ namespace SokolApplicationBuilder
                     case "createproject":
                         {
                             var task = new CreateProjectTask(opts);
+                            task.BuildEngine = buildEngine;
+                            taskSuccess = task.Execute();
+                        }
+                        break;
+
+                    case "listdevices":
+                        {
+                            var task = new ListDevicesTask(opts);
                             task.BuildEngine = buildEngine;
                             taskSuccess = task.Execute();
                         }

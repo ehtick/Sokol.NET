@@ -33,13 +33,31 @@
 			"label": "Android: List Devices",
 			"type": "shell",
 			"group": "build",
-			"command": "${workspaceFolder}/scripts/list-android-devices.sh"
+			"windows": {
+				"command": "$sokolHome = Get-Content $env:USERPROFILE\\.sokolnet_config\\sokolnet_home; dotnet run --project \"$sokolHome\\tools\\SokolApplicationBuilder\\SokolApplicationBuilder.csproj\" -- --task listdevices --architecture android"
+			},
+			"linux": {
+				"command": "dotnet run --project \"$(cat ~/.sokolnet_config/sokolnet_home)/tools/SokolApplicationBuilder\" -- --task listdevices --architecture android"
+			},
+			"osx": {
+				"command": "dotnet run --project \"$(cat ~/.sokolnet_config/sokolnet_home)/tools/SokolApplicationBuilder\" -- --task listdevices --architecture android"
+			},
+			"problemMatcher": []
 		},
 		{
 			"label": "iOS: List Devices",
 			"type": "shell",
 			"group": "build",
-			"command": "${workspaceFolder}/scripts/list-ios-devices.sh"
+			"windows": {
+				"command": "$sokolHome = Get-Content $env:USERPROFILE\\.sokolnet_config\\sokolnet_home; dotnet run --project \"$sokolHome\\tools\\SokolApplicationBuilder\\SokolApplicationBuilder.csproj\" -- --task listdevices --architecture ios"
+			},
+			"linux": {
+				"command": "dotnet run --project \"$(cat ~/.sokolnet_config/sokolnet_home)/tools/SokolApplicationBuilder\" -- --task listdevices --architecture ios"
+			},
+			"osx": {
+				"command": "dotnet run --project \"$(cat ~/.sokolnet_config/sokolnet_home)/tools/SokolApplicationBuilder\" -- --task listdevices --architecture ios"
+			},
+			"problemMatcher": []
 		},
 		{
 			"label": "macOS: Build App Bundle",

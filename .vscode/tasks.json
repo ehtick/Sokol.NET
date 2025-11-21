@@ -495,13 +495,35 @@
 			"label": "Android: List Devices",
 			"type": "shell",
 			"group": "build",
-			"command": "${workspaceFolder}/scripts/list-android-devices.sh"
+			"command": "dotnet",
+			"args": [
+				"run",
+				"--project",
+				"${workspaceFolder}/tools/SokolApplicationBuilder",
+				"--",
+				"--task",
+				"listdevices",
+				"--architecture",
+				"android"
+			],
+			"problemMatcher": []
 		},
 		{
 			"label": "iOS: List Devices",
 			"type": "shell",
 			"group": "build",
-			"command": "${workspaceFolder}/scripts/list-ios-devices.sh"
+			"command": "dotnet",
+			"args": [
+				"run",
+				"--project",
+				"${workspaceFolder}/tools/SokolApplicationBuilder",
+				"--",
+				"--task",
+				"listdevices",
+				"--architecture",
+				"ios"
+			],
+			"problemMatcher": []
 		},
 		{
 			"label": "macOS: Build App Bundle",

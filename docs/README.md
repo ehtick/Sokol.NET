@@ -27,14 +27,17 @@ This directory also hosts the **interactive WebAssembly examples showcase** for 
 
 ## Key Guides
 
+### Device Management
+- **[Device Listing Guide](./DEVICE_LISTING.md)** 📱 - Cross-platform device listing for Android and iOS
+- [Android Device Selection & Installation](./ANDROID_DEVICE_SELECTION.md) - Multi-device installation guide
+- [iOS Device Selection & Installation](./ios-device-selection.md)
+
 ### Android
 - [Android Properties Configuration](./ANDROID_PROPERTIES.md) - Configure Android builds with Directory.Build.props (permissions, SDK versions, fullscreen, orientation)
 - [Android Screen Orientation](./ANDROID_SCREEN_ORIENTATION.md) - Quick reference for screen orientation configuration
-- [Android Device Selection & Installation](./ANDROID_DEVICE_SELECTION.md) - Multi-device installation guide
 - [AAB Build Guide](./AAB_BUILD_GUIDE.md) - Android App Bundle build guide
 
 ### iOS
-- [iOS Device Selection & Installation](./ios-device-selection.md)
 
 ### Web/WebAssembly
 - [WebAssembly Local Server & VS Code Integration](./web-server-setup.md)
