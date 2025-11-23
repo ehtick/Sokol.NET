@@ -49,6 +49,7 @@
             "type": "pickString",
             "description": "Select an example to launch",
             "options": [
+                "JoltPhysics",
                 "bepuphysics",
                 "cube",
                 "dyntex",

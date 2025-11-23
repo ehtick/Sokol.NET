@@ -1,0 +1,21 @@
+{
+  "configProperties": {
+    "Microsoft.Extensions.Logging.Debug.MinLevel": "Trace"
+  },
+  "runtimeOptions": {
+    "tfm": "net8.0",
+    "configProperties": {
+      "System.Reflection.Metadata.MetadataUpdater.IsSupported": false,
+      "DOTNET_GCHeapHardLimit": "0x80000000"
+    }
+  },
+  "wasmHostProperties": {
+    "perHostConfig": [
+      {
+        "name": "browser",
+        "host": "browser",
+        "html-path": "index.html"
+      }
+    ]
+  }
+}

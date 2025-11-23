@@ -724,6 +724,20 @@
 			"problemMatcher": "$msCompile"
 		},
 		{
+			"label": "prepare-JoltPhysics",
+			"type": "shell",
+			"command": "dotnet",
+			"args": ["run", "--project", "${workspaceFolder}/tools/SokolApplicationBuilder", "--", "--task", "prepare", "--architecture", "desktop", "--path", "${workspaceFolder}/examples/JoltPhysics"],
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "prepare-JoltPhysics-web",
+			"type": "shell",
+			"command": "dotnet",
+			"args": ["run", "--project", "${workspaceFolder}/tools/SokolApplicationBuilder", "--", "--task", "prepare", "--architecture", "web", "--path", "${workspaceFolder}/examples/JoltPhysics"],
+			"problemMatcher": "$msCompile"
+		},
+		{
 			"label": "Create New Example",
 			"type": "shell",
 			"command": "dotnet",
@@ -807,6 +821,7 @@
 			"type": "pickString",
 			"description": "Select an example",
 			"options": [
+				"JoltPhysics",
 				"bepuphysics",
 				"cube",
 				"assimp_simple",
@@ -851,6 +866,7 @@
 			"type": "pickString",
 			"description": "Select an example to build",
 			"options": [
+				"examples/JoltPhysics",
 				"examples/bepuphysics",
 				"examples/cube",
 				"examples/assimp_simple",
@@ -929,6 +945,7 @@
 			"type": "pickString",
 			"description": "⚠️ WARNING: Select an example to PERMANENTLY DELETE",
 			"options": [
+				"JoltPhysics",
 				"bepuphysics",
 				"cube",
 				"assimp_simple",
