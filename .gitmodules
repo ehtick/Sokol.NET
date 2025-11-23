@@ -11,3 +11,6 @@
 [submodule "tools/emsdk"]
 	path = tools/emsdk
 	url = https://github.com/emscripten-core/emsdk.git
+[submodule "ext/joltc"]
+	path = ext/joltc
+	url = https://github.com/elix22/joltc.git
