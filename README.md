@@ -65,7 +65,7 @@ See example projects (`assimp_simple`, `spine_simple`, `ozz_shdfeatures`) and th
 
 ## 🎮 Example Applications
 
-The `examples/` folder contains 36 sample applications demonstrating various features:
+The `examples/` folder contains 37 sample applications demonstrating various features:
 
 ### Graphics Fundamentals
 - **[clear](examples/clear)** - Basic window and clear color
@@ -113,6 +113,10 @@ The `examples/` folder contains 36 sample applications demonstrating various fea
 ### UI & Integration
 - **[cimgui](examples/cimgui)** - Dear ImGui integration
 - **[imgui_usercallback](examples/imgui_usercallback)** - Custom ImGui rendering
+
+### Physics
+- **[JoltPhysics](examples/JoltPhysics)** - 10,000 dynamic physics bodies with GPU instancing and multithreading
+- **[bepuphysics](examples/bepuphysics)** - BEPUphysics v2 integration with .NET physics engine
 
 ### Advanced
 - **[drawcallperf](examples/drawcallperf)** - Draw call performance testing
