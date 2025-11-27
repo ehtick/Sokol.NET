@@ -14,3 +14,7 @@
 [submodule "ext/joltc"]
 	path = ext/joltc
 	url = https://github.com/elix22/joltc.git
+[submodule "ext/box2d"]
+	path = ext/box2d
+	url = https://github.com/elix22/box2d.git
+	branch = sokol-dev

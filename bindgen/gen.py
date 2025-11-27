@@ -22,6 +22,7 @@ tasks = [
     [ '../ext/stb/stb_image.h',              'stbi_',    [] ],
     [ '../ext/ozzutil/ozzutil.h',            'ozz_',     ['sg_'] ],
     [ '../ext/tinyexr/tinyexr.h',            'EXR',      [] ],
+    [ '../ext/box2d/include/box2d/box2d.h',  'b2',      [] ],
     
 ]
 
@@ -61,3 +62,10 @@ ozzutil_header_output_path = '../ext/ozzutil/ozzutil_csharp_internal_wrappers.h'
 with open(ozzutil_header_output_path, 'w', newline='\n') as f_header:
     f_header.write(ozzutil_header_content)
 print(f'  Generated OzzUtil wrappers: {ozzutil_header_output_path}')
+
+# Generate box2d wrappers header (only box2d functions)
+box2d_header_content = gen_csharp.gen_c_box2d_wrappers_header(all_irs)
+box2d_header_output_path = '../ext/box2d/box2d_csharp_internal_wrappers.h'
+with open(box2d_header_output_path, 'w', newline='\n') as f_header:
+    f_header.write(box2d_header_content)
+print(f'  Generated Box2D wrappers: {box2d_header_output_path}')

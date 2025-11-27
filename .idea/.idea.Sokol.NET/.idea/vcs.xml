@@ -2,5 +2,20 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/ext/box2d" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/ext/cimgui" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/ext/cimgui/imgui" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/ext/joltc" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/ext/sokol" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/tools/emsdk" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/tools/sokol-tools" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/tools/sokol-tools/ext/SPIRV-Cross" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/tools/sokol-tools/ext/SPIRV-Headers" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/tools/sokol-tools/ext/SPIRV-Tools" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/tools/sokol-tools/ext/fmt" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/tools/sokol-tools/ext/getopt" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/tools/sokol-tools/ext/glslang" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/tools/sokol-tools/ext/pystring" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/tools/sokol-tools/ext/tint-extract" vcs="Git" />
   </component>
 </project>

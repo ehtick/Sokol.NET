@@ -738,6 +738,20 @@
 			"problemMatcher": "$msCompile"
 		},
 		{
+			"label": "prepare-box2dPhysics",
+			"type": "shell",
+			"command": "dotnet",
+			"args": ["run", "--project", "${workspaceFolder}/tools/SokolApplicationBuilder", "--", "--task", "prepare", "--architecture", "desktop", "--path", "${workspaceFolder}/examples/box2dPhysics"],
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "prepare-box2dPhysics-web",
+			"type": "shell",
+			"command": "dotnet",
+			"args": ["run", "--project", "${workspaceFolder}/tools/SokolApplicationBuilder", "--", "--task", "prepare", "--architecture", "web", "--path", "${workspaceFolder}/examples/box2dPhysics"],
+			"problemMatcher": "$msCompile"
+		},
+		{
 			"label": "Create New Example",
 			"type": "shell",
 			"command": "dotnet",
@@ -821,6 +835,7 @@
 			"type": "pickString",
 			"description": "Select an example",
 			"options": [
+				"box2dPhysics",
 				"JoltPhysics",
 				"bepuphysics",
 				"cube",
@@ -866,6 +881,7 @@
 			"type": "pickString",
 			"description": "Select an example to build",
 			"options": [
+				"examples/box2dPhysics",
 				"examples/JoltPhysics",
 				"examples/bepuphysics",
 				"examples/cube",
@@ -945,6 +961,7 @@
 			"type": "pickString",
 			"description": "⚠️ WARNING: Select an example to PERMANENTLY DELETE",
 			"options": [
+				"box2dPhysics",
 				"JoltPhysics",
 				"bepuphysics",
 				"cube",

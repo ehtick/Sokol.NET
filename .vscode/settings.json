@@ -99,7 +99,8 @@
         "ozzutil.h": "c",
         "__config": "cpp",
         "imgui.h": "c",
-        "tinyexr.h": "c"
+        "tinyexr.h": "c",
+        "box2d.h": "c"
     },
     "java.configuration.updateBuildConfiguration": "disabled",
     "liveServer.settings.port": 5504,
