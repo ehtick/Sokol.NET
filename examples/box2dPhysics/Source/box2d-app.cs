@@ -415,26 +415,42 @@ public static unsafe class Box2dApp
         sg_commit();
     }
 
+    private static unsafe void SpawnShapeAtPosition(float screenX, float screenY, ulong frameCount)
+    {
+        // Convert screen coordinates to world coordinates
+        float aspect = sapp_widthf() / sapp_heightf();
+        float zoom = 25.0f;
+        float x = (screenX / sapp_widthf() - 0.5f) * zoom * aspect;
+        float y = -(screenY / sapp_heightf() - 0.5f) * zoom;
+        
+        // Cycle through shapes
+        int shapeType = (int)(frameCount % 3);
+        if (shapeType == 0)
+            CreateBox(x, y, 1.0f, 1.0f, new Vector4(1.0f, 0.5f, 0.2f, 1.0f));
+        else if (shapeType == 1)
+            CreateCircle(x, y, 1.0f, new Vector4(1.0f, 0.5f, 0.2f, 1.0f));
+        else
+            CreateTriangle(x, y, 1.0f, new Vector4(1.0f, 0.5f, 0.2f, 1.0f));
+    }
+
     [UnmanagedCallersOnly]
     private static unsafe void Event(sapp_event* e)
     {
+        // Handle mouse input (desktop)
         if (e->type == sapp_event_type.SAPP_EVENTTYPE_MOUSE_DOWN && 
             e->mouse_button == sapp_mousebutton.SAPP_MOUSEBUTTON_LEFT)
         {
-            // Add box at mouse position
-            float aspect = sapp_widthf() / sapp_heightf();
-            float zoom = 25.0f;
-            float x = (e->mouse_x / sapp_widthf() - 0.5f) * zoom * aspect;
-            float y = -(e->mouse_y / sapp_heightf() - 0.5f) * zoom;
-            
-            // Cycle through shapes on click
-            int shapeType = (int)(e->frame_count % 3);
-            if (shapeType == 0)
-                CreateBox(x, y, 1.0f, 1.0f, new Vector4(1.0f, 0.5f, 0.2f, 1.0f));
-            else if (shapeType == 1)
-                CreateCircle(x, y, 1.0f, new Vector4(1.0f, 0.5f, 0.2f, 1.0f));
-            else
-                CreateTriangle(x, y, 1.0f, new Vector4(1.0f, 0.5f, 0.2f, 1.0f));
+            SpawnShapeAtPosition(e->mouse_x, e->mouse_y, e->frame_count);
+        }
+        
+        // Handle touch input (mobile)
+        if (e->type == sapp_event_type.SAPP_EVENTTYPE_TOUCHES_BEGAN)
+        {
+            // Spawn shape at first touch point
+            if (e->num_touches > 0)
+            {
+                SpawnShapeAtPosition(e->touches[0].pos_x, e->touches[0].pos_y, e->frame_count);
+            }
         }
     }
 

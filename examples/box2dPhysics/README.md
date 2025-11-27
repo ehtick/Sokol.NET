@@ -8,12 +8,13 @@ A real-time physics simulation using Box2D 3.2.0 and Sokol.NET, featuring multip
 - **Dynamic Spawning**: Auto-spawn 5 objects every 0.3 seconds with random shapes, colors, and sizes
 - **Mouse Interaction**: Click anywhere to spawn shapes that cycle between box → circle → triangle
 - **High Performance**: Supports up to 300 physics bodies with 30,000 vertices
-- **Cross-Platform**: Runs on Desktop (macOS, Windows, Linux) and Web (WebAssembly)
+- **Cross-Platform**: Runs on Desktop (macOS, Windows, Linux), Web (WebAssembly), iOS, and Android
 - **Realistic Physics**: Uses Box2D's collision detection, rigid body dynamics, and gravity
 
 ## Controls
 
-- **Left Mouse Click**: Spawn a shape at the cursor position (cycles through box/circle/triangle)
+- **Left Mouse Click** (Desktop): Spawn a shape at the cursor position (cycles through box/circle/triangle)
+- **Touch** (Mobile/Tablet): Tap anywhere to spawn a shape at touch position
 - **Auto-Spawn**: Objects automatically spawn at the top every 0.3 seconds
 
 ## Building
