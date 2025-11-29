@@ -156,6 +156,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "box2dPhysics", "examples\bo
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "box2dPhysicsWeb", "examples\box2dPhysics\box2dPhysicsWeb.csproj", "{9239F08D-0F40-442B-9CF0-6CF79A976D81}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "computeboids", "examples\computeboids\computeboids.csproj", "{FAD0AD62-0B42-44FC-8E5D-EDF474A27A29}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -466,6 +468,10 @@ Global
 		{9239F08D-0F40-442B-9CF0-6CF79A976D81}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9239F08D-0F40-442B-9CF0-6CF79A976D81}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{9239F08D-0F40-442B-9CF0-6CF79A976D81}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FAD0AD62-0B42-44FC-8E5D-EDF474A27A29}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FAD0AD62-0B42-44FC-8E5D-EDF474A27A29}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FAD0AD62-0B42-44FC-8E5D-EDF474A27A29}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FAD0AD62-0B42-44FC-8E5D-EDF474A27A29}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -547,6 +553,7 @@ Global
 		{B0FC537B-E104-4780-9187-C017D7B83123} = {B36A84DF-456D-A817-6EDD-3EC3E7F6E11F}
 		{89525414-0E00-4889-8B4D-CD891717C1EC} = {B36A84DF-456D-A817-6EDD-3EC3E7F6E11F}
 		{9239F08D-0F40-442B-9CF0-6CF79A976D81} = {B36A84DF-456D-A817-6EDD-3EC3E7F6E11F}
+		{FAD0AD62-0B42-44FC-8E5D-EDF474A27A29} = {B36A84DF-456D-A817-6EDD-3EC3E7F6E11F}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {3E698CF8-2571-44C4-BDB3-0CAAE475F5DF}

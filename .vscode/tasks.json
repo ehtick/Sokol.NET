@@ -752,6 +752,20 @@
 			"problemMatcher": "$msCompile"
 		},
 		{
+			"label": "prepare-computeboids",
+			"type": "shell",
+			"command": "dotnet",
+			"args": ["run", "--project", "${workspaceFolder}/tools/SokolApplicationBuilder", "--", "--task", "prepare", "--architecture", "desktop", "--path", "${workspaceFolder}/examples/computeboids"],
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "prepare-computeboids-web",
+			"type": "shell",
+			"command": "dotnet",
+			"args": ["run", "--project", "${workspaceFolder}/tools/SokolApplicationBuilder", "--", "--task", "prepare", "--architecture", "web", "--path", "${workspaceFolder}/examples/computeboids"],
+			"problemMatcher": "$msCompile"
+		},
+		{
 			"label": "Create New Example",
 			"type": "shell",
 			"command": "dotnet",
@@ -835,6 +849,7 @@
 			"type": "pickString",
 			"description": "Select an example",
 			"options": [
+				"computeboids",
 				"box2dPhysics",
 				"JoltPhysics",
 				"bepuphysics",
@@ -881,6 +896,7 @@
 			"type": "pickString",
 			"description": "Select an example to build",
 			"options": [
+				"examples/computeboids",
 				"examples/box2dPhysics",
 				"examples/JoltPhysics",
 				"examples/bepuphysics",
@@ -961,6 +977,7 @@
 			"type": "pickString",
 			"description": "⚠️ WARNING: Select an example to PERMANENTLY DELETE",
 			"options": [
+				"computeboids",
 				"box2dPhysics",
 				"JoltPhysics",
 				"bepuphysics",
