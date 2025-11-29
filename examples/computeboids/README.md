@@ -2,12 +2,6 @@
 
 A flocking simulation using compute shaders to update particle positions and velocities on the GPU. Based on Craig Reynolds' Boids algorithm with three flocking rules: cohesion, separation, and alignment.
 
-## Features
-
-- **GPU Compute Shaders**: Uses WebGPU compute shaders to update up to 10,000 particles
-- **Instanced Rendering**: Renders particles using instanced drawing with vertex synthesis
-- **Interactive UI**: ImGui controls for simulation parameters (timestep, rule distances/scales, particle count)
-- **Ping-Pong Buffers**: Double-buffered storage buffers for efficient GPU compute
 
 ## Platform Support
 
