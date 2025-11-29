@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <SupportedOSPlatformVersion>24</SupportedOSPlatformVersion>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationId>com.companyname.AndroidSokolApp</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <!-- Support multiple Android ABIs -->
+    <RuntimeIdentifiers>android-arm;android-arm64;android-x64</RuntimeIdentifiers>
+    <!--
+      Enables trim analyzers and full trimming during Release mode.
+      To learn more, see: https://learn.microsoft.com/dotnet/core/deploying/trimming/trimming-options#trimming-granularity
+    -->
+    <TrimMode>full</TrimMode>
+    <TargetFrameworkVersion>v13.0</TargetFrameworkVersion>
+  </PropertyGroup>
+
+  <!-- Native Libraries for Android -->
+  <ItemGroup>
+    <!-- libclear.so - required dependency for libsokol.so -->
+    <AndroidNativeLibrary Include="libs\arm64-v8a\libclear.so">
+      <Abi>arm64-v8a</Abi>
+    </AndroidNativeLibrary>
+    <AndroidNativeLibrary Include="libs\armeabi-v7a\libclear.so">
+      <Abi>armeabi-v7a</Abi>
+    </AndroidNativeLibrary>
+    <AndroidNativeLibrary Include="libs\x86_64\libclear.so">
+      <Abi>x86_64</Abi>
+    </AndroidNativeLibrary>
+    
+    <!-- Debug libraries -->
+    <AndroidNativeLibrary Include="..\..\libs\android\arm64-v8a\debug\libsokol.so" Condition="'$(Configuration)'=='Debug'">
+      <Abi>arm64-v8a</Abi>
+    </AndroidNativeLibrary>
+    <AndroidNativeLibrary Include="..\..\libs\android\armeabi-v7a\debug\libsokol.so" Condition="'$(Configuration)'=='Debug'">
+      <Abi>armeabi-v7a</Abi>
+    </AndroidNativeLibrary>
+    <AndroidNativeLibrary Include="..\..\libs\android\x86_64\debug\libsokol.so" Condition="'$(Configuration)'=='Debug'">
+      <Abi>x86_64</Abi>
+    </AndroidNativeLibrary>
+    
+    <!-- Release libraries -->
+    <AndroidNativeLibrary Include="..\..\libs\android\arm64-v8a\release\libsokol.so" Condition="'$(Configuration)'=='Release'">
+      <Abi>arm64-v8a</Abi>
+    </AndroidNativeLibrary>
+    <AndroidNativeLibrary Include="..\..\libs\android\armeabi-v7a\release\libsokol.so" Condition="'$(Configuration)'=='Release'">
+      <Abi>armeabi-v7a</Abi>
+    </AndroidNativeLibrary>
+    <AndroidNativeLibrary Include="..\..\libs\android\x86_64\release\libsokol.so" Condition="'$(Configuration)'=='Release'">
+      <Abi>x86_64</Abi>
+    </AndroidNativeLibrary>
+  </ItemGroup>
+</Project>
