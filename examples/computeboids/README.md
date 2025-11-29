@@ -21,7 +21,7 @@ A flocking simulation using compute shaders to update particle positions and vel
 ## Technical Requirements
 
 ### Desktop
-- WebGPU support (Metal on macOS, Vulkan/D3D12 on Windows/Linux)
+- Support Metal on macOS, D3D11 on Windows , OpenGL on Linux
 - Compute shader support
 
 ### iOS

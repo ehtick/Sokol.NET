@@ -766,6 +766,20 @@
 			"problemMatcher": "$msCompile"
 		},
 		{
+			"label": "prepare-instancing_compute",
+			"type": "shell",
+			"command": "dotnet",
+			"args": ["run", "--project", "${workspaceFolder}/tools/SokolApplicationBuilder", "--", "--task", "prepare", "--architecture", "desktop", "--path", "${workspaceFolder}/examples/instancing_compute"],
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "prepare-instancing_compute-web",
+			"type": "shell",
+			"command": "dotnet",
+			"args": ["run", "--project", "${workspaceFolder}/tools/SokolApplicationBuilder", "--", "--task", "prepare", "--architecture", "web", "--path", "${workspaceFolder}/examples/instancing_compute"],
+			"problemMatcher": "$msCompile"
+		},
+		{
 			"label": "Create New Example",
 			"type": "shell",
 			"command": "dotnet",
@@ -849,6 +863,7 @@
 			"type": "pickString",
 			"description": "Select an example",
 			"options": [
+				"instancing_compute",
 				"computeboids",
 				"box2dPhysics",
 				"JoltPhysics",
@@ -896,6 +911,7 @@
 			"type": "pickString",
 			"description": "Select an example to build",
 			"options": [
+				"examples/instancing_compute",
 				"examples/computeboids",
 				"examples/box2dPhysics",
 				"examples/JoltPhysics",
@@ -977,6 +993,7 @@
 			"type": "pickString",
 			"description": "⚠️ WARNING: Select an example to PERMANENTLY DELETE",
 			"options": [
+				"instancing_compute",
 				"computeboids",
 				"box2dPhysics",
 				"JoltPhysics",

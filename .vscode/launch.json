@@ -49,6 +49,7 @@
             "type": "pickString",
             "description": "Select an example to launch",
             "options": [
+                "instancing_compute",
                 "computeboids",
                 "box2dPhysics",
                 "JoltPhysics",
