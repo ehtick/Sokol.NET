@@ -1,5 +1,7 @@
 // see: https://github.com/austinEng/Project6-Vulkan-Flocking/blob/master/data/shaders/computeparticles/particle.comp
 
+@ctype vec2 System.Numerics.Vector2
+
 // shared data structures
 @block common
 struct particle {

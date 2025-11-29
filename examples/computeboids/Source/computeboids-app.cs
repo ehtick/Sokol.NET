@@ -19,13 +19,6 @@ public static unsafe class ComputeboidsApp
 {
     const int MAX_PARTICLES = 10000;
 
-    [StructLayout(LayoutKind.Sequential)]
-    struct particle_t
-    {
-        public Vector2 pos;
-        public Vector2 vel;
-    }
-
     struct ComputeState
     {
         public sg_buffer[] buf;

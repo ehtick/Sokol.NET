@@ -79,9 +79,9 @@ public static unsafe class Shaders
         public float rule3_scale;
         public int num_particles;
     };
-    struct particle_t {
-        fixed float pos[2];
-        fixed float vel[2];
+    public struct particle_t {
+        public System.Numerics.Vector2 pos;
+        public System.Numerics.Vector2 vel;
     } ;
     /*
         #version 310 es
