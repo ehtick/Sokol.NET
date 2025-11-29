@@ -39,7 +39,7 @@ extern void* findCanvasEventTarget(const char* target);
 #include <android/asset_manager_jni.h>
 #include <android/log.h>
 #include <EGL/egl.h>
-#include <GLES3/gl3.h>
+#include <GLES3/gl31.h>
 
 #define SOKOL_GLES3
 
