@@ -515,10 +515,13 @@ jobs:
         retention-days: 30
 
   build-ios:
-    name: Build iOS (arm64)
+    name: Build iOS (${{ matrix.target }})
     runs-on: macos-latest
     needs: check-changes
     if: needs.check-changes.outputs.should_build == 'true'
+    strategy:
+      matrix:
+        target: [device, simulator-arm64, simulator-x64]
     
     steps:
     - name: Checkout repository
@@ -532,19 +535,79 @@ jobs:
     - name: Build iOS Framework
       run: |
         chmod +x scripts/build-ios-sokol-library.sh
-        ./scripts/build-ios-sokol-library.sh
+        ./scripts/build-ios-sokol-library.sh ${{ matrix.target }}
+    
+    - name: Determine upload path
+      id: upload_path
+      run: |
+        case "${{ matrix.target }}" in
+          device)
+            echo "path=libs/ios/arm64" >> $GITHUB_OUTPUT
+            ;;
+          simulator-arm64)
+            echo "path=libs/ios/simulator-arm64" >> $GITHUB_OUTPUT
+            ;;
+          simulator-x64)
+            echo "path=libs/ios/simulator-x64" >> $GITHUB_OUTPUT
+            ;;
+        esac
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: ios-arm64
-        path: libs/ios/**/*
+        name: ios-${{ matrix.target }}
+        path: ${{ steps.upload_path.outputs.path }}/**/*
+        retention-days: 30
+
+  build-tvos:
+    name: Build tvOS (${{ matrix.target }})
+    runs-on: macos-latest
+    needs: check-changes
+    if: needs.check-changes.outputs.should_build == 'true'
+    strategy:
+      matrix:
+        target: [device, simulator-arm64, simulator-x64]
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Setup CMake
+      uses: lukka/get-cmake@latest
+    
+    - name: Build tvOS Framework
+      run: |
+        chmod +x scripts/build-tvos-sokol-library.sh
+        ./scripts/build-tvos-sokol-library.sh ${{ matrix.target }}
+    
+    - name: Determine upload path
+      id: upload_path
+      run: |
+        case "${{ matrix.target }}" in
+          device)
+            echo "path=libs/tvos/arm64" >> $GITHUB_OUTPUT
+            ;;
+          simulator-arm64)
+            echo "path=libs/tvos/simulator-arm64" >> $GITHUB_OUTPUT
+            ;;
+          simulator-x64)
+            echo "path=libs/tvos/simulator-x64" >> $GITHUB_OUTPUT
+            ;;
+        esac
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: tvos-${{ matrix.target }}
+        path: ${{ steps.upload_path.outputs.path }}/**/*
         retention-days: 30
   
   # Combine all artifacts into a single release
   combine-artifacts:
     name: Combine All Libraries
-    needs: [check-changes, generate-bindings, build-windows, build-macos, build-linux, build-web, build-android, build-ios]
+    needs: [check-changes, generate-bindings, build-windows, build-macos, build-linux, build-web, build-android, build-ios, build-tvos]
     runs-on: ubuntu-latest
     if: |
       always() &&
@@ -554,7 +617,8 @@ jobs:
       (needs.build-linux.result == 'success' || needs.build-linux.result == 'skipped') &&
       (needs.build-web.result == 'success' || needs.build-web.result == 'skipped') &&
       (needs.build-android.result == 'success' || needs.build-android.result == 'skipped') &&
-      (needs.build-ios.result == 'success' || needs.build-ios.result == 'skipped')
+      (needs.build-ios.result == 'success' || needs.build-ios.result == 'skipped') &&
+      (needs.build-tvos.result == 'success' || needs.build-tvos.result == 'skipped')
     
     steps:
     - name: Download all artifacts
@@ -605,10 +669,32 @@ jobs:
           cp -r libs/android-all-abis/* combined-libs/android/ || true
         fi
         
-        # iOS
-        if [ -d "libs/ios-arm64" ]; then
-          mkdir -p combined-libs/ios
-          cp -r libs/ios-arm64/* combined-libs/ios/ || true
+        # iOS - each artifact contains the subdirectory structure (arm64/, simulator-arm64/, simulator-x64/)
+        if [ -d "libs/ios-device" ]; then
+          mkdir -p combined-libs/ios/arm64
+          cp -r libs/ios-device/* combined-libs/ios/arm64/ || true
+        fi
+        if [ -d "libs/ios-simulator-arm64" ]; then
+          mkdir -p combined-libs/ios/simulator-arm64
+          cp -r libs/ios-simulator-arm64/* combined-libs/ios/simulator-arm64/ || true
+        fi
+        if [ -d "libs/ios-simulator-x64" ]; then
+          mkdir -p combined-libs/ios/simulator-x64
+          cp -r libs/ios-simulator-x64/* combined-libs/ios/simulator-x64/ || true
+        fi
+        
+        # tvOS - each artifact contains the subdirectory structure (arm64/, simulator-arm64/, simulator-x64/)
+        if [ -d "libs/tvos-device" ]; then
+          mkdir -p combined-libs/tvos/arm64
+          cp -r libs/tvos-device/* combined-libs/tvos/arm64/ || true
+        fi
+        if [ -d "libs/tvos-simulator-arm64" ]; then
+          mkdir -p combined-libs/tvos/simulator-arm64
+          cp -r libs/tvos-simulator-arm64/* combined-libs/tvos/simulator-arm64/ || true
+        fi
+        if [ -d "libs/tvos-simulator-x64" ]; then
+          mkdir -p combined-libs/tvos/simulator-x64
+          cp -r libs/tvos-simulator-x64/* combined-libs/tvos/simulator-x64/ || true
         fi
         
         # Show structure
@@ -652,7 +738,7 @@ jobs:
         git config user.email "github-actions[bot]@users.noreply.github.com"
         
                 # Remove old libraries (if they exist)
-        rm -rf libs/windows libs/macos libs/linux libs/emscripten libs/android libs/ios
+        rm -rf libs/windows libs/macos libs/linux libs/emscripten libs/android libs/ios libs/tvos
         
         # Ensure libs directory exists
         mkdir -p libs
@@ -680,7 +766,8 @@ jobs:
         - Linux X64: $(du -sh libs/linux/X64 | cut -f1)
         - Emscripten: $(du -sh libs/emscripten | cut -f1)
         - Android: $(du -sh libs/android | cut -f1)
-        - iOS: $(du -sh libs/ios | cut -f1)"
+        - iOS: $(du -sh libs/ios | cut -f1)
+        - tvOS: $(du -sh libs/tvos | cut -f1)"
         
         git push origin main
         

@@ -157,6 +157,33 @@ elseif (APPLE)
               ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist
               $<TARGET_FILE_DIR:sokol>/Info.plist
           )
+    elseif (CMAKE_SYSTEM_NAME STREQUAL "tvOS")
+        target_compile_options(sokol PRIVATE -x objective-c)
+        target_link_libraries(sokol
+            "-framework UIKit"
+            "-framework QuartzCore"
+            "-framework Metal"
+            "-framework MetalKit"
+            "-framework AudioToolbox"
+            "-framework AVFoundation"
+            "-framework Foundation")
+        set_target_properties(sokol PROPERTIES 
+            FRAMEWORK TRUE
+            FRAMEWORK_VERSION A
+            MACOSX_FRAMEWORK_IDENTIFIER com.elix22.sokol
+            MACOSX_FRAMEWORK_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist
+            BUILD_WITH_INSTALL_RPATH ON
+            INSTALL_RPATH "@executable_path/Frameworks"
+            XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED "NO"
+            XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED "NO"
+            XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY ""
+        )
+        # Ensure Info.plist is copied to the framework bundle
+        add_custom_command(TARGET sokol POST_BUILD
+              COMMAND ${CMAKE_COMMAND} -E copy
+              ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist
+              $<TARGET_FILE_DIR:sokol>/Info.plist
+          )
     else()
         target_compile_options(sokol PRIVATE -x objective-c)
         target_link_libraries(sokol
