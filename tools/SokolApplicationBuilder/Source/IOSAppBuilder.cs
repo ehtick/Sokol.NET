@@ -372,8 +372,9 @@ namespace SokolApplicationBuilder
             {
                 Log.LogMessage(MessageImportance.High, $"Creating {projectName} framework...");
 
+                string sanitizedProjectName = projectName.Replace("_", "-");
                 string frameworksDir = Path.Combine(iosDir, "frameworks");
-                string frameworkDir = Path.Combine(frameworksDir, $"{projectName}.framework");
+                string frameworkDir = Path.Combine(frameworksDir, $"{sanitizedProjectName}.framework");
                 Directory.CreateDirectory(frameworkDir);
 
                 // Determine configuration based on build type
@@ -389,13 +390,13 @@ namespace SokolApplicationBuilder
                     return false;
                 }
 
-                // Copy and modify the library
-                string destLib = Path.Combine(frameworkDir, projectName);
+                // Copy and modify the library (use sanitized name)
+                string destLib = Path.Combine(frameworkDir, sanitizedProjectName);
                 File.Copy(libPath, destLib, true);
 
                 // Use install_name_tool to modify the library
                 var idResult = Cli.Wrap("install_name_tool")
-                    .WithArguments($"-id @rpath/{projectName}.framework/{projectName} \"{destLib}\"")
+                    .WithArguments($"-id @rpath/{sanitizedProjectName}.framework/{sanitizedProjectName} \"{destLib}\"")
                     .WithStandardOutputPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
                     .WithStandardErrorPipe(PipeTarget.ToDelegate(s => Log.LogError(s)))
                     .ExecuteBufferedAsync()
@@ -415,7 +416,8 @@ namespace SokolApplicationBuilder
 
                 // Replace placeholders in Info.plist
                 string content = File.ReadAllText(infoPlistDest);
-                content = content.Replace("TEMPLATE_PROJECT_NAME", projectName);
+                content = content.Replace("TEMPLATE_PROJECT_NAME", sanitizedProjectName);
+                content = content.Replace("TEMPLATE_BUNDLE_PREFIX", iOSBundlePrefix);
                 File.WriteAllText(infoPlistDest, content);
 
                 return true;
@@ -442,7 +444,8 @@ namespace SokolApplicationBuilder
 
                 // Replace placeholders
                 string content = File.ReadAllText(cmakeDest);
-                content = content.Replace("TEMPLATE_PROJECT_NAME", projectName);
+                string sanitizedProjectName = projectName.Replace("_", "-");
+                content = content.Replace("TEMPLATE_PROJECT_NAME", sanitizedProjectName);
                 content = content.Replace("TEMPLATE_BUNDLE_PREFIX", iOSBundlePrefix);
                 content = content.Replace("TEMPLATE_APP_VERSION", appVersion);
                 
@@ -490,7 +493,7 @@ namespace SokolApplicationBuilder
                 if (File.Exists(plistSource))
                 {
                     string plistContent = File.ReadAllText(plistSource);
-                    plistContent = plistContent.Replace("TEMPLATE_PROJECT_NAME", projectName);
+                    plistContent = plistContent.Replace("TEMPLATE_PROJECT_NAME", sanitizedProjectName);
                     plistContent = plistContent.Replace("@TEMPLATE_IOS_ORIENTATIONS_PLIST@", iosOrientationsPlist);
                     plistContent = plistContent.Replace("@TEMPLATE_IPAD_ORIENTATIONS_PLIST@", ipadOrientationsPlist);
                     
@@ -577,6 +580,7 @@ namespace SokolApplicationBuilder
             {
                 Log.LogMessage(MessageImportance.High, "Compiling Xcode project...");
 
+                string sanitizedProjectName = projectName.Replace("_", "-");
                 string buildDir = Path.Combine(iosDir, "build-xcode-ios-app");
                 
                 // Determine configuration based on build type
@@ -585,7 +589,7 @@ namespace SokolApplicationBuilder
                     : "Debug";
 
                 var result = Cli.Wrap("xcodebuild")
-                    .WithArguments($"-target {projectName}-ios-app -configuration {configuration} -sdk iphoneos -arch arm64")
+                    .WithArguments($"-target {sanitizedProjectName}-ios-app -configuration {configuration} -sdk iphoneos -arch arm64")
                     .WithWorkingDirectory(buildDir)
                     .WithStandardOutputPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
                     .WithStandardErrorPipe(PipeTarget.ToDelegate(s => Log.LogError(s)))
@@ -599,12 +603,12 @@ namespace SokolApplicationBuilder
                     return false;
                 }
 
-                string appBundlePath = Path.Combine(buildDir, $"{configuration}-iphoneos", $"{projectName}-ios-app.app");
+                string appBundlePath = Path.Combine(buildDir, $"{configuration}-iphoneos", $"{sanitizedProjectName}-ios-app.app");
                 
                 // Check if the app bundle exists at the expected location, otherwise look in bin/{configuration}
                 if (!Directory.Exists(appBundlePath))
                 {
-                    string altPath = Path.Combine(buildDir, "bin", configuration, $"{projectName}-ios-app.app");
+                    string altPath = Path.Combine(buildDir, "bin", configuration, $"{sanitizedProjectName}-ios-app.app");
                     if (Directory.Exists(altPath))
                     {
                         appBundlePath = altPath;
@@ -629,6 +633,7 @@ namespace SokolApplicationBuilder
             {
                 Log.LogMessage(MessageImportance.High, "Installing on iOS device...");
 
+                string sanitizedProjectName = projectName.Replace("_", "-");
                 string buildDir = Path.Combine(iosDir, "build-xcode-ios-app");
                 
                 // Determine configuration based on build type
@@ -636,16 +641,16 @@ namespace SokolApplicationBuilder
                     ? "Release" 
                     : "Debug";
                 
-                string appBundlePath = Path.Combine(buildDir, $"{configuration}-iphoneos", $"{projectName}-ios-app.app");
+                string appBundlePath = Path.Combine(buildDir, $"{configuration}-iphoneos", $"{sanitizedProjectName}-ios-app.app");
 
                 // Check multiple possible locations for the app bundle
                 string[] possiblePaths = new[]
                 {
                     appBundlePath,
-                    Path.Combine(buildDir, $"{configuration}-iphoneos", $"{projectName}-ios-app", $"{projectName}-ios-app.app"),
-                    Path.Combine(buildDir, configuration, $"{projectName}-ios-app.app"),
-                    Path.Combine(buildDir, $"{projectName}-ios-app.app"),
-                    Path.Combine(buildDir, "bin", configuration, $"{projectName}-ios-app.app")
+                    Path.Combine(buildDir, $"{configuration}-iphoneos", $"{sanitizedProjectName}-ios-app", $"{sanitizedProjectName}-ios-app.app"),
+                    Path.Combine(buildDir, configuration, $"{sanitizedProjectName}-ios-app.app"),
+                    Path.Combine(buildDir, $"{sanitizedProjectName}-ios-app.app"),
+                    Path.Combine(buildDir, "bin", configuration, $"{sanitizedProjectName}-ios-app.app")
                 };
 
                 string? foundPath = null;
@@ -845,7 +850,7 @@ namespace SokolApplicationBuilder
                 // Try to uninstall the app first if it exists (helps with installation errors)
                 try
                 {
-                    string bundleId = $"{iOSBundlePrefix}.{projectName}-ios-app";
+                    string bundleId = $"{iOSBundlePrefix}.{sanitizedProjectName}-ios-app";
                     Log.LogMessage(MessageImportance.Normal, $"Attempting to uninstall existing app from device: {deviceName}");
                     var uninstallResult = Cli.Wrap("ios-deploy")
                         .WithArguments($"--id {deviceId} --uninstall_only --bundle_id {bundleId}")
@@ -1329,12 +1334,14 @@ namespace SokolApplicationBuilder
             var frameworkList = new List<string>();
             var frameworkLinks = new List<string>();
 
+            string sanitizedProjectName = projectName.Replace("_", "-");
+
             // Always include the required frameworks
             frameworkList.Add("${FRAMEWORK_DIR}/sokol.framework");
-            frameworkList.Add($"${{FRAMEWORK_DIR}}/{projectName}.framework");
+            frameworkList.Add($"${{FRAMEWORK_DIR}}/{sanitizedProjectName}.framework");
             
             frameworkLinks.Add("\"-framework sokol\"");
-            frameworkLinks.Add($"\"-framework {projectName}\"");
+            frameworkLinks.Add($"\"-framework {sanitizedProjectName}\"");
 
             // Add detected native libraries
             foreach (var library in iOSNativeLibraries)
@@ -1682,6 +1689,7 @@ namespace SokolApplicationBuilder
         {
             try
             {
+                string sanitizedProjectName = projectName.Replace("_", "-");
                 string buildDir = Path.Combine(iosDir, "build-xcode-ios-app");
                 
                 // Determine configuration based on build type
@@ -1690,12 +1698,12 @@ namespace SokolApplicationBuilder
                     : "Debug";
                 
                 string xcodeBuildConfig = $"{configuration}-iphoneos";
-                string appBundlePath = Path.Combine(buildDir, xcodeBuildConfig, $"{projectName}-ios-app.app");
+                string appBundlePath = Path.Combine(buildDir, xcodeBuildConfig, $"{sanitizedProjectName}-ios-app.app");
 
                 // Check alternate locations
                 if (!Directory.Exists(appBundlePath))
                 {
-                    string altPath = Path.Combine(buildDir, "bin", configuration, $"{projectName}-ios-app.app");
+                    string altPath = Path.Combine(buildDir, "bin", configuration, $"{sanitizedProjectName}-ios-app.app");
                     if (Directory.Exists(altPath))
                     {
                         appBundlePath = altPath;
@@ -1706,7 +1714,7 @@ namespace SokolApplicationBuilder
                 if (!Directory.Exists(appBundlePath))
                 {
                     string fallbackConfig = configuration == "Release" ? "Debug" : "Release";
-                    string fallbackPath = Path.Combine(buildDir, $"{fallbackConfig}-iphoneos", $"{projectName}-ios-app.app");
+                    string fallbackPath = Path.Combine(buildDir, $"{fallbackConfig}-iphoneos", $"{sanitizedProjectName}-ios-app.app");
                     if (Directory.Exists(fallbackPath))
                     {
                         appBundlePath = fallbackPath;

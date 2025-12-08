@@ -101,7 +101,7 @@
       <IOSScreenOrientation>landscape</IOSScreenOrientation>
       
       <!-- Requires full screen (hides home indicator) -->
-      <IOSRequiresFullScreen>false</IOSRequiresFullScreen>
+      <IOSRequiresFullScreen>true</IOSRequiresFullScreen>
       
       <!-- Hide status bar -->
       <IOSStatusBarHidden>true</IOSStatusBarHidden>

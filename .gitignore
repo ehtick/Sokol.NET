@@ -6,3 +6,7 @@ bin/
 ext/ozz-animation/bin/*
 !ext/ozz-animation/bin/emscripten/
 obj/
+examples/*/ios/
+examples/*/android/
+!examples/*/shaders/compiled/ios/
+!examples/*/shaders/compiled/android/
