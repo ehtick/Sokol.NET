@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-ios</TargetFramework>
+    <SupportedOSPlatformVersion>13.0</SupportedOSPlatformVersion>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationId>com.sokol.IOSSokolApp</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <!-- List all supported RuntimeIdentifiers for reference -->
+    <RuntimeIdentifiers>ios-arm64;iossimulator-arm64;iossimulator-x64</RuntimeIdentifiers>
+    <!-- Set default RuntimeIdentifier to prevent multi-RID build errors -->
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">iossimulator-arm64</RuntimeIdentifier>
+    <TrimMode>full</TrimMode>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+    <CodesignKey>iPhone Developer</CodesignKey>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+    <CodesignKey>iPhone Developer</CodesignKey>
+  </PropertyGroup>
+
+  <!-- Native Frameworks for iOS -->
+  <ItemGroup>
+    <!-- Debug framework - Physical Device -->
+    <NativeReference Include="..\..\libs\ios\arm64\debug\sokol.framework" Condition="'$(Configuration)'=='Debug' And '$(RuntimeIdentifier)'=='ios-arm64'">
+      <Kind>Framework</Kind>
+      <ForceLoad>true</ForceLoad>
+    </NativeReference>
+    
+    <!-- Release framework - Physical Device -->
+    <NativeReference Include="..\..\libs\ios\arm64\release\sokol.framework" Condition="'$(Configuration)'=='Release' And '$(RuntimeIdentifier)'=='ios-arm64'">
+      <Kind>Framework</Kind>
+      <ForceLoad>true</ForceLoad>
+    </NativeReference>
+    
+    <!-- Debug framework - Simulator Apple Silicon -->
+    <NativeReference Include="..\..\libs\ios\simulator-arm64\debug\sokol.framework" Condition="'$(Configuration)'=='Debug' And '$(RuntimeIdentifier)'=='iossimulator-arm64'">
+      <Kind>Framework</Kind>
+      <ForceLoad>true</ForceLoad>
+    </NativeReference>
+    
+    <!-- Release framework - Simulator Apple Silicon -->
+    <NativeReference Include="..\..\libs\ios\simulator-arm64\release\sokol.framework" Condition="'$(Configuration)'=='Release' And '$(RuntimeIdentifier)'=='iossimulator-arm64'">
+      <Kind>Framework</Kind>
+      <ForceLoad>true</ForceLoad>
+    </NativeReference>
+    
+    <!-- Debug framework - Simulator Intel -->
+    <NativeReference Include="..\..\libs\ios\simulator-x64\debug\sokol.framework" Condition="'$(Configuration)'=='Debug' And '$(RuntimeIdentifier)'=='iossimulator-x64'">
+      <Kind>Framework</Kind>
+      <ForceLoad>true</ForceLoad>
+    </NativeReference>
+    
+    <!-- Release framework - Simulator Intel -->
+    <NativeReference Include="..\..\libs\ios\simulator-x64\release\sokol.framework" Condition="'$(Configuration)'=='Release' And '$(RuntimeIdentifier)'=='iossimulator-x64'">
+      <Kind>Framework</Kind>
+      <ForceLoad>true</ForceLoad>
+    </NativeReference>
+  </ItemGroup>
+</Project>

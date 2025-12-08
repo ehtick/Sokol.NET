@@ -160,6 +160,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "computeboids", "examples\co
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "instancing_compute", "examples\instancing_compute\instancing_compute.csproj", "{61208C9F-5944-4649-B8B6-1ABD60AC8495}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "IOSSokolApp", "examples\IOSSokolApp\IOSSokolApp.csproj", "{54C15E9E-843F-4E93-ACBE-89F58C10BCAB}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -478,6 +480,10 @@ Global
 		{61208C9F-5944-4649-B8B6-1ABD60AC8495}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{61208C9F-5944-4649-B8B6-1ABD60AC8495}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{61208C9F-5944-4649-B8B6-1ABD60AC8495}.Release|Any CPU.Build.0 = Release|Any CPU
+		{54C15E9E-843F-4E93-ACBE-89F58C10BCAB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{54C15E9E-843F-4E93-ACBE-89F58C10BCAB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{54C15E9E-843F-4E93-ACBE-89F58C10BCAB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{54C15E9E-843F-4E93-ACBE-89F58C10BCAB}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -561,6 +567,7 @@ Global
 		{9239F08D-0F40-442B-9CF0-6CF79A976D81} = {B36A84DF-456D-A817-6EDD-3EC3E7F6E11F}
 		{FAD0AD62-0B42-44FC-8E5D-EDF474A27A29} = {B36A84DF-456D-A817-6EDD-3EC3E7F6E11F}
 		{61208C9F-5944-4649-B8B6-1ABD60AC8495} = {B36A84DF-456D-A817-6EDD-3EC3E7F6E11F}
+		{54C15E9E-843F-4E93-ACBE-89F58C10BCAB} = {B36A84DF-456D-A817-6EDD-3EC3E7F6E11F}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {3E698CF8-2571-44C4-BDB3-0CAAE475F5DF}
