@@ -78,6 +78,9 @@ The `examples/` folder contains 37 sample applications demonstrating various fea
 ### Android Native Integration
 - **[AndroidSokolApp](examples/AndroidSokolApp)** - Native .NET for Android integration using Sokol GFX without Sokol App, demonstrating GLSurfaceView integration and manual OpenGL context management
 
+### iOS Native Integration
+- **[IOSSokolApp](examples/IOSSokolApp)** - Native .NET for iOS integration using Sokol GFX without Sokol App, demonstrating MTKView integration and manual Metal context management
+
 ### 2D Graphics
 - **[sgl](examples/sgl)** - 2D immediate mode rendering
 - **[sgl_lines](examples/sgl_lines)** - Line rendering techniques
