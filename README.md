@@ -127,6 +127,7 @@ The `examples/` folder contains 37 sample applications demonstrating various fea
 ### Advanced
 - **[drawcallperf](examples/drawcallperf)** - Draw call performance testing
 - **[plmpeg](examples/plmpeg)** - MPEG1 video playback
+- **[ShaderToyApp](examples/ShaderToyApp)** - Multi-shader gallery with 7 fragment shaders
 
 ## 📜 Spine License Notice
 

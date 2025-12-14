@@ -49,6 +49,7 @@
             "type": "pickString",
             "description": "Select an example to launch",
             "options": [
+                "ShaderToyApp",
                 "instancing_compute",
                 "computeboids",
                 "box2dPhysics",

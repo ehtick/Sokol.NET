@@ -780,6 +780,20 @@
 			"problemMatcher": "$msCompile"
 		},
 		{
+			"label": "prepare-ShaderToyApp",
+			"type": "shell",
+			"command": "dotnet",
+			"args": ["run", "--project", "${workspaceFolder}/tools/SokolApplicationBuilder", "--", "--task", "prepare", "--architecture", "desktop", "--path", "${workspaceFolder}/examples/ShaderToyApp"],
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "prepare-ShaderToyApp-web",
+			"type": "shell",
+			"command": "dotnet",
+			"args": ["run", "--project", "${workspaceFolder}/tools/SokolApplicationBuilder", "--", "--task", "prepare", "--architecture", "web", "--path", "${workspaceFolder}/examples/ShaderToyApp"],
+			"problemMatcher": "$msCompile"
+		},
+		{
 			"label": "Create New Example",
 			"type": "shell",
 			"command": "dotnet",
@@ -863,6 +877,7 @@
 			"type": "pickString",
 			"description": "Select an example",
 			"options": [
+				"ShaderToyApp",
 				"instancing_compute",
 				"computeboids",
 				"box2dPhysics",
@@ -911,6 +926,7 @@
 			"type": "pickString",
 			"description": "Select an example to build",
 			"options": [
+				"examples/ShaderToyApp",
 				"examples/instancing_compute",
 				"examples/computeboids",
 				"examples/box2dPhysics",
@@ -993,6 +1009,7 @@
 			"type": "pickString",
 			"description": "⚠️ WARNING: Select an example to PERMANENTLY DELETE",
 			"options": [
+				"ShaderToyApp",
 				"instancing_compute",
 				"computeboids",
 				"box2dPhysics",
