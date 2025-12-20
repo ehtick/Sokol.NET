@@ -1285,6 +1285,9 @@ def gen_module(inp, dep_prefixes):
     prefix = inp['prefix']
     l("namespace Sokol")
     l("{")
+    # TinyEXR is excluded from web builds (CMakeLists.txt excludes tinyexr for Emscripten)
+    if inp['module'] == 'TinyEXR':
+        l("#if !WEB")
     l(f"public static unsafe partial class {inp['module']}")
     l("{")
     for decl in inp['decls']:
@@ -1303,6 +1306,9 @@ def gen_module(inp, dep_prefixes):
     # Generate _internal function declarations for WebAssembly
     gen_internal_functions(inp, prefix)
     l("}")
+    # Close the #if !WEB directive for TinyEXR
+    if inp['module'] == 'TinyEXR':
+        l("#endif")
     l("}")
 
 def prepare():

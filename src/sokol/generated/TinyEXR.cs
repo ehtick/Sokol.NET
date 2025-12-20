@@ -6,6 +6,7 @@ using U = System.Runtime.InteropServices.UnmanagedType;
 
 namespace Sokol
 {
+#if !WEB
 public static unsafe partial class TinyEXR
 {
 #if __IOS__
@@ -104,4 +105,5 @@ public static extern byte* EXRConvertPanoramaToSpecularCubemapFace(in float pano
 public static extern void EXRFreeCubemapData(byte* cubemap_data);
 
 }
+#endif
 }

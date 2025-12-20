@@ -5,7 +5,9 @@ using Sokol;
 using static Sokol.SG;
 using static Sokol.SLog;
 using static Sokol.StbImage;
+#if !WEB
 using static Sokol.TinyEXR;
+#endif
 
 namespace Sokol
 {
@@ -501,6 +503,10 @@ namespace Sokol
         /// </summary>
         private static unsafe EnvironmentMap? ConvertPanoramaToCubemap(float* panoramaPixels, int panoWidth, int panoHeight, string name)
         {
+#if WEB
+            Warning("[IBL] Panorama conversion not supported on Web (requires TinyEXR)");
+            return null;
+#else
             try
             {
                 Info($"[IBL] Converting {panoWidth}x{panoHeight} panorama to cubemap (C++ native)...");
@@ -537,6 +543,7 @@ namespace Sokol
                 Error($"[IBL] Error converting panorama: {ex.Message}");
                 return null;
             }
+#endif
         }
 
         /// <summary>
@@ -599,6 +606,9 @@ namespace Sokol
         /// </summary>
         private static unsafe sg_image CreateDiffuseCubemapFromPanorama(float* panoramaFloat, int panoWidth, int panoHeight, int cubeSize)
         {
+#if WEB
+            throw new NotSupportedException("TinyEXR panorama conversion not available on Web builds");
+#else
             const int sampleCount = 256;
             
             int faceSize = cubeSize * cubeSize * 4; // RGBA per face
@@ -658,6 +668,7 @@ namespace Sokol
                 // Free combined buffer
                 Marshal.FreeHGlobal((IntPtr)cubemapData);
             }
+#endif
         }
 
         /// <summary>
@@ -665,6 +676,9 @@ namespace Sokol
         /// </summary>
         private static unsafe (sg_image, int) CreateSpecularCubemapFromPanorama(float* panoramaFloat, int panoWidth, int panoHeight, int baseSize)
         {
+#if WEB
+            throw new NotSupportedException("TinyEXR panorama conversion not available on Web builds");
+#else
             int mipCount = (int)Math.Floor(Math.Log2(baseSize)) + 1;
             mipCount = Math.Min(mipCount, 8);
 
@@ -750,6 +764,7 @@ namespace Sokol
                     }
                 }
             }
+#endif
         }
 
         /// <summary>

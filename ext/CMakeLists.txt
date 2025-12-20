@@ -46,6 +46,13 @@ set(TINYEXR_SOURCE_FILES
         tinyexr_wrapper.cpp
 )
 
+# Avoid pulling tinyexr/nanozlib (which embeds wuffs) into the Emscripten build
+# We check both CMAKE_SYSTEM_NAME (toolchain file) and the EMSCRIPTEN cache var
+# to be resilient across emcmake/toolchain invocations.
+if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten" OR EMSCRIPTEN)
+    set(TINYEXR_SOURCE_FILES)
+endif()
+
 if (NOT MSVC)
     set_source_files_properties(basisu/sokol_basisu.cpp PROPERTIES LANGUAGE CXX COMPILE_FLAGS "-x c++")
     set_source_files_properties(${IMGUI_SOURCE_FILES} PROPERTIES LANGUAGE CXX COMPILE_FLAGS "-x c++")
