@@ -794,6 +794,20 @@
 			"problemMatcher": "$msCompile"
 		},
 		{
+			"label": "prepare-SkiaSokolApp",
+			"type": "shell",
+			"command": "dotnet",
+			"args": ["run", "--project", "${workspaceFolder}/tools/SokolApplicationBuilder", "--", "--task", "prepare", "--architecture", "desktop", "--path", "${workspaceFolder}/examples/SkiaSokolApp"],
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "prepare-SkiaSokolApp-web",
+			"type": "shell",
+			"command": "dotnet",
+			"args": ["run", "--project", "${workspaceFolder}/tools/SokolApplicationBuilder", "--", "--task", "prepare", "--architecture", "web", "--path", "${workspaceFolder}/examples/SkiaSokolApp"],
+			"problemMatcher": "$msCompile"
+		},
+		{
 			"label": "Create New Example",
 			"type": "shell",
 			"command": "dotnet",
@@ -877,6 +891,7 @@
 			"type": "pickString",
 			"description": "Select an example",
 			"options": [
+				"SkiaSokolApp",
 				"ShaderToyApp",
 				"instancing_compute",
 				"computeboids",
@@ -926,6 +941,7 @@
 			"type": "pickString",
 			"description": "Select an example to build",
 			"options": [
+				"examples/SkiaSokolApp",
 				"examples/ShaderToyApp",
 				"examples/instancing_compute",
 				"examples/computeboids",
@@ -1009,6 +1025,7 @@
 			"type": "pickString",
 			"description": "⚠️ WARNING: Select an example to PERMANENTLY DELETE",
 			"options": [
+				"SkiaSokolApp",
 				"ShaderToyApp",
 				"instancing_compute",
 				"computeboids",

@@ -49,6 +49,7 @@
             "type": "pickString",
             "description": "Select an example to launch",
             "options": [
+                "SkiaSokolApp",
                 "ShaderToyApp",
                 "instancing_compute",
                 "computeboids",
