@@ -8,7 +8,7 @@ Sokol.NET is a comprehensive C# binding and application framework built on top o
 
 ## 🌐 Live Examples
 
-**[✨ Try all 37 examples in your browser →](https://elix22.github.io/Sokol.NET/)**
+**[✨ Try all 38 examples in your browser →](https://elix22.github.io/Sokol.NET/)**
 
 Experience Sokol.NET's capabilities instantly with interactive WebAssembly examples. No installation required!
 
@@ -17,7 +17,7 @@ Experience Sokol.NET's capabilities instantly with interactive WebAssembly examp
 - **Cross-Platform**: Deploy to Windows, macOS, Linux, Android, iOS, and WebAssembly from a single codebase
 - **High Performance**: Leverages .NET NativeAOT for near-native performance with zero overhead
 - **Modern Graphics**: Unified API supporting Direct3D 11, Metal, OpenGL, OpenGL ES, and WebGL
-- **Rich Examples**: 37 example applications demonstrating various graphics techniques and features
+- **Rich Examples**: 38 example applications demonstrating various graphics techniques and features
 - **Production Ready**: Includes ImGui, Assimp, glTF, Spine, Ozz animation, and more integrations
 
 ## 🚀 Supported Platforms
@@ -65,7 +65,7 @@ See example projects (`assimp_simple`, `spine_simple`, `ozz_shdfeatures`) and th
 
 ## 🎮 Example Applications
 
-The `examples/` folder contains 37 sample applications demonstrating various features:
+The `examples/` folder contains 38 sample applications demonstrating various features:
 
 ### Graphics Fundamentals
 - **[clear](examples/clear)** - Basic window and clear color
