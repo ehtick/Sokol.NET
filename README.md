@@ -82,6 +82,7 @@ The `examples/` folder contains 37 sample applications demonstrating various fea
 - **[IOSSokolApp](examples/IOSSokolApp)** - Native .NET for iOS integration using Sokol GFX without Sokol App, demonstrating MTKView integration and manual Metal context management
 
 ### 2D Graphics
+- **[SkiaSokolApp](examples/SkiaSokolApp)** - SkiaSharp sample gallery with 40+ interactive samples (shapes, text, images, filters, shaders, animations)
 - **[sgl](examples/sgl)** - 2D immediate mode rendering
 - **[sgl_lines](examples/sgl_lines)** - Line rendering techniques
 - **[shapes_transform](examples/shapes_transform)** - 2D transformations
