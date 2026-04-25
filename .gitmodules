@@ -40,3 +40,6 @@
 [submodule "ext/nanosvg"]
 	path = ext/nanosvg
 	url = https://github.com/elix22/nanosvg.git
+[submodule "ext/bullet3"]
+	path = ext/bullet3
+	url = https://github.com/elix22/bullet3.git

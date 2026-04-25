@@ -157,6 +157,7 @@ Samples for [sokol_gp](https://github.com/edubart/sokol_gp) — a minimal, effic
 
 ### Physics
 - **[JoltPhysics](examples/JoltPhysics)** - 10,000 dynamic physics bodies with GPU instancing and multithreading
+- **[BulletPhysics](examples/BulletPhysics)** - 5,000 rigid bodies (cubes and spheres) using Bullet Physics
 - **[bepuphysics](examples/bepuphysics)** - BEPUphysics v2 integration with .NET physics engine
 
 ### Advanced
