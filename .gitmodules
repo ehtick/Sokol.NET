@@ -43,3 +43,7 @@
 [submodule "ext/bullet3"]
 	path = ext/bullet3
 	url = https://github.com/elix22/bullet3.git
+[submodule "ext/JoltPhysics"]
+	path = ext/JoltPhysics
+	url = https://github.com/elix22/JoltPhysics.git
+	branch = v5.5.0.bindings
