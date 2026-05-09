@@ -76,7 +76,7 @@ class Demo_SoftKeyframedRig : DemoBase
 
         // ── Create ragdoll ────────────────────────────────────────────────
         _ragdoll = settings.CreateRagdoll(1, 0, sys);
-        if (_ragdoll == null) return;
+        if (_ragdoll == null) { settings.Dispose(); return; }
 
         // ── Load animation ────────────────────────────────────────────────
         var animData = LoadAsset("Human/walk.tof");
@@ -85,6 +85,7 @@ class Demo_SoftKeyframedRig : DemoBase
         // ── Pose setup ────────────────────────────────────────────────────
         _pose = new JPH.SkeletonPose();
         _pose.SetSkeleton(settings.GetSkeleton());
+        settings.Dispose();
         _animation?.Sample(0f, _pose);
         _pose.CalculateJointMatrices();
         _ragdoll.SetPose(_pose);
@@ -128,14 +129,18 @@ class Demo_SoftKeyframedRig : DemoBase
     {
         if (_ragdoll != null)
         {
+            _ragdoll.RemoveFromPhysicsSystem();
             if (_bodies != null && _ragdollBodyStart >= 0 && _ragdollBodyCount > 0)
             {
+                var ids = new JPH.BodyID[_ragdollBodyCount];
+                for (int i = 0; i < _ragdollBodyCount; i++)
+                    ids[i] = _bodies[_ragdollBodyStart + i].bodyId;
+                sys.GetBodyInterface().DestroyBodies(ids);
                 _bodies.RemoveRange(_ragdollBodyStart, _ragdollBodyCount);
                 _bodies = null;
             }
             _ragdollBodyStart = -1;
             _ragdollBodyCount = 0;
-            _ragdoll.RemoveFromPhysicsSystem();
             _ragdoll.Dispose();
             _ragdoll = null;
         }

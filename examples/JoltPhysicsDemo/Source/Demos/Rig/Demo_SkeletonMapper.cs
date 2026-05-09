@@ -23,6 +23,7 @@ class Demo_SkeletonMapper : DemoBase
     };
 
     private JPH.Ragdoll?           _ragdoll;
+    private JPH.Skeleton?          _animSkeleton;
     private JPH.SkeletalAnimation? _animation;
     private JPH.SkeletonMapper?    _mapper;
     private JPH.SkeletonPose?      _animatedPose;
@@ -52,7 +53,7 @@ class Demo_SkeletonMapper : DemoBase
 
         // ── Create ragdoll ────────────────────────────────────────────────
         _ragdoll = settings.CreateRagdoll(1, 0, sys);
-        if (_ragdoll == null) return;
+        if (_ragdoll == null) { settings.Dispose(); return; }
 
         // ── Load neutral ragdoll pose ─────────────────────────────────────
         JPH.SkeletalAnimation? neutralRagdoll;
@@ -76,9 +77,11 @@ class Demo_SkeletonMapper : DemoBase
         // ── Set up poses ─────────────────────────────────────────────────
         _animatedPose = new JPH.SkeletonPose();
         _animatedPose.SetSkeleton(animSkeleton);
+        _animSkeleton = animSkeleton;  // kept alive: _animatedPose holds a raw C++ pointer
 
         _ragdollPose = new JPH.SkeletonPose();
         _ragdollPose.SetSkeleton(settings.GetSkeleton());
+        settings.Dispose();  // ragdoll holds Ref<RagdollSettings> internally
 
         // Sample neutral poses to get T-pose matrices for mapper init
         neutralRagdoll?.Sample(0f, _ragdollPose);
@@ -136,14 +139,18 @@ class Demo_SkeletonMapper : DemoBase
     {
         if (_ragdoll != null)
         {
+            _ragdoll.RemoveFromPhysicsSystem();
             if (_bodies != null && _ragdollBodyStart >= 0 && _ragdollBodyCount > 0)
             {
+                var ids = new JPH.BodyID[_ragdollBodyCount];
+                for (int i = 0; i < _ragdollBodyCount; i++)
+                    ids[i] = _bodies[_ragdollBodyStart + i].bodyId;
+                sys.GetBodyInterface().DestroyBodies(ids);
                 _bodies.RemoveRange(_ragdollBodyStart, _ragdollBodyCount);
                 _bodies = null;
             }
             _ragdollBodyStart = -1;
             _ragdollBodyCount = 0;
-            _ragdoll.RemoveFromPhysicsSystem();
             _ragdoll.Dispose();
             _ragdoll = null;
         }
@@ -151,5 +158,6 @@ class Demo_SkeletonMapper : DemoBase
         _ragdollPose?.Dispose();  _ragdollPose  = null;
         _mapper?.Dispose();       _mapper       = null;
         _animation?.Dispose();    _animation    = null;
+        _animSkeleton?.Dispose(); _animSkeleton = null;
     }
 }

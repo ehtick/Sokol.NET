@@ -105,24 +105,28 @@ class Demo_RigPile : DemoBase
         }
 
         _ragdollBodyCount = bodies.Count - _ragdollBodyStart;
+        settings.Dispose();
 
         foreach (var anim in deadPoses) anim?.Dispose();
     }
 
     public override void Cleanup(JPH.PhysicsSystem sys)
     {
+        foreach (var r in _ragdolls)
+            r.RemoveFromPhysicsSystem();
         if (_bodies != null && _ragdollBodyStart >= 0 && _ragdollBodyCount > 0)
         {
+            var ids = new JPH.BodyID[_ragdollBodyCount];
+            for (int i = 0; i < _ragdollBodyCount; i++)
+                ids[i] = _bodies[_ragdollBodyStart + i].bodyId;
+            sys.GetBodyInterface().DestroyBodies(ids);
             _bodies.RemoveRange(_ragdollBodyStart, _ragdollBodyCount);
             _bodies = null;
         }
         _ragdollBodyStart = -1;
         _ragdollBodyCount = 0;
         foreach (var r in _ragdolls)
-        {
-            r.RemoveFromPhysicsSystem();
             r.Dispose();
-        }
         _ragdolls.Clear();
     }
 }

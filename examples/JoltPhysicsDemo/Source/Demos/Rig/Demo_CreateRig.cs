@@ -238,16 +238,18 @@ class Demo_CreateRig : DemoBase
     {
         if (_ragdoll != null)
         {
-            // Remove render entries before destroying bodies
+            _ragdoll.RemoveFromPhysicsSystem();
             if (_bodies != null && _ragdollBodyStart >= 0 && _ragdollBodyCount > 0)
             {
+                var ids = new JPH.BodyID[_ragdollBodyCount];
+                for (int i = 0; i < _ragdollBodyCount; i++)
+                    ids[i] = _bodies[_ragdollBodyStart + i].bodyId;
+                sys.GetBodyInterface().DestroyBodies(ids);
                 _bodies.RemoveRange(_ragdollBodyStart, _ragdollBodyCount);
                 _bodies = null;
             }
             _ragdollBodyStart = -1;
             _ragdollBodyCount = 0;
-
-            _ragdoll.RemoveFromPhysicsSystem();
             _ragdoll.Dispose();
             _ragdoll = null;
         }

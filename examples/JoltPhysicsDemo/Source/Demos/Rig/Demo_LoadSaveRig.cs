@@ -45,7 +45,7 @@ class Demo_LoadSaveRig : DemoBase
 
         if (leftArm >= 0 && rightArm >= 0)
         {
-            var dc = new JPH.DistanceConstraintSettings();
+            using var dc = new JPH.DistanceConstraintSettings();
             dc.mMaxDistance = 0.1f;
             dc.mMinDistance = 0.1f;
             // Space = LocalToBodyCOM (byte value 0)
@@ -65,6 +65,7 @@ class Demo_LoadSaveRig : DemoBase
 
         // ── Create ragdoll ────────────────────────────────────────────────
         _ragdoll = settings.CreateRagdoll(1, 0, sys);
+        settings.Dispose();
         if (_ragdoll == null) return;
         _ragdoll.AddToPhysicsSystem(JPH.EActivation.Activate);
 
@@ -80,14 +81,18 @@ class Demo_LoadSaveRig : DemoBase
     {
         if (_ragdoll != null)
         {
+            _ragdoll.RemoveFromPhysicsSystem();
             if (_bodies != null && _ragdollBodyStart >= 0 && _ragdollBodyCount > 0)
             {
+                var ids = new JPH.BodyID[_ragdollBodyCount];
+                for (int i = 0; i < _ragdollBodyCount; i++)
+                    ids[i] = _bodies[_ragdollBodyStart + i].bodyId;
+                sys.GetBodyInterface().DestroyBodies(ids);
                 _bodies.RemoveRange(_ragdollBodyStart, _ragdollBodyCount);
                 _bodies = null;
             }
             _ragdollBodyStart = -1;
             _ragdollBodyCount = 0;
-            _ragdoll.RemoveFromPhysicsSystem();
             _ragdoll.Dispose();
             _ragdoll = null;
         }
