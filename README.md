@@ -156,6 +156,7 @@ Samples for [sokol_gp](https://github.com/edubart/sokol_gp) — a minimal, effic
 - **[FileSystemTest](examples/FileSystemTest)** - Comprehensive test application for [sokol_filesystem](docs/SOKOL_FILESYSTEM.md) — 88 tests across path queries, user folders, asset reads, file I/O (binary + text), directory enumeration, and glob. Verified on macOS, iOS, Android, WebAssembly, Windows, and Linux.
 
 ### Physics
+- **[JoltPhysicsDemo](examples/JoltPhysicsDemo)** - Interactive browser with 100+ runnable Jolt Physics demos (rigid bodies, constraints, vehicles, soft bodies, ragdolls, water/buoyancy) with live in-app panel, virtual controls, and a custom water shader with Fresnel shading and transparency. Targets Desktop, Android, iOS, and WebAssembly.
 - **[JoltPhysics](examples/JoltPhysics)** - 10,000 dynamic physics bodies with GPU instancing and multithreading
 - **[BulletPhysics](examples/BulletPhysics)** - 5,000 rigid bodies (cubes and spheres) using Bullet Physics
 - **[bepuphysics](examples/bepuphysics)** - BEPUphysics v2 integration with .NET physics engine
