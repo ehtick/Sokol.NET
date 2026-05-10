@@ -145,6 +145,52 @@ c_source_paths = {
     'ma_':       'c/miniaudio.c',
 }
 
+# Overrides for anonymous/unnamed union fields that the generator cannot auto-map.
+# Key: "c_struct_name.c_field_name"
+# Value: list of raw C# lines to emit for that field (replaces the normal field emission).
+# Use void* for single-pointer unions — it is pointer-sized on both x64 (8 B) and wasm32 (4 B).
+struct_field_overrides = {
+    # union { float* f32; ma_int16* s16; }  — 1 pointer
+    'ma_linear_resampler.x0':       ['    public void* x0; // union { float* f32; ma_int16* s16; }'],
+    'ma_linear_resampler.x1':       ['    public void* x1; // union { float* f32; ma_int16* s16; }'],
+    # union { float** f32; ma_int32** s16; }  — 1 pointer
+    'ma_channel_converter.weights': ['    public void* weights; // union { float** f32; ma_int32** s16; }'],
+    # union { ma_linear_resampler linear; }  — emit as the contained struct type
+    'ma_resampler.state':           ['    public ma_linear_resampler state; // union { ma_linear_resampler linear; }'],
+    # struct { ma_uint32 lpfOrder; }  — anonymous struct, emit as plain field
+    'ma_resampler_config.linear':   ['    public uint lpfOrder; /* linear.lpfOrder */'],
+    # struct { ma_atomic_float volumeBeg/End; ma_atomic_uint64 fadeLengthInFrames/absoluteGlobalTimeInFrames; }
+    # 24 bytes, 8-byte aligned. Must be a nested struct so C# respects the 8-byte alignment
+    # (plain inlined floats would NOT add the required 4-byte pre-padding, causing offset mismatch).
+    'ma_engine_node.fadeSettings': [
+        '    public struct _fadeSettings_e__Struct {',
+        '        public ma_atomic_float volumeBeg;',
+        '        public ma_atomic_float volumeEnd;',
+        '        public ma_atomic_uint64 fadeLengthInFrames;',
+        '        public ma_atomic_uint64 absoluteGlobalTimeInFrames;',
+        '    }',
+        '    public _fadeSettings_e__Struct fadeSettings;',
+    ],
+    # union { struct{pVFS*,file*} vfs; struct{pData*,size_t,size_t} memory; }
+    # largest branch = memory = 3 × pointer_size → 24 B (x64) / 12 B (wasm32)
+    'ma_decoder.data':              ['    public ma_decoder_data_union data; // union { vfs { pVFS, file }; memory { pData, dataSize, currentReadPos }; }'],
+}
+
+# C# declarations that must be emitted immediately BEFORE specific struct definitions.
+# Key: c_struct_name   Value: list of raw C# lines
+struct_type_preambles = {
+    # ma_decoder needs a helper type whose size is platform-conditional
+    'ma_decoder': [
+        '// Helper for ma_decoder.data union: max(vfs:2 ptrs, memory:3 ptr-sized) = 3 * pointer_size',
+        '#if WEB',
+        '[StructLayout(LayoutKind.Explicit, Size = 12)]   // 3 x 4 bytes (wasm32)',
+        '#else',
+        '[StructLayout(LayoutKind.Explicit, Size = 24)]   // 3 x 8 bytes (x64)',
+        '#endif',
+        'public struct ma_decoder_data_union { }',
+    ],
+}
+
 name_ignores = [
     'sdtx_printf',
     'sdtx_vprintf',
@@ -171,6 +217,9 @@ name_ignores = [
     'nsvgRasterize',          # takes opaque NSVGrasterizer*; define manually
     'nsvgDeleteRasterizer',   # takes opaque NSVGrasterizer* (unnamed param); define manually
     'nsvgParseFromFile',      # won;t work on mobile platforms due to file I/O; ignore for now
+    # miniaudio: variadic / va_list functions cannot be bound from C#
+    'ma_log_postv',            # variadic va_list param
+    'ma_log_postf',            # variadic (redundant with ma_log_post)
 ]
 
 name_overrides = {
@@ -339,6 +388,19 @@ prim_types = {
     # pass-through entries so type_overrides can emit raw C# type names
     'IntPtr': 'IntPtr',
     'void*':  'void*',
+    # miniaudio opaque/interface types accessed via const pointer (treated as IntPtr)
+    'const ma_data_source *':      'IntPtr',
+    'const ma_node *':             'IntPtr',
+    'const ma_async_notification *': 'IntPtr',
+    'const ma_resampling_backend *': 'IntPtr',
+    'const ma_vfs *':              'IntPtr',
+    # miniaudio vfs file handle (typedef'd integer on all platforms)
+    'ma_vfs_file':                 'IntPtr',
+    'ma_vfs_file *':               'IntPtr',
+    # miniaudio enum callback
+    'ma_enum_devices_callback_proc': 'IntPtr',
+    # miniaudio spinlock is volatile uint
+    'volatile ma_spinlock *':      'uint*',
 }
 
 
@@ -555,6 +617,21 @@ def as_extern_c_arg_type(arg_type, prefix):
         return f"{as_csharp_prim_type(extract_ptr_type(arg_type))}*"
     elif is_const_prim_ptr(arg_type):
         return f"{as_csharp_prim_type(extract_ptr_type(arg_type))}*"
+    elif is_struct_ptr(arg_type):
+        # non-const struct pointer (e.g. ma_context *, ma_device *)
+        return f"{as_csharp_struct_type(extract_ptr_type(arg_type), prefix)}*"
+    elif arg_type.endswith(" **") or arg_type.endswith("**"):
+        # double pointer — extract base type, emit as void* (opaque)
+        base = arg_type.replace('const ', '').replace('*', '').strip()
+        if is_struct_type(base):
+            return f"{as_csharp_struct_type(base, prefix)}**"
+        else:
+            return "void*"
+    elif arg_type == "float **" or arg_type == "const float **":
+        return "float**"
+    elif arg_type.endswith(" *") and is_enum_type(arg_type[:-2].rstrip()):
+        # pointer to enum (e.g. ma_format *)
+        return f"{as_csharp_enum_type(arg_type[:-2].rstrip(), prefix)}*"
     else:
         return '??? (as_extern_c_arg_type)'
 
@@ -680,6 +757,21 @@ def as_csharp_arg_type(arg_prefix, arg_type, prefix):
         return f"IntPtr{pre}"  # Function pointer: float (*)(const b2RayCastInput*, int, uint64_t, void*)
     elif arg_type.startswith("b2TreeShapeCastCallbackFcn *"):
         return f"IntPtr{pre}"  # Function pointer: float (*)(const b2ShapeCastInput*, int, uint64_t, void*)
+    # miniaudio: enum* / backend* / double-pointer out-params
+    elif arg_type == "ma_format *":
+        return f"ref ma_format{pre}"
+    elif arg_type == "ma_backend *":
+        return f"ma_backend*{pre}"
+    elif arg_type == "const ma_backend *":
+        return f"ma_backend*{pre}"
+    elif arg_type == "ma_audio_buffer **":
+        return f"out IntPtr{pre}"
+    elif arg_type == "ma_device_info **":
+        return f"out IntPtr{pre}"
+    elif arg_type == "ma_paged_audio_buffer_page **":
+        return f"out IntPtr{pre}"
+    elif arg_type == "const void **":
+        return f"void**{pre}"
     # Manifoldc inline function pointer types
     elif arg_type == 'ManifoldVec3 (*)(double, double, double, void *)':
         return f"delegate* unmanaged<double, double, double, void*, ManifoldVec3>{pre}"
@@ -809,6 +901,10 @@ def funcdecl_result_csharp(decl, prefix):
 def gen_struct(decl, prefix):
     struct_name = decl['name']
     csharp_type = as_csharp_struct_type(struct_name, prefix)
+    # Emit any helper types that must appear before this struct
+    if struct_name in struct_type_preambles:
+        for line in struct_type_preambles[struct_name]:
+            l(line)
     l(f"[StructLayout(LayoutKind.Sequential)]")
     l(f"public struct {csharp_type}")
     l("{")
@@ -918,11 +1014,16 @@ def gen_struct(decl, prefix):
             #t0 = f"[{array_nums[0]}][{array_nums[1]}]{csharp_type}"
             #l(f"    {field_name}: {t0} = [_][{array_nums[1]}]{csharp_type}{{[_]{csharp_type}{{ {def_val} }}**{array_nums[1]}}}**{array_nums[0]},")
         else:
-            # Silently skip fields with unnamed/anonymous inner types (layout is preserved
-            # by the C side; C# code never constructs these structs field-by-field).
-            if 'unnamed struct' not in field_type and 'unnamed union' not in field_type and \
+            # Check for explicit override first (handles anonymous union fields)
+            override_key = f"{struct_name}.{field['name']}" if 'name' in field else None
+            if override_key and override_key in struct_field_overrides:
+                for line in struct_field_overrides[override_key]:
+                    l(line)
+            elif 'unnamed struct' not in field_type and 'unnamed union' not in field_type and \
                'anonymous' not in field_type:
+                # Silently skip true anonymous/unnamed inner types (layout preserved by C side).
                 l(f"// FIXME: {field_name}: {field_type};")
+            # else: silently skip unnamed/anonymous types not in overrides
     l("}")
 
 def gen_consts(decl, prefix):

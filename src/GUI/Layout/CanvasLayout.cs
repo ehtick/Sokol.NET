@@ -37,9 +37,9 @@ public sealed class CanvasLayout : ILayout
 
     public void Arrange(Widget parent, Renderer renderer, Rect finalRect)
     {
-        bool log = Screen.DbgFrame <= 5 || Screen.DbgFrame % 300 == 0;
-        if (log)
-            Sokol.SLog.Info($"CanvasLayout[{Screen.DbgFrame}]: parent={parent.GetType().Name} finalRect={finalRect} children={parent.Children.Count}", "Sokol.GUI");
+        // bool log = Screen.DbgFrame <= 5 || Screen.DbgFrame % 300 == 0;
+        // if (log)
+        //     Sokol.SLog.Info($"CanvasLayout[{Screen.DbgFrame}]: parent={parent.GetType().Name} finalRect={finalRect} children={parent.Children.Count}", "Sokol.GUI");
 
         var available = new Vector2(finalRect.Width, finalRect.Height);
         foreach (var child in parent.Children)
@@ -58,8 +58,8 @@ public sealed class CanvasLayout : ILayout
                 child.Position.X,
                 child.Position.Y,
                 size.X, size.Y);
-            if (log)
-                Sokol.SLog.Info($"CanvasLayout[{Screen.DbgFrame}]:   {child.GetType().Name} FixedSize={child.FixedSize} size={size} Position={child.Position} → Bounds={child.Bounds}", "Sokol.GUI");
+        //     if (log)
+        //         Sokol.SLog.Info($"CanvasLayout[{Screen.DbgFrame}]:   {child.GetType().Name} FixedSize={child.FixedSize} size={size} Position={child.Position} → Bounds={child.Bounds}", "Sokol.GUI");
         }
     }
 }

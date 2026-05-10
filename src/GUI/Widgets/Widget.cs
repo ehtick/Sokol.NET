@@ -203,9 +203,9 @@ public abstract class Widget
         var local = ToLocal(screenPoint);
         bool hit  = HitTest(local);
 
-        bool log = Screen.DbgFrame <= 5 || Screen.DbgFrame % 300 == 0;
-        if (log)
-            Sokol.SLog.Info($"HitTest[{Screen.DbgFrame}]: {GetType().Name} screenPos={ScreenPosition} Bounds={Bounds} local={local} hit={hit}", "Sokol.GUI");
+        // bool log = Screen.DbgFrame <= 5 || Screen.DbgFrame % 300 == 0;
+        // if (log)
+        //     Sokol.SLog.Info($"HitTest[{Screen.DbgFrame}]: {GetType().Name} screenPos={ScreenPosition} Bounds={Bounds} local={local} hit={hit}", "Sokol.GUI");
 
         if (!hit) return null;
 

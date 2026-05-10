@@ -1156,6 +1156,20 @@
 			"problemMatcher": "$msCompile"
 		},
 		{
+			"label": "prepare-MiniAudioDemo",
+			"type": "shell",
+			"command": "dotnet",
+			"args": ["run", "--project", "${workspaceFolder}/tools/SokolApplicationBuilder", "--", "--task", "prepare", "--architecture", "desktop", "--path", "${workspaceFolder}/examples/MiniAudioDemo"],
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "prepare-MiniAudioDemo-web",
+			"type": "shell",
+			"command": "dotnet",
+			"args": ["run", "--project", "${workspaceFolder}/tools/SokolApplicationBuilder", "--", "--task", "prepare", "--architecture", "web", "--path", "${workspaceFolder}/examples/MiniAudioDemo"],
+			"problemMatcher": "$msCompile"
+		},
+		{
 			"label": "Create New Example",
 			"type": "shell",
 			"command": "dotnet",
@@ -1271,6 +1285,7 @@
 			"type": "pickString",
 			"description": "Select an example",
 			"options": [
+				"MiniAudioDemo",
 				"JoltPhysicsDemo",
 				"BulletPhysics",
 				"NanoSVGDemo",
@@ -1344,6 +1359,7 @@
 			"type": "pickString",
 			"description": "Select an example to build",
 			"options": [
+				"examples/MiniAudioDemo",
 				"examples/JoltPhysicsDemo",
 				"examples/BulletPhysics",
 				"examples/NanoSVGDemo",
@@ -1451,6 +1467,7 @@
 			"type": "pickString",
 			"description": "⚠️ WARNING: Select an example to PERMANENTLY DELETE",
 			"options": [
+				"MiniAudioDemo",
 				"JoltPhysicsDemo",
 				"BulletPhysics",
 				"NanoSVGDemo",

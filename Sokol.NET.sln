@@ -260,6 +260,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JoltPhysicsDemo", "examples
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JoltPhysicsDemoWeb", "examples\JoltPhysicsDemo\JoltPhysicsDemoWeb.csproj", "{E904D0F6-854B-40EB-8B9A-F734E0D6B00E}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MiniAudioDemo", "examples\MiniAudioDemo\MiniAudioDemo.csproj", "{686F94D3-7C4F-4F37-A29D-49EE8428DD3F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MiniAudioDemoWeb", "examples\MiniAudioDemo\MiniAudioDemoWeb.csproj", "{B29F6EF0-BC24-4472-8F98-0B04FD7F0485}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -778,6 +782,14 @@ Global
 		{E904D0F6-854B-40EB-8B9A-F734E0D6B00E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{E904D0F6-854B-40EB-8B9A-F734E0D6B00E}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{E904D0F6-854B-40EB-8B9A-F734E0D6B00E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{686F94D3-7C4F-4F37-A29D-49EE8428DD3F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{686F94D3-7C4F-4F37-A29D-49EE8428DD3F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{686F94D3-7C4F-4F37-A29D-49EE8428DD3F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{686F94D3-7C4F-4F37-A29D-49EE8428DD3F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B29F6EF0-BC24-4472-8F98-0B04FD7F0485}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B29F6EF0-BC24-4472-8F98-0B04FD7F0485}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B29F6EF0-BC24-4472-8F98-0B04FD7F0485}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B29F6EF0-BC24-4472-8F98-0B04FD7F0485}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -911,6 +923,8 @@ Global
 		{50CABB59-03E2-4FB8-807C-30DCB90BF29B} = {B36A84DF-456D-A817-6EDD-3EC3E7F6E11F}
 		{3268ACEE-F822-413D-A19B-D6070F18EE90} = {B36A84DF-456D-A817-6EDD-3EC3E7F6E11F}
 		{E904D0F6-854B-40EB-8B9A-F734E0D6B00E} = {B36A84DF-456D-A817-6EDD-3EC3E7F6E11F}
+		{686F94D3-7C4F-4F37-A29D-49EE8428DD3F} = {B36A84DF-456D-A817-6EDD-3EC3E7F6E11F}
+		{B29F6EF0-BC24-4472-8F98-0B04FD7F0485} = {B36A84DF-456D-A817-6EDD-3EC3E7F6E11F}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {3E698CF8-2571-44C4-BDB3-0CAAE475F5DF}

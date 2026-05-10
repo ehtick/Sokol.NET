@@ -133,6 +133,8 @@ public sealed class Screen : Widget
         LogicalWidth  = width;
         LogicalHeight = height;
 
+        if (Renderer == null || Renderer.VGContext == IntPtr.Zero) return; // can happen if Update is called before Init
+
         // Track actual keyboard height from window-height reduction
         // (keyboard_resizes_canvas on iOS, adjustResize on Android).
         bool kbShown = sapp_keyboard_shown();
@@ -203,21 +205,23 @@ public sealed class Screen : Widget
         // Screen root children fill the window — bypass CanvasLayout measurement.
         // CanvasLayout would measure TabView as (0,0) because tabs live in _tabs not _children.
         // Instead, set each root child's Bounds to the full window then run its internal layout.
-        bool logLayout = DbgFrame <= 5 || DbgFrame % 300 == 0;
-        if (logLayout)
-            Sokol.SLog.Info($"GUI.Layout[{DbgFrame}]: filling {Children.Count} root children to {width:F0}x{height:F0}", "Sokol.GUI");
+        // bool logLayout = DbgFrame <= 5 || DbgFrame % 300 == 0;
+        // if (logLayout)
+        //     Sokol.SLog.Info($"GUI.Layout[{DbgFrame}]: filling {Children.Count} root children to {width:F0}x{height:F0}", "Sokol.GUI");
 
         foreach (var child in Children)
         {
             child.Bounds = new Rect(0, 0, width, height);
             child.PerformLayout(Renderer, true);
-            if (logLayout)
-                Sokol.SLog.Info($"GUI.Layout[{DbgFrame}]:   {child.GetType().Name} Bounds={child.Bounds}", "Sokol.GUI");
+            // if (logLayout)
+            //     Sokol.SLog.Info($"GUI.Layout[{DbgFrame}]:   {child.GetType().Name} Bounds={child.Bounds}", "Sokol.GUI");
         }
     }
 
     public void Draw(float width, float height, float dpiScale)
     {
+        if (Renderer == null || Renderer.VGContext == IntPtr.Zero ) return; // can happen if Draw is called before Init   
+
         Renderer.BeginFrame(width, height, dpiScale);
         DrawChildren(Renderer);
         // Draw any active popup on top of everything else.
@@ -252,9 +256,9 @@ public sealed class Screen : Widget
     /// <summary>Draw only children (Screen itself has no visual background).</summary>
     private void DrawChildren(Renderer renderer)
     {
-        bool logDraw = DbgFrame <= 5 || DbgFrame % 300 == 0;
-        if (logDraw)
-            Sokol.SLog.Info($"GUI.Draw[{DbgFrame}]: {Children.Count} direct screen children", "Sokol.GUI");
+        // bool logDraw = false; // DbgFrame <= 5 || DbgFrame % 300 == 0;
+        // if (logDraw)
+        //     Sokol.SLog.Info($"GUI.Draw[{DbgFrame}]: {Children.Count} direct screen children", "Sokol.GUI");
 
         // Snapshot the list to avoid "collection modified during enumeration" if a
         // child adds/removes siblings during Draw (e.g. Notification, Tooltip, Popup).
@@ -265,8 +269,8 @@ public sealed class Screen : Widget
         for (int i = 0; i < count; i++)
         {
             var child = list[i];
-            if (logDraw)
-                Sokol.SLog.Info($"GUI.Draw[{DbgFrame}]:   {child.GetType().Name} Bounds={child.Bounds} Visible={child.Visible}", "Sokol.GUI");
+            // if (logDraw)
+            //     Sokol.SLog.Info($"GUI.Draw[{DbgFrame}]:   {child.GetType().Name} Bounds={child.Bounds} Visible={child.Visible}", "Sokol.GUI");
 
             if (!child.Visible) continue;
             renderer.Save();

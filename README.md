@@ -155,6 +155,9 @@ Samples for [sokol_gp](https://github.com/edubart/sokol_gp) — a minimal, effic
 ### Filesystem
 - **[FileSystemTest](examples/FileSystemTest)** - Comprehensive test application for [sokol_filesystem](docs/SOKOL_FILESYSTEM.md) — 88 tests across path queries, user folders, asset reads, file I/O (binary + text), directory enumeration, and glob. Verified on macOS, iOS, Android, WebAssembly, Windows, and Linux.
 
+### Audio
+- **[MiniAudioDemo](examples/MiniAudioDemo)** - Cross-platform audio demo using [miniaudio](https://miniaud.io) — concurrent sound-effect playback, looping music toggle, async asset loading via `SFilesystem`, and a `Sokol.GUI` layout. Targets Desktop, iOS, Android, and WebAssembly.
+
 ### Physics
 - **[JoltPhysicsDemo](examples/JoltPhysicsDemo)** - Interactive browser with 100+ runnable Jolt Physics demos (rigid bodies, constraints, vehicles, soft bodies, ragdolls, water/buoyancy) with live in-app panel, virtual controls, and a custom water shader with Fresnel shading and transparency. Targets Desktop, Android, iOS, and WebAssembly.
 - **[JoltPhysics](examples/JoltPhysics)** - 10,000 dynamic physics bodies with GPU instancing and multithreading

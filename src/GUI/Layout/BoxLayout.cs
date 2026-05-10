@@ -82,7 +82,7 @@ public sealed class BoxLayout : ILayout
 
     public void Arrange(Widget parent, Renderer renderer, Rect finalRect)
     {
-        bool log = Screen.DbgFrame <= 5 || Screen.DbgFrame % 300 == 0;
+        // bool log = Screen.DbgFrame <= 5 || Screen.DbgFrame % 300 == 0;
         bool vertical  = Orientation == Orientation.Vertical;
         var  pad       = parent.Padding;
         // LOCAL inner rect: positions are relative to the parent's (0,0) origin, not finalRect.X/Y.
@@ -176,8 +176,8 @@ public sealed class BoxLayout : ILayout
                 child.Bounds = new Rect(cursor + cm, crossPos + cmt, childMain, childCross - child.Margin.Vertical);
             }
 
-            if (log)
-                Sokol.SLog.Info($"BoxLayout[{Screen.DbgFrame}]: {parent.GetType().Name}/{child.GetType().Name} FixedSize={child.FixedSize} Expand={child.Expand} → Bounds={child.Bounds}", "Sokol.GUI");
+            // if (log)
+            //     Sokol.SLog.Info($"BoxLayout[{Screen.DbgFrame}]: {parent.GetType().Name}/{child.GetType().Name} FixedSize={child.FixedSize} Expand={child.Expand} → Bounds={child.Bounds}", "Sokol.GUI");
 
             float actualMain = childMain + (vertical ? child.Margin.Vertical : child.Margin.Horizontal);
             if (rtlH)
