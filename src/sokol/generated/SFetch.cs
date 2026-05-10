@@ -112,7 +112,7 @@ public struct sfetch_response_t
     public sfetch_error_t error_code;
     public uint channel;
     public uint lane;
-    public IntPtr path;
+    public void* path;
     public void* user_data;
     public uint data_offset;
     public sfetch_range_t data;

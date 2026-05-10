@@ -94,6 +94,7 @@ def parse_enum(decl, source):
         outp['kind'] = 'consts'
         needs_value = True
     outp['items'] = []
+    implicit_value = 0
     for item_decl in decl['inner']:
         if item_decl['kind'] == 'FullComment':
             outp['comment'] = extract_comment(item_decl, source)
@@ -124,7 +125,8 @@ def parse_enum(decl, source):
                     else:
                         sys.exit(f"ERROR: Enum value ConstantExpr must have exactly one IntegerLiteral ({item_decl['name']})")
             if needs_value and 'value' not in item:
-                sys.exit("ERROR: anonymous enum items require an explicit value")
+                item['value'] = str(implicit_value)
+            implicit_value = int(item.get('value', implicit_value)) + 1
             outp['items'].append(item)
     return outp
 
@@ -163,8 +165,20 @@ def parse_decl(decl, source):
         return parse_enum(decl, source)
     elif kind == 'FunctionDecl':
         return parse_func(decl, source)
+    elif kind == 'TypedefDecl':
+        return parse_typedef_alias(decl)
     else:
         return None
+
+def parse_typedef_alias(decl):
+    """Parse a TypedefDecl as a struct/enum alias entry for the IR."""
+    if 'type' not in decl or 'qualType' not in decl['type']:
+        return None
+    return {
+        'kind': 'typedef_alias',
+        'name': decl['name'],
+        'type': decl['type']['qualType'],
+    }
 
 # def clang(csrc_path, with_comments=False):
 #     cmd = ['clang', '-Xclang', '-ast-dump=json', "-c", csrc_path]
@@ -239,6 +253,34 @@ def gen(header_path, source_path, module, main_prefix, dep_prefixes, with_commen
                     merged_decl['name'] = next_decl['name']  # Use the typedef name
                     decls_to_process.append(merged_decl)
                     i += 2  # Skip both the RecordDecl and TypedefDecl
+                    continue
+
+            # Check if this is an anonymous EnumDecl followed by a TypedefDecl
+            # e.g. typedef enum { ... } ma_format;
+            if (decl.get('kind') == 'EnumDecl' and
+                not decl.get('name') and  # anonymous
+                'inner' in decl and len(decl['inner']) > 0 and
+                i + 1 < len(inp['inner'])):
+
+                next_decl = inp['inner'][i + 1]
+                # Also verify the typedef actually refers to this enum (not a struct/other type).
+                # In the clang AST, a typedef over an anonymous enum has an inner ElaboratedType
+                # whose qualType starts with 'enum '; a typedef over a struct starts with 'struct '.
+                next_refers_to_enum = (
+                    next_decl.get('kind') == 'TypedefDecl' and
+                    any(inner.get('kind') == 'ElaboratedType' and
+                        inner.get('type', {}).get('qualType', '').startswith('enum ')
+                        for inner in next_decl.get('inner', []))
+                )
+                if (next_refers_to_enum and
+                    next_decl.get('name') and
+                    is_api_decl(next_decl, main_prefix, extra_api_prefixes)):
+
+                    # This is a typedef enum pattern, merge them
+                    merged_decl = decl.copy()
+                    merged_decl['name'] = next_decl['name']  # Use the typedef name
+                    decls_to_process.append(merged_decl)
+                    i += 2  # Skip both the EnumDecl and TypedefDecl
                     continue
             
             decls_to_process.append(decl)

@@ -96,6 +96,10 @@ SPINE_EXPORT void sspine_get_scale_internal(sspine_vec2* result, sspine_instance
     *result = sspine_get_scale(instance);
 }
 
+SPINE_EXPORT void sspine_get_color_internal(sspine_color* result, sspine_instance instance) {
+    *result = sspine_get_color(instance);
+}
+
 SPINE_EXPORT void sspine_anim_by_name_internal(sspine_anim* result, sspine_skeleton skeleton, const char * name) {
     *result = sspine_anim_by_name(skeleton, name);
 }
@@ -158,6 +162,10 @@ SPINE_EXPORT void sspine_slot_by_index_internal(sspine_slot* result, sspine_skel
 
 SPINE_EXPORT void sspine_get_slot_info_internal(sspine_slot_info* result, sspine_slot slot) {
     *result = sspine_get_slot_info(slot);
+}
+
+SPINE_EXPORT void sspine_get_slot_color_internal(sspine_color* result, sspine_instance instance, sspine_slot slot) {
+    *result = sspine_get_slot_color(instance, slot);
 }
 
 SPINE_EXPORT void sspine_event_by_name_internal(sspine_event* result, sspine_skeleton skeleton, const char * name) {

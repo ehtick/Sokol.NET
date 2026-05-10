@@ -1138,12 +1138,21 @@ public static sspine_vec2 sspine_get_scale(sspine_instance instance)
 public static extern sspine_vec2 sspine_get_scale(sspine_instance instance);
 #endif
 
+#if WEB
+public static sg_color sspine_get_color(sspine_instance instance)
+{
+    sg_color result = default;
+    sspine_get_color_internal(ref result, instance);
+    return result;
+}
+#else
 #if __IOS__
 [DllImport("@rpath/spine-c.framework/spine-c", EntryPoint = "sspine_get_color", CallingConvention = CallingConvention.Cdecl)]
 #else
 [DllImport("spine-c", EntryPoint = "sspine_get_color", CallingConvention = CallingConvention.Cdecl)]
 #endif
 public static extern sg_color sspine_get_color(sspine_instance instance);
+#endif
 
 #if __IOS__
 [DllImport("@rpath/spine-c.framework/spine-c", EntryPoint = "sspine_num_anims", CallingConvention = CallingConvention.Cdecl)]
@@ -1597,12 +1606,21 @@ public static extern sspine_slot_info sspine_get_slot_info(sspine_slot slot);
 #endif
 public static extern void sspine_set_slot_color(sspine_instance instance, sspine_slot slot, sg_color color);
 
+#if WEB
+public static sg_color sspine_get_slot_color(sspine_instance instance, sspine_slot slot)
+{
+    sg_color result = default;
+    sspine_get_slot_color_internal(ref result, instance, slot);
+    return result;
+}
+#else
 #if __IOS__
 [DllImport("@rpath/spine-c.framework/spine-c", EntryPoint = "sspine_get_slot_color", CallingConvention = CallingConvention.Cdecl)]
 #else
 [DllImport("spine-c", EntryPoint = "sspine_get_slot_color", CallingConvention = CallingConvention.Cdecl)]
 #endif
 public static extern sg_color sspine_get_slot_color(sspine_instance instance, sspine_slot slot);
+#endif
 
 #if __IOS__
 [DllImport("@rpath/spine-c.framework/spine-c", EntryPoint = "sspine_num_events", CallingConvention = CallingConvention.Cdecl)]
@@ -1994,6 +2012,13 @@ public static extern void sspine_get_position_internal(ref sspine_vec2 result, s
 public static extern void sspine_get_scale_internal(ref sspine_vec2 result, sspine_instance instance);
 
 #if __IOS__
+[DllImport("@rpath/spine-c.framework/spine-c", EntryPoint = "sspine_get_color_internal", CallingConvention = CallingConvention.Cdecl)]
+#else
+[DllImport("spine-c", EntryPoint = "sspine_get_color_internal", CallingConvention = CallingConvention.Cdecl)]
+#endif
+public static extern void sspine_get_color_internal(ref sg_color result, sspine_instance instance);
+
+#if __IOS__
 [DllImport("@rpath/spine-c.framework/spine-c", EntryPoint = "sspine_anim_by_name_internal", CallingConvention = CallingConvention.Cdecl)]
 #else
 [DllImport("spine-c", EntryPoint = "sspine_anim_by_name_internal", CallingConvention = CallingConvention.Cdecl)]
@@ -2104,6 +2129,13 @@ public static extern void sspine_slot_by_index_internal(ref sspine_slot result, 
 [DllImport("spine-c", EntryPoint = "sspine_get_slot_info_internal", CallingConvention = CallingConvention.Cdecl)]
 #endif
 public static extern void sspine_get_slot_info_internal(ref sspine_slot_info result, sspine_slot slot);
+
+#if __IOS__
+[DllImport("@rpath/spine-c.framework/spine-c", EntryPoint = "sspine_get_slot_color_internal", CallingConvention = CallingConvention.Cdecl)]
+#else
+[DllImport("spine-c", EntryPoint = "sspine_get_slot_color_internal", CallingConvention = CallingConvention.Cdecl)]
+#endif
+public static extern void sspine_get_slot_color_internal(ref sg_color result, sspine_instance instance, sspine_slot slot);
 
 #if __IOS__
 [DllImport("@rpath/spine-c.framework/spine-c", EntryPoint = "sspine_event_by_name_internal", CallingConvention = CallingConvention.Cdecl)]

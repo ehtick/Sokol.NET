@@ -29,6 +29,7 @@ tasks = [
     [ '../ext/nanovg/src/sokol_nanovg.h',    'nvg',      ['sg_'] ],
     [ '../ext/nanosvg/src/nanosvg.h',        'nsvg',     [] ],
     [ '../ext/nanosvg/src/nanosvgrast.h',    'nsvg',     [] ],
+    [ '../ext/miniaudio/miniaudio.h',        'ma_',      [] ],
 
 ]
 
@@ -82,3 +83,10 @@ manifoldc_header_output_path = '../ext/manifold/bindings/c/include/manifoldc_csh
 with open(manifoldc_header_output_path, 'w', newline='\n') as f_header:
     f_header.write(manifoldc_header_content)
 print(f'  Generated Manifoldc wrappers: {manifoldc_header_output_path}')
+
+# Generate miniaudio wrappers header (only miniaudio functions)
+miniaudio_header_content = gen_csharp.gen_c_miniaudio_wrappers_header(all_irs)
+miniaudio_header_output_path = '../ext/miniaudio/miniaudio_csharp_internal_wrappers.h'
+with open(miniaudio_header_output_path, 'w', newline='\n') as f_header:
+    f_header.write(miniaudio_header_content)
+print(f'  Generated miniaudio wrappers: {miniaudio_header_output_path}')

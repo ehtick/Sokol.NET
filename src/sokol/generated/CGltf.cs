@@ -896,7 +896,7 @@ public struct cgltf_data
     public nuint extensions_used_count;
     public IntPtr extensions_required;
     public nuint extensions_required_count;
-    public IntPtr json;
+    public void* json;
     public nuint json_size;
     public void* bin;
     public nuint bin_size;

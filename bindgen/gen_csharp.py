@@ -40,6 +40,7 @@ module_names = {
     'sfs_':      'SFilesystem',
     'nvg':       'NanoVG',
     'nsvg':      'NanoSVG',
+    'ma_':       'MiniAudio',
 }
 
 # Namespace names per prefix
@@ -47,6 +48,7 @@ namespace_names = {
     'cam_':     'System.Hardware',
     'cam':      'System.Hardware',
     'manifold_': 'Manifold',
+    'ma_':       'MiniAudioNS',
 }
 default_namespace = 'Sokol'
 
@@ -55,6 +57,7 @@ output_dirs = {
     'cam_':     '../src/System.Hardware',
     'cam':      '../src/System.Hardware',
     'manifold_': '../ext/manifold/bindings/csharp',
+    'ma_':       '../ext/miniaudio/bindings/csharp',
 }
 default_output_dir = '../src/sokol/generated'
 
@@ -105,6 +108,7 @@ library_names = {
     'sfs_':      'sokol',
     'nvg':       'sokol',
     'nsvg':      'sokol',
+    'ma_':       'miniaudio',
 }
 
 
@@ -138,6 +142,7 @@ c_source_paths = {
     'sfs_':      'c/sokol_filesystem.c',
     'nvg':       'c/nanovg.c',
     'nsvg':      'c/nanosvg.c',
+    'ma_':       'c/miniaudio.c',
 }
 
 name_ignores = [
@@ -202,6 +207,9 @@ type_overrides = {
     'sdtx_font.font_index':                 'uint32_t',
     'sfetch_response_t.path':               'void*',
     'cgltf_data.json':                      'void*',
+    # miniaudio float** fields: pointer-to-pointer, map to IntPtr in structs
+    'ma_channel_converter_config.ppWeights':     'IntPtr',
+    'ma_data_converter_config.ppChannelWeights': 'IntPtr',
 }
 
 
@@ -270,6 +278,67 @@ prim_types = {
     'sfs_enumerate_callback_t':  'IntPtr',
     # nanovg opaque context handle
     'NVGcontext *':              'IntPtr',
+    # miniaudio primitive typedefs
+    'ma_uint8':   'byte',
+    'ma_int8':    'sbyte',
+    'ma_uint16':  'ushort',
+    'ma_int16':   'short',
+    'ma_uint32':  'uint',
+    'ma_int32':   'int',
+    'ma_uint64':  'ulong',
+    'ma_int64':   'long',
+    'ma_bool8':   'byte',
+    'ma_bool32':  'uint',
+    'ma_uintptr': 'nuint',
+    'ma_handle':  'IntPtr',
+    'ma_ptr':     'IntPtr',
+    'ma_proc':    'IntPtr',
+    'ma_wchar_win32': 'ushort',
+    'ma_channel': 'byte',
+    # miniaudio opaque OS/platform handles
+    'ma_thread':  'IntPtr',
+    'ma_mutex':   'IntPtr',
+    'ma_event':   'IntPtr',
+    'ma_semaphore': 'IntPtr',
+    'ma_timer':   'IntPtr',
+    # miniaudio additional primitive aliases
+    'ma_float':   'float',
+    'ma_spinlock': 'uint',
+    # miniaudio opaque struct pointer types (forward-declared interfaces)
+    'ma_async_notification *':  'IntPtr',
+    'ma_data_source *':         'IntPtr',
+    'ma_node *':                'IntPtr',
+    'ma_resampling_backend *':  'IntPtr',
+    'ma_vfs *':                 'IntPtr',
+    # miniaudio function pointer typedefs
+    'ma_log_callback_proc':         'IntPtr',
+    'ma_decoder_read_proc':         'IntPtr',
+    'ma_decoder_seek_proc':         'IntPtr',
+    'ma_decoder_tell_proc':         'IntPtr',
+    'ma_device_data_proc':          'IntPtr',
+    'ma_device_notification_proc':  'IntPtr',
+    'ma_encoder_init_proc':         'IntPtr',
+    'ma_encoder_seek_proc':         'IntPtr',
+    'ma_encoder_uninit_proc':       'IntPtr',
+    'ma_encoder_write_pcm_frames_proc': 'IntPtr',
+    'ma_encoder_write_proc':        'IntPtr',
+    'ma_engine_process_proc':       'IntPtr',
+    'ma_read_proc':                 'IntPtr',
+    'ma_seek_proc':                 'IntPtr',
+    'ma_sound_end_proc':            'IntPtr',
+    'ma_stop_proc':                 'IntPtr',
+    'ma_tell_proc':                 'IntPtr',
+    'ma_data_source_get_next_proc': 'IntPtr',
+    # miniaudio platform threading types (opaque on all platforms)
+    'ma_pthread_mutex_t': 'IntPtr',
+    'ma_pthread_cond_t':  'IntPtr',
+    # C types with spaces that appear as array element types
+    'unsigned char': 'byte',
+    # misc pointer types
+    'const wchar_t *': 'IntPtr',
+    # pass-through entries so type_overrides can emit raw C# type names
+    'IntPtr': 'IntPtr',
+    'void*':  'void*',
 }
 
 
@@ -322,6 +391,7 @@ web_wrapper_struct_return_functions = {}
 struct_types = []
 enum_types = []
 enum_items = {}
+struct_type_aliases = {}  # alias name -> canonical struct name
 out_lines = ''
 current_library_name = 'sokol'  # Default library name, will be set per module
 
@@ -329,12 +399,14 @@ def reset_globals():
     global struct_types
     global enum_types
     global enum_items
+    global struct_type_aliases
     global out_lines
     global web_wrapper_struct_return_functions
     global current_library_name
     struct_types = []
     enum_types = []
     enum_items = {}
+    struct_type_aliases = {}
     out_lines = ''
     current_library_name = 'sokol'  # Reset to default
     # Note: web_wrapper_struct_return_functions is NOT reset here
@@ -349,7 +421,8 @@ def as_csharp_prim_type(s):
 
 # prefix_bla_blub(_t) => (dep.)BlaBlub
 def as_csharp_struct_type(s, prefix):
-    return s
+    # If s is a typedef alias, return the canonical C name instead
+    return struct_type_aliases.get(s, s)
 
 # prefix_bla_blub(_t) => (dep.)BlaBlub
 def as_csharp_enum_type(s, prefix):
@@ -389,7 +462,7 @@ def is_prim_type(s):
     return s in prim_types
 
 def is_struct_type(s):
-    return s in struct_types
+    return s in struct_types or s in struct_type_aliases
 
 def is_enum_type(s):
     return s in enum_types
@@ -740,6 +813,8 @@ def gen_struct(decl, prefix):
     l(f"public struct {csharp_type}")
     l("{")
     for field in decl['fields']:
+        if 'name' not in field:
+            continue  # skip anonymous/unnamed struct fields
         field_name = as_pascal_case(check_name_override(field['name']), "")
         field_type = field['type']
         field_type = check_type_override(struct_name, field_name, field_type)
@@ -843,7 +918,11 @@ def gen_struct(decl, prefix):
             #t0 = f"[{array_nums[0]}][{array_nums[1]}]{csharp_type}"
             #l(f"    {field_name}: {t0} = [_][{array_nums[1]}]{csharp_type}{{[_]{csharp_type}{{ {def_val} }}**{array_nums[1]}}}**{array_nums[0]},")
         else:
-            l(f"// FIXME: {field_name}: {field_type};")
+            # Silently skip fields with unnamed/anonymous inner types (layout is preserved
+            # by the C side; C# code never constructs these structs field-by-field).
+            if 'unnamed struct' not in field_type and 'unnamed union' not in field_type and \
+               'anonymous' not in field_type:
+                l(f"// FIXME: {field_name}: {field_type};")
     l("}")
 
 def gen_consts(decl, prefix):
@@ -1097,6 +1176,7 @@ def detect_struct_return_functions(inp):
 def pre_parse(inp):
     global struct_types
     global enum_types
+    global struct_type_aliases
     for decl in inp['decls']:
         kind = decl['kind']
         if kind == 'struct':
@@ -1107,6 +1187,20 @@ def pre_parse(inp):
             enum_items[enum_name] = []
             for item in decl['items']:
                 enum_items[enum_name].append(as_enum_item_name(item['name']))
+        elif kind == 'typedef_alias':
+            # Register struct and enum typedef aliases so field type resolution works
+            alias_name = decl['name']
+            canonical = decl['type']
+            # Strip C type qualifiers like "struct " or "enum " from the canonical name
+            for qualifier in ('struct ', 'enum ', 'union '):
+                if canonical.startswith(qualifier):
+                    canonical = canonical[len(qualifier):]
+                    break
+            if canonical in struct_types:
+                struct_type_aliases[alias_name] = canonical
+                struct_types.append(alias_name)
+            elif canonical in enum_types:
+                enum_types.append(alias_name)
     
     # After parsing types, detect struct-returning functions for WebAssembly
     detect_struct_return_functions(inp)
@@ -1166,6 +1260,8 @@ def gen_c_internal_wrappers_header(all_inputs):
         if prefix == 'b2':  # Skip box2d functions - they go in separate header
             continue
         if prefix == 'manifold_':  # Skip manifoldc functions - they go in separate header
+            continue
+        if prefix == 'ma_':  # Skip miniaudio functions - they go in separate header
             continue
             
         module_name = inp['module']
@@ -1551,6 +1647,77 @@ def gen_c_manifoldc_wrappers_header(all_inputs):
 
     return "\n".join(header_lines)
 
+def gen_c_miniaudio_wrappers_header(all_inputs):
+    """Generate C header file with miniaudio _internal wrapper function implementations."""
+    header_lines = []
+    header_lines.append("/*")
+    header_lines.append("    AUTO-GENERATED MINIAUDIO INTERNAL WRAPPER FUNCTIONS")
+    header_lines.append("    This file is automatically generated by gen_csharp.py")
+    header_lines.append("    DO NOT EDIT MANUALLY")
+    header_lines.append("")
+    header_lines.append("    WebAssembly/Emscripten cannot marshal structs returned by value through P/Invoke.")
+    header_lines.append("    These _internal helper functions work around this limitation by taking an output")
+    header_lines.append("    pointer parameter instead.")
+    header_lines.append("*/")
+    header_lines.append("")
+    header_lines.append("#ifndef MINIAUDIO_CSHARP_INTERNAL_WRAPPERS_H")
+    header_lines.append("#define MINIAUDIO_CSHARP_INTERNAL_WRAPPERS_H")
+    header_lines.append("")
+    header_lines.append("#define MA_NO_IMPLEMENTATION")
+    header_lines.append("#include \"miniaudio.h\"")
+    header_lines.append("")
+    header_lines.append("// For Emscripten builds, these functions need to be exported")
+    header_lines.append("#ifdef __EMSCRIPTEN__")
+    header_lines.append("    #include <emscripten.h>")
+    header_lines.append("    #define MINIAUDIO_EXPORT EMSCRIPTEN_KEEPALIVE")
+    header_lines.append("#else")
+    header_lines.append("    #define MINIAUDIO_EXPORT")
+    header_lines.append("#endif")
+    header_lines.append("")
+
+    # Filter only miniaudio-related functions
+    for inp in all_inputs:
+        prefix = inp['prefix']
+        if prefix != 'ma_':  # Only process miniaudio functions
+            continue
+
+        module_name = inp['module']
+        has_functions = False
+
+        for decl in inp['decls']:
+            if not decl['is_dep'] and decl['kind'] == 'func':
+                c_func_name = decl['name']
+                if c_func_name in web_wrapper_struct_return_functions:
+                    if not has_functions:
+                        header_lines.append(f"// ========== {module_name} ({prefix}) ===========")
+                        header_lines.append("")
+                        has_functions = True
+
+                    return_type = web_wrapper_struct_return_functions[c_func_name]
+
+                    params_c = []
+                    for param in decl['params']:
+                        param_type = check_type_override(c_func_name, param['name'], param['type'])
+                        param_name = param['name']
+                        params_c.append(f"{param_type} {param_name}")
+
+                    params_str = ", ".join(params_c) if params_c else ""
+                    if params_str:
+                        params_str = ", " + params_str
+
+                    args = [param['name'] for param in decl['params']]
+                    args_str = ", ".join(args)
+
+                    header_lines.append(f"MINIAUDIO_EXPORT void {c_func_name}_internal({return_type}* result{params_str}) {{")
+                    header_lines.append(f"    *result = {c_func_name}({args_str});")
+                    header_lines.append("}")
+                    header_lines.append("")
+
+    header_lines.append("#endif // MINIAUDIO_CSHARP_INTERNAL_WRAPPERS_H")
+    header_lines.append("")
+
+    return "\n".join(header_lines)
+
 def gen_module(inp, dep_prefixes):
     l('// machine generated, do not edit')
     l('using System;')
@@ -1586,6 +1753,8 @@ def gen_module(inp, dep_prefixes):
                 elif kind == 'func':
                     gen_func_c(decl, prefix)
                     gen_func_csharp(decl, prefix)
+                elif kind == 'typedef_alias':
+                    pass  # aliases are only used for type resolution, no code emitted
     # Generate _internal function declarations for WebAssembly
     gen_internal_functions(inp, prefix)
     l("}")
