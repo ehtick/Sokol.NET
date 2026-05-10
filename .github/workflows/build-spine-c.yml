@@ -48,6 +48,7 @@ jobs:
                [[ "$file" == ext/spine-c/CMakeLists.txt ]] || \
                [[ "$file" == ext/spine-c/scripts/* ]] || \
                [[ "$file" == ext/spine-c/sokol_spine_extension.c ]] || \
+               [[ "$file" == ext/spine-c/spine_c_csharp_internal_wrappers.h ]] || \
                [[ "$file" == ext/sokol/sokol_gfx.h ]] || \
                [[ "$file" == ext/sokol/util/sokol_spine.h ]] || \
                [[ "$file" == .github/workflows/build-spine-c.yml ]]; then
