@@ -910,8 +910,17 @@ public static unsafe class MiniaudiodemoApp
         _oscWidget = new OscilloscopeWidget { Expand = true };
         vizRow.AddChild(_oscWidget);
 
-        _vuWidget = new VuMeterWidget { FixedSize = new Vector2(90, 0) };
-        vizRow.AddChild(_vuWidget);
+        var waveDbCheck = new CheckBox { Label = "dB", FixedSize = new Vector2(90, 22), IsChecked = true };
+        _vuWidget = new VuMeterWidget { Expand = true, DbScale = true };
+        waveDbCheck.CheckedChanged += v => _vuWidget!.DbScale = v;
+        var waveVuCol = new Panel
+        {
+            Layout    = new BoxLayout(Orientation.Vertical, Alignment.Start, 0),
+            FixedSize = new Vector2(90, 0),
+        };
+        waveVuCol.AddChild(waveDbCheck);
+        waveVuCol.AddChild(_vuWidget);
+        vizRow.AddChild(waveVuCol);
 
         root.AddChild(vizRow);
 
@@ -1298,9 +1307,18 @@ public static unsafe class MiniaudiodemoApp
             Content             = controls,
         };
 
-        _eqVuWidget = new VuMeterWidget { FixedSize = new Vector2(90, 0) };
+        _eqVuWidget = new VuMeterWidget { Expand = true, DbScale = true };
+        var eqDbCheck = new CheckBox { Label = "dB", FixedSize = new Vector2(90, 22), IsChecked = true };
+        eqDbCheck.CheckedChanged += v => _eqVuWidget!.DbScale = v;
+        var eqVuCol = new Panel
+        {
+            Layout    = new BoxLayout(Orientation.Vertical, Alignment.Start, 0),
+            FixedSize = new Vector2(90, 0),
+        };
+        eqVuCol.AddChild(eqDbCheck);
+        eqVuCol.AddChild(_eqVuWidget);
         outer.AddChild(scrollView);
-        outer.AddChild(_eqVuWidget);
+        outer.AddChild(eqVuCol);
 
         controls.AddChild(new Label { Text = "5-Band Equalizer", FontSize = 20 });
         controls.AddChild(new Label
@@ -1607,6 +1625,8 @@ sealed class VuMeterWidget : Widget
     const float HoldTime  = 1.5f;   // seconds before peak hold starts falling
     const float HoldDecay = 1.2f;   // fall speed in linear units per second
 
+    public bool DbScale { get; set; } = false;
+
     public void UpdateLevels(float peakL, float rmsL, float peakR, float rmsR, float dt)
     {
         // Fast attack, exponential decay (~300ms time constant)
@@ -1660,8 +1680,8 @@ sealed class VuMeterWidget : Widget
         float rx = Pad + barW + Gap;
         float ty = Pad;
 
-        DrawBar(renderer, lx, ty, barW, barH, _smoothRmsL, _holdL);
-        DrawBar(renderer, rx, ty, barW, barH, _smoothRmsR, _holdR);
+        DrawBar(renderer, lx, ty, barW, barH, _smoothRmsL, _holdL, DbScale);
+        DrawBar(renderer, rx, ty, barW, barH, _smoothRmsR, _holdR, DbScale);
 
         // Channel labels
         renderer.SetFillColor(UIColor.FromHex("#889AAA"));
@@ -1675,28 +1695,35 @@ sealed class VuMeterWidget : Widget
     }
 
     static void DrawBar(Renderer renderer, float x, float y, float bw, float bh,
-                        float rms, float hold)
+                        float rms, float hold, bool dbScale)
     {
         // Background
         renderer.FillRect(new Rect(x, y, bw, bh), UIColor.FromHex("#1A1A2E"));
+
+        // Map a linear amplitude (0–1) to a bar fill fraction (0–1)
+        static float ToFrac(float v, bool db) => db
+            ? MathF.Max(0f, (MathF.Max(v > 0f ? 20f * MathF.Log10(v) : -60f, -60f) + 60f) / 60f)
+            : MathF.Min(v, 1f);
 
         // dB tick marks at 0, -6, -12, -18, -24 dBFS
         ReadOnlySpan<float> dbTicks = stackalloc float[] { 0f, -6f, -12f, -18f, -24f };
         foreach (float db in dbTicks)
         {
-            float level = db >= 0f ? 1f : MathF.Pow(10f, db / 20f);
-            float ty = y + bh - level * bh;
+            float frac = dbScale
+                ? (db + 60f) / 60f
+                : db >= 0f ? 1f : MathF.Pow(10f, db / 20f);
+            float ty = y + bh - frac * bh;
             if (ty >= y && ty <= y + bh)
                 renderer.FillRect(new Rect(x, ty, bw, 1f), UIColor.FromHex("#2A3A4A"));
         }
 
         // RMS fill bar with green→yellow→red gradient (bottom to top)
-        float fillH = MathF.Min(rms, 1f) * bh;
+        float fillH = ToFrac(rms, dbScale) * bh;
         if (fillH >= 1f)
         {
             float barY = y + bh - fillH;
             var vg     = renderer.VGContext;
-            // Gradient bottom (green) → top (red), scaled by fill so short bars stay green
+            // Gradient bottom (green) → top (red)
             var paint = nvgLinearGradient(vg, x, y + bh, x, y,
                 new NVGcolor { r = 0.15f, g = 0.85f, b = 0.20f, a = 1f },   // green at bottom
                 new NVGcolor { r = 0.95f, g = 0.20f, b = 0.15f, a = 1f });  // red at top
@@ -1709,7 +1736,7 @@ sealed class VuMeterWidget : Widget
         // Peak hold line (white)
         if (hold > 0.005f)
         {
-            float holdY = y + bh - MathF.Min(hold, 1f) * bh;
+            float holdY = y + bh - ToFrac(hold, dbScale) * bh;
             renderer.SetStrokeColor(UIColor.FromHex("#FFFFFFCC"));
             renderer.SetStrokeWidth(2f);
             renderer.DrawLine(new Vector2(x, holdY), new Vector2(x + bw, holdY), 2f);
