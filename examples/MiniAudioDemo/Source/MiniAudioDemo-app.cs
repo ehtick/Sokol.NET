@@ -875,8 +875,8 @@ public static unsafe class MiniaudiodemoApp
         // Side-by-side visualizers: oscilloscope (expands to fill width) + VU meter (fixed 90px wide)
         var vizRow = new Panel
         {
-            Layout = new BoxLayout(Orientation.Horizontal, Alignment.Stretch, 8),
-            Expand = true,
+            Layout    = new BoxLayout(Orientation.Horizontal, Alignment.Stretch, 8),
+            FixedSize = new Vector2(0, 150),
         };
 
         _oscWidget = new OscilloscopeWidget { Expand = true };
@@ -886,7 +886,6 @@ public static unsafe class MiniaudiodemoApp
         vizRow.AddChild(_vuWidget);
 
         root.AddChild(vizRow);
-        root.Expand = true;
 
         // Helpers
         ma_waveform_type CurrentWaveType() => typeCombo.SelectedIndex switch
@@ -992,7 +991,7 @@ public static unsafe class MiniaudiodemoApp
             if (_vuWaveform != null) ma_waveform_set_type(_vuWaveform, wt);
         };
 
-        return root;
+        return new ScrollView { CanScrollHorizontal = false, CanScrollVertical = true, Expand = true, Content = root };
     }
 
     // ── Tab: Spatialization ───────────────────────────────────────────────────
@@ -1081,17 +1080,15 @@ public static unsafe class MiniaudiodemoApp
         // Canvas widget
         _spatCanvas = new SpatializationCanvasWidget
         {
-            Expand  = true,
-            MaxDist = spatMaxDist,
-            MinDist = spatMinDist,
+            FixedSize = new Vector2(0, 200),
+            MaxDist   = spatMaxDist,
+            MinDist   = spatMinDist,
         };
         _spatCanvas.PositionChanged += (x, z) =>
         {
             if (_spatSound != null) ma_sound_set_position(_spatSound, x, 0f, z);
         };
         root.AddChild(_spatCanvas);
-
-        root.Expand = true;
 
         // Play / Stop helpers
         ma_attenuation_model CurrentAttenModel() => attenCombo.SelectedIndex switch
@@ -1158,7 +1155,7 @@ public static unsafe class MiniaudiodemoApp
             if (_spatSound != null) ma_sound_set_attenuation_model(_spatSound, CurrentAttenModel());
         };
 
-        return root;
+        return new ScrollView { CanScrollHorizontal = false, CanScrollVertical = true, Expand = true, Content = root };
     }
 
     // ── EQ helpers ────────────────────────────────────────────────────────────
@@ -1263,11 +1260,18 @@ public static unsafe class MiniaudiodemoApp
         {
             Layout  = new BoxLayout(Orientation.Vertical, Alignment.Start, 14),
             Padding = new Thickness(20),
-            Expand  = true,
+        };
+
+        var scrollView = new ScrollView
+        {
+            CanScrollHorizontal = false,
+            CanScrollVertical   = true,
+            Expand              = true,
+            Content             = controls,
         };
 
         _eqVuWidget = new VuMeterWidget { FixedSize = new Vector2(90, 0) };
-        outer.AddChild(controls);
+        outer.AddChild(scrollView);
         outer.AddChild(_eqVuWidget);
 
         controls.AddChild(new Label { Text = "5-Band Equalizer", FontSize = 20 });
