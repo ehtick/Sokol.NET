@@ -52,7 +52,12 @@ public static unsafe class MiniaudiodemoApp
     static Label?         _activeCountLabel;
     static Button?        _musicButton;
 
-    // ─────────────────────────────────────────────────────────────────────────
+    // ── Additional tab sounds (freed in Cleanup) ──────────────────────────────
+    static ma_sound* _mixSound;
+    static ma_sound* _fadeSound;
+
+    // ── Engine tab — live stats label updated each frame ──────────────────────
+    static Label? _engActiveLabel;
 
     [UnmanagedCallersOnly]
     static void Init()
@@ -212,6 +217,9 @@ public static unsafe class MiniaudiodemoApp
         if (_activeCountLabel != null)
             _activeCountLabel.Text = $"Active: {_active.Count}";
 
+        if (_engActiveLabel != null)
+            _engActiveLabel.Text = $"Active sounds: {_active.Count}";
+
         float winW = sapp_widthf()  ;
         float winH = sapp_heightf() ;
 
@@ -231,6 +239,20 @@ public static unsafe class MiniaudiodemoApp
     [UnmanagedCallersOnly]
     static void Cleanup()
     {
+        if (_mixSound != null)
+        {
+            ma_sound_stop(_mixSound);
+            ma_sound_uninit(_mixSound);
+            NativeMemory.Free(_mixSound);
+        }
+
+        if (_fadeSound != null)
+        {
+            ma_sound_stop(_fadeSound);
+            ma_sound_uninit(_fadeSound);
+            NativeMemory.Free(_fadeSound);
+        }
+
         if (_musicSound != null)
         {
             ma_sound_stop(_musicSound);
@@ -270,16 +292,23 @@ public static unsafe class MiniaudiodemoApp
 
     static void BuildUI()
     {
+        var tabs = new TabView();
+        _screen!.AddChild(tabs);
+
+        tabs.AddTab("Sound FX", BuildSoundFxTab());
+        tabs.AddTab("Mixing",   BuildMixingTab());
+        tabs.AddTab("Fade",     BuildFadeTab());
+        tabs.AddTab("Engine",   BuildEngineTab());
+    }
+
+    // ── Tab: Sound FX ─────────────────────────────────────────────────────────
+    static Widget BuildSoundFxTab()
+    {
         var root = new Panel
         {
             Layout  = new BoxLayout(Orientation.Vertical, Alignment.Stretch, 12),
             Padding = new Thickness(20),
         };
-        _screen!.AddChild(root);
-
-        // Title
-        root.AddChild(new Label { Text = "MiniAudio Demo", FontSize = 24 });
-        root.AddChild(new Separator());
 
         // Status row
         var infoRow = new Panel
@@ -311,7 +340,7 @@ public static unsafe class MiniaudiodemoApp
         root.AddChild(new Separator());
 
         // ── Sound effects ──────────────────────────────────────────────────────
-        root.AddChild(new Label { Text = "Sound Effects  —  click to play, click repeatedly for multiple simultaneous instances", FontSize = 16 });
+        root.AddChild(new Label { Text = "Sound Effects  —  click to play; click repeatedly for simultaneous instances", FontSize = 16 });
 
         var soundsGrid = new Panel
         {
@@ -328,6 +357,274 @@ public static unsafe class MiniaudiodemoApp
             soundsGrid.AddChild(btn);
         }
         root.AddChild(soundsGrid);
+
+        return root;
+    }
+
+    // ── Tab: Mixing ───────────────────────────────────────────────────────────
+    static Widget BuildMixingTab()
+    {
+        var root = new Panel
+        {
+            Layout  = new BoxLayout(Orientation.Vertical, Alignment.Start, 14),
+            Padding = new Thickness(20),
+        };
+
+        root.AddChild(new Label { Text = "Live Sound Mixer", FontSize = 20 });
+        root.AddChild(new Label { Text = "Pick a sound and adjust volume, pitch, and pan in real time while it loops.",
+                                  ForeColor = UIColor.FromHex("#AAAAAA") });
+        root.AddChild(new Separator());
+
+        // Build parallel lists for the combo (paths + display labels)
+        var sfxPaths  = new List<string>();
+        var sfxLabels = new List<string>();
+        foreach (var af in _audioFiles)
+            if (!af.IsMusic) { sfxPaths.Add(af.Path); sfxLabels.Add(af.Label); }
+
+        // ── Sound picker + Play/Stop ──────────────────────────────────────────
+        var pickerRow = new Panel
+        {
+            Layout    = new BoxLayout(Orientation.Horizontal, Alignment.Center, 12),
+            FixedSize = new Vector2(0, 36),
+        };
+        var combo   = new ComboBox { FixedSize = new Vector2(200, 32) };
+        combo.SetItems(sfxLabels.ToArray());
+        combo.SelectedIndex = 0;
+        var playBtn = new Button("▶  Play") { CornerRadius = 6, FixedSize = new Vector2(100, 32) };
+        pickerRow.AddChild(new Label { Text = "Sound:", FixedSize = new Vector2(55, 32) });
+        pickerRow.AddChild(combo);
+        pickerRow.AddChild(playBtn);
+        root.AddChild(pickerRow);
+
+        root.AddChild(new Separator());
+
+        // ── Sliders ───────────────────────────────────────────────────────────
+        float mixVol = 1f, mixPitch = 1f, mixPan = 0f;
+
+        Panel MakeSliderRow(string name, float min, float max, float initial, Label valueLbl, Action<float> onChange)
+        {
+            var row = new Panel
+            {
+                Layout    = new BoxLayout(Orientation.Horizontal, Alignment.Center, 12),
+                FixedSize = new Vector2(0, 32),
+            };
+            var sl = new Slider { Min = min, Max = max, Value = initial, FixedSize = new Vector2(280, 24) };
+            sl.ValueChanged += onChange;
+            row.AddChild(new Label { Text = name, FixedSize = new Vector2(60, 26) });
+            row.AddChild(sl);
+            row.AddChild(valueLbl);
+            return row;
+        }
+
+        var volLbl   = new Label { Text = "1.00", FixedSize = new Vector2(45, 26) };
+        var pitchLbl = new Label { Text = "1.00", FixedSize = new Vector2(45, 26) };
+        var panLbl   = new Label { Text = "0.00", FixedSize = new Vector2(45, 26) };
+
+        root.AddChild(MakeSliderRow("Volume", 0f, 2f, 1f, volLbl, v =>
+        {
+            mixVol = v; volLbl.Text = $"{v:F2}";
+            if (_mixSound != null) ma_sound_set_volume(_mixSound, v);
+        }));
+        root.AddChild(MakeSliderRow("Pitch", 0.25f, 4f, 1f, pitchLbl, v =>
+        {
+            mixPitch = v; pitchLbl.Text = $"{v:F2}";
+            if (_mixSound != null) ma_sound_set_pitch(_mixSound, v);
+        }));
+        root.AddChild(MakeSliderRow("Pan", -1f, 1f, 0f, panLbl, v =>
+        {
+            mixPan = v; panLbl.Text = $"{v:F2}";
+            if (_mixSound != null) ma_sound_set_pan(_mixSound, v);
+        }));
+
+        // ── Play/Stop helpers ─────────────────────────────────────────────────
+        void StartMixSound(string path)
+        {
+            if (!_engineReady || !_loaded.ContainsKey(path)) return;
+            _mixSound = (ma_sound*)NativeMemory.AllocZeroed((nuint)sizeof(ma_sound));
+            uint flags = (uint)(ma_sound_flags.MA_SOUND_FLAG_DECODE | ma_sound_flags.MA_SOUND_FLAG_NO_SPATIALIZATION);
+            if (ma_sound_init_from_file(_engine, path, flags, null, null, _mixSound) != ma_result.MA_SUCCESS)
+            {
+                NativeMemory.Free(_mixSound); _mixSound = null; return;
+            }
+            ma_sound_set_volume(_mixSound, mixVol);
+            ma_sound_set_pitch(_mixSound, mixPitch);
+            ma_sound_set_pan(_mixSound, mixPan);
+            ma_sound_set_looping(_mixSound, 1);
+            ma_sound_start(_mixSound);
+            playBtn.Text = "■  Stop";
+        }
+
+        void StopMixSound()
+        {
+            if (_mixSound == null) return;
+            ma_sound_stop(_mixSound);
+            ma_sound_uninit(_mixSound);
+            NativeMemory.Free(_mixSound);
+            _mixSound = null;
+            playBtn.Text = "▶  Play";
+        }
+
+        playBtn.Clicked += () =>
+        {
+            if (_mixSound != null) { StopMixSound(); return; }
+            int idx = combo.SelectedIndex < 0 ? 0 : combo.SelectedIndex;
+            if (!_loaded.ContainsKey(sfxPaths[idx])) { SetStatus("Still loading — try again"); return; }
+            StartMixSound(sfxPaths[idx]);
+        };
+
+        combo.SelectionChanged += (i, _) =>
+        {
+            if (_mixSound == null) return;
+            StopMixSound();
+            int idx = i < 0 ? 0 : i;
+            if (_loaded.ContainsKey(sfxPaths[idx])) StartMixSound(sfxPaths[idx]);
+        };
+
+        return new ScrollView { Content = root, CanScrollVertical = true };
+    }
+
+    // ── Tab: Fade ─────────────────────────────────────────────────────────────
+    static Widget BuildFadeTab()
+    {
+        var root = new Panel
+        {
+            Layout  = new BoxLayout(Orientation.Vertical, Alignment.Start, 14),
+            Padding = new Thickness(20),
+        };
+
+        root.AddChild(new Label { Text = "Fade Demo", FontSize = 20 });
+        root.AddChild(new Label { Text = "Smooth linear volume transitions via ma_sound_set_fade_in_milliseconds on the music track.",
+                                  ForeColor = UIColor.FromHex("#AAAAAA") });
+        root.AddChild(new Separator());
+
+        // Duration slider
+        float fadeMs = 2000f;
+        var durationLbl = new Label { Text = "2000 ms", FixedSize = new Vector2(80, 26) };
+        var durRow = new Panel
+        {
+            Layout    = new BoxLayout(Orientation.Horizontal, Alignment.Center, 12),
+            FixedSize = new Vector2(0, 32),
+        };
+        var durSlider = new Slider { Min = 200f, Max = 8000f, Value = fadeMs, FixedSize = new Vector2(280, 24) };
+        durSlider.ValueChanged += v => { fadeMs = v; durationLbl.Text = $"{(int)v} ms"; };
+        durRow.AddChild(new Label { Text = "Duration:", FixedSize = new Vector2(70, 26) });
+        durRow.AddChild(durSlider);
+        durRow.AddChild(durationLbl);
+        root.AddChild(durRow);
+
+        root.AddChild(new Separator());
+
+        // Buttons
+        var btnRow = new Panel
+        {
+            Layout    = new BoxLayout(Orientation.Horizontal, Alignment.Center, 12),
+            FixedSize = new Vector2(0, 40),
+        };
+        var fadeInBtn  = new Button("▶  Fade In")  { CornerRadius = 6, FixedSize = new Vector2(130, 36) };
+        var fadeOutBtn = new Button("▼  Fade Out") { CornerRadius = 6, FixedSize = new Vector2(130, 36) };
+        var stopBtn    = new Button("■  Stop")     { CornerRadius = 6, FixedSize = new Vector2(100, 36) };
+        var statusLbl  = new Label { Text = "Stopped", ForeColor = UIColor.FromHex("#AAAAAA") };
+
+        fadeInBtn.Clicked += () =>
+        {
+            if (!_engineReady) return;
+            if (_fadeSound != null)
+            {
+                // Already running: fade up from current volume
+                float curVol = ma_sound_get_volume(in *_fadeSound);
+                ma_sound_set_fade_in_milliseconds(_fadeSound, curVol, 1f, (ulong)fadeMs);
+                statusLbl.Text = $"Fading in ({(int)fadeMs} ms)\u2026";
+                return;
+            }
+            if (!_loaded.ContainsKey("Music/music.ogg")) { statusLbl.Text = "Music not loaded yet"; return; }
+            _fadeSound = (ma_sound*)NativeMemory.AllocZeroed((nuint)sizeof(ma_sound));
+            uint flags = (uint)(ma_sound_flags.MA_SOUND_FLAG_DECODE | ma_sound_flags.MA_SOUND_FLAG_NO_SPATIALIZATION);
+            if (ma_sound_init_from_file(_engine, "Music/music.ogg", flags, null, null, _fadeSound) != ma_result.MA_SUCCESS)
+            {
+                NativeMemory.Free(_fadeSound); _fadeSound = null;
+                statusLbl.Text = "Init failed"; return;
+            }
+            ma_sound_set_looping(_fadeSound, 1);
+            ma_sound_set_fade_in_milliseconds(_fadeSound, 0f, 1f, (ulong)fadeMs);
+            ma_sound_start(_fadeSound);
+            statusLbl.Text = $"Fading in ({(int)fadeMs} ms)\u2026";
+        };
+
+        fadeOutBtn.Clicked += () =>
+        {
+            if (_fadeSound == null) { statusLbl.Text = "Nothing playing"; return; }
+            float curVol = ma_sound_get_volume(in *_fadeSound);
+            ma_sound_set_fade_in_milliseconds(_fadeSound, curVol, 0f, (ulong)fadeMs);
+            statusLbl.Text = $"Fading out ({(int)fadeMs} ms)\u2026";
+        };
+
+        stopBtn.Clicked += () =>
+        {
+            if (_fadeSound == null) return;
+            ma_sound_stop(_fadeSound);
+            ma_sound_uninit(_fadeSound);
+            NativeMemory.Free(_fadeSound);
+            _fadeSound = null;
+            statusLbl.Text = "Stopped";
+        };
+
+        btnRow.AddChild(fadeInBtn);
+        btnRow.AddChild(fadeOutBtn);
+        btnRow.AddChild(stopBtn);
+        root.AddChild(btnRow);
+        root.AddChild(statusLbl);
+
+        return new ScrollView { Content = root, CanScrollVertical = true };
+    }
+
+    // ── Tab: Engine ───────────────────────────────────────────────────────────
+    static Widget BuildEngineTab()
+    {
+        var root = new Panel
+        {
+            Layout  = new BoxLayout(Orientation.Vertical, Alignment.Start, 14),
+            Padding = new Thickness(20),
+        };
+
+        root.AddChild(new Label { Text = "Engine Controls", FontSize = 20 });
+        root.AddChild(new Label { Text = "Global controls affecting all sounds routed through the ma_engine.",
+                                  ForeColor = UIColor.FromHex("#AAAAAA") });
+        root.AddChild(new Separator());
+
+        // Master volume slider
+        var masterVolLbl = new Label { Text = "1.00  (0.0 dB)", FixedSize = new Vector2(150, 26) };
+        float initVol    = _engineReady ? ma_engine_get_volume(_engine) : 1f;
+        var volRow = new Panel
+        {
+            Layout    = new BoxLayout(Orientation.Horizontal, Alignment.Center, 12),
+            FixedSize = new Vector2(0, 32),
+        };
+        var masterSlider = new Slider { Min = 0f, Max = 2f, Value = initVol, FixedSize = new Vector2(280, 24) };
+        masterSlider.ValueChanged += v =>
+        {
+            if (_engineReady) ma_engine_set_volume(_engine, v);
+            float dB = v > 0f ? 20f * MathF.Log10(v) : float.NegativeInfinity;
+            masterVolLbl.Text = float.IsNegativeInfinity(dB)
+                ? $"{v:F2}  (\u2212\u221e dB)"
+                : $"{v:F2}  ({dB:+0.0;-0.0} dB)";
+        };
+        volRow.AddChild(new Label { Text = "Master Vol:", FixedSize = new Vector2(85, 26) });
+        volRow.AddChild(masterSlider);
+        volRow.AddChild(masterVolLbl);
+        root.AddChild(volRow);
+
+        root.AddChild(new Separator());
+
+        root.AddChild(new Label { Text = "Live Stats", FontSize = 16 });
+        _engActiveLabel = new Label { Text = "Active sounds: 0", ForeColor = UIColor.FromHex("#66AAFF") };
+        root.AddChild(_engActiveLabel);
+        root.AddChild(new Label
+        {
+            Text      = _engineReady ? "\u2713 Engine ready" : "\u2717 Engine init failed",
+            ForeColor = _engineReady ? UIColor.FromHex("#66DD88") : UIColor.FromHex("#FF6666"),
+        });
+
+        return new ScrollView { Content = root, CanScrollVertical = true };
     }
 
     public static SApp.sapp_desc sokol_main()
@@ -339,7 +636,7 @@ public static unsafe class MiniaudiodemoApp
             event_cb     = &Event,
             cleanup_cb   = &Cleanup,
             width        = 960,
-            height       = 520,
+            height       = 540,
             sample_count = 4,
             window_title = "MiniAudio Demo",
             icon         = { sokol_default = true },
