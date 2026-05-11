@@ -251,19 +251,41 @@ public sealed class InputRouter
 
     private void DispatchTouch(sapp_event_type type, TouchEvent te)
     {
-        // Translate primary touch (id==0 or first changed point) into synthetic
-        // mouse events so all widgets work on mobile without per-widget changes.
+        // Find primary (first changed) touch for synthetic mouse simulation.
         TouchPoint? primary = null;
         foreach (var pt in te.Touches)
-        {
             if (pt.Changed) { primary = pt; break; }
-        }
         if (primary == null && te.Touches.Length > 0)
             primary = te.Touches[0];
         if (primary == null) return;
 
         var pos = primary.Position;
 
+        // Forward raw touch events first, to every active touch position.
+        // Track whether the primary touch was handled natively by its target widget.
+        bool primaryHandled = false;
+        foreach (var pt in te.Touches)
+        {
+            var target = _screen.HitTestDeep(pt.Position);
+            if (target == null) continue;
+            bool handled = type switch
+            {
+                sapp_event_type.SAPP_EVENTTYPE_TOUCHES_BEGAN     => target.OnTouchDown(te),
+                sapp_event_type.SAPP_EVENTTYPE_TOUCHES_ENDED     => target.OnTouchUp(te),
+                sapp_event_type.SAPP_EVENTTYPE_TOUCHES_CANCELLED => target.OnTouchUp(te),
+                sapp_event_type.SAPP_EVENTTYPE_TOUCHES_MOVED     => target.OnTouchMove(te),
+                _ => false,
+            };
+            if (pt.Id == primary.Id)
+                primaryHandled = handled;
+        }
+
+        // Widget handled touch natively — skip synthetic mouse simulation so it
+        // does not interfere with multi-touch state tracking in the widget.
+        if (primaryHandled) return;
+
+        // Synthetic mouse fallback: lets widgets that only handle mouse events
+        // work on touch screens without any per-widget changes.
         switch (type)
         {
             case sapp_event_type.SAPP_EVENTTYPE_TOUCHES_BEGAN:
@@ -316,20 +338,6 @@ public sealed class InputRouter
                 _hovered   = null;
                 _captured  = null;
                 break;
-            }
-        }
-
-        // Also forward raw touch events to widgets that handle them explicitly.
-        foreach (var pt in te.Touches)
-        {
-            var target = _screen.HitTestDeep(pt.Position);
-            if (target == null) continue;
-            switch (type)
-            {
-                case sapp_event_type.SAPP_EVENTTYPE_TOUCHES_BEGAN:   target.OnTouchDown(te); break;
-                case sapp_event_type.SAPP_EVENTTYPE_TOUCHES_ENDED:
-                case sapp_event_type.SAPP_EVENTTYPE_TOUCHES_CANCELLED: target.OnTouchUp(te); break;
-                case sapp_event_type.SAPP_EVENTTYPE_TOUCHES_MOVED:   target.OnTouchMove(te); break;
             }
         }
     }

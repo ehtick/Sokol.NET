@@ -39,7 +39,7 @@ public static unsafe class MiniaudiodemoApp
     static readonly Dictionary<string, SharedBuffer> _loaded = new();
 
     // ── One entry per concurrently playing one-shot sound ─────────────────────
-    struct ActiveSound { public ma_sound* Sound; }
+    struct ActiveSound { public ma_sound* Sound; public bool CheckIsPlaying; }
     static readonly List<ActiveSound> _active = new();
 
     // ── Music – single persistent looping instance ────────────────────────────
@@ -71,6 +71,26 @@ public static unsafe class MiniaudiodemoApp
     static OscilloscopeWidget? _oscWidget;
     static ma_waveform*        _vuWaveform;   // shadow waveform for VU meter PCM reads
     static VuMeterWidget?      _vuWidget;
+
+    // ── Real Piano tab ────────────────────────────────────────────────────────
+    static PianoKeyboardWidget? _realPianoWidget;
+    static readonly unsafe ma_sound*[] _pianoVoices = new ma_sound*[24];
+    static readonly string[] _pianoNoteFiles =
+    {
+        "Piano/cc.mp3",  "Piano/ccs.mp3", "Piano/dd.mp3",  "Piano/dds.mp3",
+        "Piano/ee.mp3",  "Piano/ff.mp3",  "Piano/ffs.mp3", "Piano/gg.mp3",
+        "Piano/ggs.mp3", "Piano/aa.mp3",  "Piano/aas.mp3", "Piano/bb.mp3",
+        "Piano/c1.mp3",  "Piano/c1s.mp3", "Piano/d1.mp3",  "Piano/d1s.mp3",
+        "Piano/e1.mp3",  "Piano/f1.mp3",  "Piano/f1s.mp3", "Piano/g1.mp3",
+        "Piano/g1s.mp3", "Piano/a1.mp3",  "Piano/a1s.mp3", "Piano/b1.mp3",
+    };
+
+    // ── Spectrum Analyzer tab ──────────────────────────────────────────────────
+    static ma_sound*           _specSound;
+    static ma_decoder*         _specDecoder;  // monitoring decoder for spectrum
+    static SpectrumWidget?     _specWidget;
+    static GoniometerWidget?   _gonioWidget;
+    static SpectrogramWidget?  _spectroWidget;
 
     // ── Spatialization tab ────────────────────────────────────────────────────
     static ma_sound*                    _spatSound;
@@ -120,6 +140,9 @@ public static unsafe class MiniaudiodemoApp
 
         foreach (var af in _audioFiles)
             LoadAudioFileAsync(af.Path);
+
+        foreach (var p in _pianoNoteFiles)
+            LoadAudioFileAsync(p);
 
         BuildUI();
     }
@@ -236,7 +259,10 @@ public static unsafe class MiniaudiodemoApp
         for (int i = _active.Count - 1; i >= 0; i--)
         {
             var s = _active[i];
-            if (ma_sound_at_end(in *s.Sound) != 0)
+            bool done = s.CheckIsPlaying
+                ? ma_sound_is_playing(in *s.Sound) == 0
+                : ma_sound_at_end(in *s.Sound) != 0;
+            if (done)
             {
                 ma_sound_uninit(s.Sound);
                 NativeMemory.Free(s.Sound);
@@ -311,6 +337,38 @@ public static unsafe class MiniaudiodemoApp
             }
         }
 
+        // Spectrum Analyzer tab — read PCM from monitoring decoder
+        if ((_specWidget != null || _gonioWidget != null || _spectroWidget != null) && _specDecoder != null && _specSound != null)
+        {
+            ulong cursor = 0;
+            ma_sound_get_cursor_in_pcm_frames(in *_specSound, ref cursor);
+            ma_decoder_seek_to_pcm_frame(_specDecoder, cursor);
+            const int SpecFrames = 2048;
+            Span<float> specBuf = stackalloc float[SpecFrames * 2];
+            fixed (float* p = specBuf)
+            {
+                ulong read = 0;
+                ma_decoder_read_pcm_frames(_specDecoder, p, SpecFrames, ref read);
+                int n = (int)read;
+                if (n > 0)
+                {
+                    // De-interleave to mono mid for spectrum, collect L/R for goniometer
+                    Span<float> mono   = stackalloc float[n];
+                    Span<float> smpL   = stackalloc float[n];
+                    Span<float> smpR   = stackalloc float[n];
+                    for (int i = 0; i < n; i++)
+                    {
+                        smpL[i] = p[i * 2];
+                        smpR[i] = p[i * 2 + 1];
+                        mono[i] = (smpL[i] + smpR[i]) * 0.5f;
+                    }
+                    _specWidget?.PushSamples(mono[..n]);
+                    _gonioWidget?.PushSamples(smpL[..n], smpR[..n]);
+                    _spectroWidget?.PushSamples(mono[..n]);
+                }
+            }
+        }
+
         float winW = sapp_widthf()  ;
         float winH = sapp_heightf() ;
 
@@ -371,6 +429,19 @@ public static unsafe class MiniaudiodemoApp
             NativeMemory.Free(_eqDecoder);
             _eqDecoder = null;
         }
+        if (_specSound != null)
+        {
+            ma_sound_stop(_specSound);
+            ma_sound_uninit(_specSound);
+            NativeMemory.Free(_specSound);
+            _specSound = null;
+        }
+        if (_specDecoder != null)
+        {
+            ma_decoder_uninit(_specDecoder);
+            NativeMemory.Free(_specDecoder);
+            _specDecoder = null;
+        }
         if (_eqNodesReady)
         {
             ref ma_allocation_callbacks na = ref Unsafe.NullRef<ma_allocation_callbacks>();
@@ -415,6 +486,17 @@ public static unsafe class MiniaudiodemoApp
         }
         _active.Clear();
 
+        for (int i = 0; i < _pianoVoices.Length; i++)
+        {
+            if (_pianoVoices[i] != null)
+            {
+                ma_sound_stop(_pianoVoices[i]);
+                ma_sound_uninit(_pianoVoices[i]);
+                NativeMemory.Free(_pianoVoices[i]);
+                _pianoVoices[i] = null;
+            }
+        }
+
         if (_engineReady)
         {
             var rm = ma_engine_get_resource_manager(_engine);
@@ -449,6 +531,8 @@ public static unsafe class MiniaudiodemoApp
         tabs.AddTab("Waveform", BuildWaveformTab());
         tabs.AddTab("Spatial",  BuildSpatializationTab());
         tabs.AddTab("EQ",       BuildEqTab());
+        tabs.AddTab("Spectrum", BuildSpectrumTab());
+        tabs.AddTab("Piano",    BuildPianoTab());
         tabs.AddTab("Engine",   BuildEngineTab());
     }
 
@@ -749,6 +833,58 @@ public static unsafe class MiniaudiodemoApp
         root.AddChild(statusLbl);
 
         return new ScrollView { Content = root, CanScrollVertical = true };
+    }
+
+    // ── Tab: Piano ────────────────────────────────────────────────────────────
+    static Widget BuildPianoTab()
+    {
+        _realPianoWidget = new PianoKeyboardWidget { Expand = true };
+        _realPianoWidget.NoteOnSemi  += PianoNoteOn;
+        _realPianoWidget.NoteOffSemi += PianoNoteOff;
+        return _realPianoWidget;
+    }
+
+    static unsafe void PianoNoteOn(int semi)
+    {
+        if (semi < 0 || semi >= _pianoNoteFiles.Length) return;
+
+        // Stop any previous voice for this note
+        if (_pianoVoices[semi] != null)
+        {
+            ma_sound_stop(_pianoVoices[semi]);
+            ma_sound_uninit(_pianoVoices[semi]);
+            NativeMemory.Free(_pianoVoices[semi]);
+            _pianoVoices[semi] = null;
+        }
+
+        string path = _pianoNoteFiles[semi];
+        if (!_engineReady || !_loaded.ContainsKey(path)) return;
+
+        var snd   = (ma_sound*)NativeMemory.AllocZeroed((nuint)sizeof(ma_sound));
+        uint flags = (uint)(ma_sound_flags.MA_SOUND_FLAG_DECODE | ma_sound_flags.MA_SOUND_FLAG_NO_SPATIALIZATION);
+        if (ma_sound_init_from_file(_engine, path, flags, null, null, snd) == ma_result.MA_SUCCESS)
+        {
+            ma_sound_start(snd);
+            _pianoVoices[semi] = snd;
+        }
+        else
+        {
+            NativeMemory.Free(snd);
+        }
+    }
+
+    static unsafe void PianoNoteOff(int semi)
+    {
+        if (semi < 0 || semi >= _pianoVoices.Length) return;
+        if (_pianoVoices[semi] == null) return;
+
+        // Fade out and schedule stop in 500 ms (simulates piano damper)
+        ulong now = ma_engine_get_time_in_milliseconds(in *_engine);
+        ma_sound_set_stop_time_with_fade_in_milliseconds(_pianoVoices[semi], now + 500, 500);
+
+        // Transfer to _active for cleanup when the sound stops
+        _active.Add(new ActiveSound { Sound = _pianoVoices[semi], CheckIsPlaying = true });
+        _pianoVoices[semi] = null;
     }
 
     // ── Tab: Engine ───────────────────────────────────────────────────────────
@@ -1509,6 +1645,139 @@ public static unsafe class MiniaudiodemoApp
         return outer;
     }
 
+    // ── Tab: Spectrum Analyzer ────────────────────────────────────────────────
+    static Widget BuildSpectrumTab()
+    {
+        var outer = new Panel
+        {
+            Layout = new BoxLayout(Orientation.Vertical, Alignment.Stretch, 0),
+            Expand = true,
+        };
+
+        // ── Header + controls row ─────────────────────────────────────────────
+        var header = new Panel
+        {
+            Layout  = new BoxLayout(Orientation.Horizontal, Alignment.Center, 12),
+            Padding = new Thickness(12, 8, 12, 8),
+        };
+
+        var fileNames = new string[_audioFiles.Length];
+        for (int i = 0; i < _audioFiles.Length; i++) fileNames[i] = _audioFiles[i].Label;
+        var fileCombo = new ComboBox { FixedSize = new Vector2(200, 32) };
+        fileCombo.SetItems(fileNames);
+        fileCombo.SelectedIndex = 0;
+
+        var playBtn  = new Button("▶  Play") { CornerRadius = 6, FixedSize = new Vector2(100, 32) };
+        var statusLbl = new Label { Text = "Stopped", ForeColor = UIColor.FromHex("#AAAAAA") };
+
+        header.AddChild(new Label { Text = "Spectrum Analyzer", FontSize = 16 });
+        header.AddChild(fileCombo);
+        header.AddChild(playBtn);
+        header.AddChild(statusLbl);
+        outer.AddChild(header);
+        outer.AddChild(new Separator());
+
+        // ── Main visual area: spectrum + goniometer side by side ──────────────
+        var vizRow = new Panel
+        {
+            Layout    = new BoxLayout(Orientation.Horizontal, Alignment.Stretch, 4),
+            Padding   = new Thickness(8, 4, 8, 4),
+            FixedSize = new Vector2(0, 220),
+        };
+
+        _specWidget = new SpectrumWidget { Expand = true };
+        vizRow.AddChild(_specWidget);
+
+        _gonioWidget = new GoniometerWidget { FixedSize = new Vector2(200, 0) };
+        vizRow.AddChild(_gonioWidget);
+
+        outer.AddChild(vizRow);
+        outer.AddChild(new Separator());
+
+        // ── Spectrogram waterfall ─────────────────────────────────────────────
+        _spectroWidget = new SpectrogramWidget { FixedSize = new Vector2(0, 160), Expand = true };
+        var spectroRow = new Panel
+        {
+            Layout  = new BoxLayout(Orientation.Vertical, Alignment.Stretch, 0),
+            Padding = new Thickness(8, 4, 8, 4),
+        };
+        spectroRow.AddChild(new Label { Text = "Spectrogram (scroll right = time →)", FontSize = 12,
+                                         ForeColor = UIColor.FromHex("#667788") });
+        spectroRow.AddChild(_spectroWidget);
+        outer.AddChild(spectroRow);
+
+        // ── Play / Stop logic ─────────────────────────────────────────────────
+        playBtn.Clicked += () =>
+        {
+            if (_specSound != null)
+            {
+                ma_sound_stop(_specSound);
+                ma_sound_uninit(_specSound);
+                NativeMemory.Free(_specSound);
+                _specSound = null;
+                if (_specDecoder != null)
+                {
+                    ma_decoder_uninit(_specDecoder);
+                    NativeMemory.Free(_specDecoder);
+                    _specDecoder = null;
+                }
+                _specWidget?.Reset();
+                _gonioWidget?.Reset();
+                _spectroWidget?.Reset();
+                playBtn.Text = "▶  Play";
+                statusLbl.Text = "Stopped";
+                return;
+            }
+
+            if (!_engineReady) return;
+            var af = _audioFiles[fileCombo.SelectedIndex];
+            if (!_loaded.ContainsKey(af.Path)) { statusLbl.Text = "Still loading…"; return; }
+
+            _specSound = (ma_sound*)NativeMemory.AllocZeroed((nuint)sizeof(ma_sound));
+            uint flags = (uint)(ma_sound_flags.MA_SOUND_FLAG_DECODE |
+                                ma_sound_flags.MA_SOUND_FLAG_NO_SPATIALIZATION);
+            if (ma_sound_init_from_file(_engine, af.Path, flags, null, null, _specSound)
+                != ma_result.MA_SUCCESS)
+            {
+                NativeMemory.Free(_specSound); _specSound = null;
+                statusLbl.Text = "Init failed"; return;
+            }
+            ma_sound_set_looping(_specSound, 1);
+            ma_sound_start(_specSound);
+
+            // Monitoring decoder (not in audio graph)
+            var decCfg = ma_decoder_config_init(ma_format.ma_format_f32, 2, 0);
+            _specDecoder = (ma_decoder*)NativeMemory.AllocZeroed((nuint)sizeof(ma_decoder));
+            var buf = _loaded[af.Path];
+            if (ma_decoder_init_memory((void*)buf.GetBufferPointer(), (nuint)buf.Size, in decCfg, _specDecoder)
+                != ma_result.MA_SUCCESS)
+            {
+                NativeMemory.Free(_specDecoder); _specDecoder = null;
+            }
+
+            playBtn.Text   = "■  Stop";
+            statusLbl.Text = $"▶ {af.Label}";
+        };
+
+        fileCombo.SelectionChanged += (_, _) =>
+        {
+            if (_specSound == null) return;
+            // Stop and restart with new file — reuse the stop path then start path
+            ma_sound_stop(_specSound);
+            ma_sound_uninit(_specSound);
+            NativeMemory.Free(_specSound); _specSound = null;
+            if (_specDecoder != null)
+            {
+                ma_decoder_uninit(_specDecoder);
+                NativeMemory.Free(_specDecoder); _specDecoder = null;
+            }
+            _specWidget?.Reset(); _gonioWidget?.Reset(); _spectroWidget?.Reset();
+            playBtn.Text = "▶  Play"; statusLbl.Text = "Stopped";
+        };
+
+        return outer;
+    }
+
     public static SApp.sapp_desc sokol_main()
     {
         return new SApp.sapp_desc
@@ -1989,6 +2258,714 @@ sealed class SpatializationCanvasWidget : Widget
         SourceX = x;
         SourceZ = z;
         PositionChanged?.Invoke(x, z);
+    }
+}
+
+// ── Spectrum Widget ────────────────────────────────────────────────────────────
+// Real-time frequency bar display — runs a DFT on incoming PCM samples.
+
+sealed class SpectrumWidget : Widget
+{
+    // 1024-bin magnitude buffer (smoothed)
+    const int FftSize  = 2048;
+    const int BinCount = FftSize / 2;
+
+    readonly float[] _magSmooth = new float[BinCount];
+    readonly float[] _fftReal   = new float[FftSize];
+    readonly float[] _fftImag   = new float[FftSize];
+    readonly float[] _window    = new float[FftSize]; // Hann window
+
+    private bool _hasData;
+
+    public SpectrumWidget()
+    {
+        // Pre-compute Hann window
+        for (int i = 0; i < FftSize; i++)
+            _window[i] = 0.5f * (1f - MathF.Cos(2f * MathF.PI * i / (FftSize - 1)));
+    }
+
+    public void PushSamples(ReadOnlySpan<float> mono)
+    {
+        int n = Math.Min(mono.Length, FftSize);
+        // Fill window — zero-pad if fewer samples than FftSize
+        for (int i = 0; i < FftSize; i++)
+        {
+            float s = i < n ? mono[i] : 0f;
+            _fftReal[i] = s * _window[i];
+            _fftImag[i] = 0f;
+        }
+        DftMagnitudes(_fftReal, _fftImag, _magSmooth, smoothFactor: 0.7f);
+        _hasData = true;
+    }
+
+    public void Reset()
+    {
+        Array.Clear(_magSmooth, 0, BinCount);
+        _hasData = false;
+    }
+
+    // Simple Cooley–Tukey in-place FFT (power-of-2)
+    internal static void Fft(float[] re, float[] im)
+    {
+        int n = re.Length;
+        // Bit-reversal permutation
+        for (int i = 1, j = 0; i < n; i++)
+        {
+            int bit = n >> 1;
+            for (; (j & bit) != 0; bit >>= 1) j ^= bit;
+            j ^= bit;
+            if (i < j) { (re[i], re[j]) = (re[j], re[i]); (im[i], im[j]) = (im[j], im[i]); }
+        }
+        for (int len = 2; len <= n; len <<= 1)
+        {
+            float ang = -2f * MathF.PI / len;
+            float wRe = MathF.Cos(ang), wIm = MathF.Sin(ang);
+            for (int i = 0; i < n; i += len)
+            {
+                float curRe = 1f, curIm = 0f;
+                for (int j = 0; j < len / 2; j++)
+                {
+                    float uRe = re[i + j],               uIm = im[i + j];
+                    float vRe = re[i + j + len / 2],     vIm = im[i + j + len / 2];
+                    float tvRe = vRe * curRe - vIm * curIm;
+                    float tvIm = vRe * curIm + vIm * curRe;
+                    re[i + j]           = uRe + tvRe;  im[i + j]           = uIm + tvIm;
+                    re[i + j + len / 2] = uRe - tvRe;  im[i + j + len / 2] = uIm - tvIm;
+                    float newCurRe = curRe * wRe - curIm * wIm;
+                    curIm = curRe * wIm + curIm * wRe;
+                    curRe = newCurRe;
+                }
+            }
+        }
+    }
+
+    // Run FFT and blend magnitudes into dest with exponential smoothing
+    static void DftMagnitudes(float[] re, float[] im, float[] dest, float smoothFactor)
+    {
+        Fft(re, im);
+        int half = re.Length / 2;
+        float scale = 2f / re.Length;
+        for (int i = 0; i < half; i++)
+        {
+            float mag = MathF.Sqrt(re[i] * re[i] + im[i] * im[i]) * scale;
+            dest[i] = dest[i] * smoothFactor + mag * (1f - smoothFactor);
+        }
+    }
+
+    public override Vector2 PreferredSize(Renderer renderer) => FixedSize ?? new Vector2(500, 180);
+
+    public override void Draw(Renderer renderer)
+    {
+        if (!Visible) return;
+        float w = Bounds.Width, h = Bounds.Height;
+        var b = new Rect(0, 0, w, h);
+        renderer.FillRoundedRect(b, 6f, UIColor.FromHex("#090912"));
+        renderer.StrokeRoundedRect(b, 6f, 1f, UIColor.FromHex("#334466"));
+
+        renderer.Save();
+        renderer.ClipRect(b);
+
+        const float Pad     = 8f;
+        const float LabelH  = 14f;
+        float barAreaH = h - Pad * 2f - LabelH;
+        float barAreaW = w - Pad * 2f;
+
+        if (!_hasData || barAreaH < 10f) { renderer.Restore(); return; }
+
+        var vg = renderer.VGContext;
+
+        // Frequency axis: map bar index → log frequency
+        // Display range 20 Hz – 20 kHz (assume 44100 Hz sample rate → BinCount = 1024 bins)
+        const float SampleRate = 44100f;
+        const float FreqMin    = 20f;
+        const float FreqMax    = 20000f;
+        float logMin = MathF.Log(FreqMin);
+        float logMax = MathF.Log(FreqMax);
+
+        const int   BarCount = 128;
+        float barW   = barAreaW / BarCount - 1f;
+        if (barW < 1f) barW = 1f;
+        float step   = barAreaW / BarCount;
+
+        for (int b2 = 0; b2 < BarCount; b2++)
+        {
+            // Map bar → frequency → bin
+            float t     = (float)b2 / BarCount;
+            float freq  = MathF.Exp(logMin + t * (logMax - logMin));
+            int   bin   = (int)(freq / SampleRate * FftSize);
+            bin = Math.Clamp(bin, 0, BinCount - 1);
+
+            float mag = _magSmooth[bin];
+            // Convert to dBFS (floor at -80 dB)
+            float dB  = mag > 0f ? 20f * MathF.Log10(mag) : -80f;
+            float frac = MathF.Max(0f, (dB + 80f) / 80f);
+
+            float barX = Pad + b2 * step;
+            float barH2 = frac * barAreaH;
+            float barY  = Pad + barAreaH - barH2;
+
+            // Color by frequency band
+            NVGcolor col;
+            if (t < 0.25f)      col = new NVGcolor { r = 1.0f, g = 0.45f + t, b = 0.1f, a = 0.9f }; // bass: warm orange
+            else if (t < 0.65f) col = new NVGcolor { r = 0.15f, g = 0.85f, b = 0.25f, a = 0.9f };   // mid: green
+            else                col = new NVGcolor { r = 0.2f, g = 0.85f, b = 1.0f, a = 0.9f };      // treble: cyan
+
+            if (barH2 >= 1f)
+            {
+                nvgBeginPath(vg);
+                nvgRect(vg, barX, barY, barW, barH2);
+                nvgFillColor(vg, col);
+                nvgFill(vg);
+            }
+        }
+
+        // dB guide lines
+        renderer.SetStrokeWidth(1f);
+        foreach (float db in new[] { -20f, -40f, -60f })
+        {
+            float frac2 = (db + 80f) / 80f;
+            float lineY = Pad + barAreaH * (1f - frac2);
+            nvgBeginPath(vg);
+            nvgMoveTo(vg, Pad, lineY); nvgLineTo(vg, w - Pad, lineY);
+            nvgStrokeColor(vg, new NVGcolor { r = 0.25f, g = 0.35f, b = 0.45f, a = 0.5f });
+            nvgStrokeWidth(vg, 1f);
+            nvgStroke(vg);
+            renderer.SetFillColor(UIColor.FromHex("#556677"));
+            renderer.SetFont("sans"); renderer.SetFontSize(10f);
+            renderer.SetTextAlign(NVGalign.NVG_ALIGN_LEFT | NVGalign.NVG_ALIGN_BOTTOM);
+            renderer.DrawText(Pad + 2f, lineY - 1f, $"{(int)db} dB");
+        }
+
+        // Freq axis labels
+        renderer.SetFillColor(UIColor.FromHex("#556677"));
+        renderer.SetFont("sans"); renderer.SetFontSize(10f);
+        renderer.SetTextAlign(NVGalign.NVG_ALIGN_CENTER | NVGalign.NVG_ALIGN_BOTTOM);
+        foreach ((float f, string lbl) in new[] { (100f, "100"), (500f, "500"), (1000f, "1k"), (5000f, "5k"), (10000f, "10k"), (18000f, "18k") })
+        {
+            float t2 = (MathF.Log(f) - logMin) / (logMax - logMin);
+            renderer.DrawText(Pad + t2 * barAreaW, h - 1f, lbl);
+        }
+
+        renderer.Restore();
+    }
+}
+
+// ── Goniometer Widget ──────────────────────────────────────────────────────────
+// Lissajous (L vs R) plot showing stereo width and correlation.
+
+sealed class GoniometerWidget : Widget
+{
+    const int TrailLen = 1024;
+    readonly float[] _mid  = new float[TrailLen]; // L+R (x axis, 45° rotated)
+    readonly float[] _side = new float[TrailLen]; // L-R (y axis, 45° rotated)
+    int   _head;
+    int   _count;
+
+    public void PushSamples(ReadOnlySpan<float> L, ReadOnlySpan<float> R)
+    {
+        int n = Math.Min(L.Length, R.Length);
+        for (int i = 0; i < n; i++)
+        {
+            _mid[_head]  = (L[i] + R[i]) * 0.707f;  // M = (L+R)/√2
+            _side[_head] = (L[i] - R[i]) * 0.707f;  // S = (L-R)/√2
+            _head = (_head + 1) % TrailLen;
+            if (_count < TrailLen) _count++;
+        }
+    }
+
+    public void Reset() { _head = 0; _count = 0; }
+
+    public override Vector2 PreferredSize(Renderer renderer) => FixedSize ?? new Vector2(180, 180);
+
+    public override void Draw(Renderer renderer)
+    {
+        if (!Visible) return;
+        float w = Bounds.Width, h = Bounds.Height;
+        renderer.FillRoundedRect(new Rect(0, 0, w, h), 6f, UIColor.FromHex("#090912"));
+        renderer.StrokeRoundedRect(new Rect(0, 0, w, h), 6f, 1f, UIColor.FromHex("#334466"));
+
+        renderer.Save();
+        renderer.ClipRect(new Rect(0, 0, w, h));
+
+        float cx = w * 0.5f, cy = h * 0.5f;
+        float scale = MathF.Min(w, h) * 0.45f;
+
+        var vg = renderer.VGContext;
+
+        // Axis lines
+        nvgBeginPath(vg);
+        nvgMoveTo(vg, cx, cy - scale); nvgLineTo(vg, cx, cy + scale);
+        nvgMoveTo(vg, cx - scale, cy); nvgLineTo(vg, cx + scale, cy);
+        nvgStrokeColor(vg, new NVGcolor { r = 0.2f, g = 0.3f, b = 0.4f, a = 0.5f });
+        nvgStrokeWidth(vg, 1f);
+        nvgStroke(vg);
+
+        // L/R axis labels
+        renderer.SetFillColor(UIColor.FromHex("#445566"));
+        renderer.SetFont("sans"); renderer.SetFontSize(10f);
+        renderer.SetTextAlign(NVGalign.NVG_ALIGN_CENTER | NVGalign.NVG_ALIGN_MIDDLE);
+        renderer.DrawText(cx - scale + 8f, cy - scale * 0.75f, "L");
+        renderer.DrawText(cx + scale - 8f, cy - scale * 0.75f, "R");
+        renderer.DrawText(cx, cy - scale + 6f, "M");
+
+        if (_count < 2) { renderer.Restore(); return; }
+
+        // Draw trail in alpha bands to keep vertex count low.
+        // 1024 individual circles each tesselate into ~48 vertices → overflows sokol_nvg's
+        // fixed vertex buffer. Batching into 8 groups: 8 nvgFill calls total instead of 1024.
+        const int Bands = 8;
+        const float DotHalf = 1.5f;
+        for (int band = 0; band < Bands; band++)
+        {
+            int start = _count * band / Bands;
+            int end   = _count * (band + 1) / Bands;
+            float alpha = (band + 0.5f) / Bands * 0.85f;
+            nvgBeginPath(vg);
+            for (int i = start; i < end; i++)
+            {
+                int idx = (_head - _count + i + TrailLen) % TrailLen;
+                float px = cx + _mid[idx]  * scale;
+                float py = cy - _side[idx] * scale;
+                nvgRect(vg, px - DotHalf, py - DotHalf, DotHalf * 2f, DotHalf * 2f);
+            }
+            nvgFillColor(vg, new NVGcolor { r = 0.1f, g = 0.85f, b = 1f, a = alpha });
+            nvgFill(vg);
+        }
+
+        // Label
+        renderer.SetFillColor(UIColor.FromHex("#445566"));
+        renderer.SetFont("sans"); renderer.SetFontSize(10f);
+        renderer.SetTextAlign(NVGalign.NVG_ALIGN_CENTER | NVGalign.NVG_ALIGN_BOTTOM);
+        renderer.DrawText(cx, h - 1f, "Goniometer");
+
+        renderer.Restore();
+    }
+}
+
+// ── Spectrogram Widget ─────────────────────────────────────────────────────────
+// Scrolling waterfall: X = time (newest on right), Y = frequency (low at bottom).
+
+sealed class SpectrogramWidget : Widget
+{
+    const int FftSize  = 1024;
+    const int BinCount = FftSize / 2;
+
+    // Pixel buffer: Width × BinCount RGBA
+    const int ImgW = 256;
+    const int ImgH = BinCount; // 512 rows = 512 freq bins (displayed cropped to widget height)
+
+    readonly byte[]  _pixels  = new byte[ImgW * ImgH * 4];
+    readonly float[] _fftReal = new float[FftSize];
+    readonly float[] _fftImag = new float[FftSize];
+    readonly float[] _window  = new float[FftSize];
+    readonly float[] _sampleBuf = new float[FftSize];
+    int  _sampleFill;
+    int  _imgHandle   = -1;  // NVG image handle (-1 = not created yet)
+    bool _dirty;
+
+    public SpectrogramWidget()
+    {
+        for (int i = 0; i < FftSize; i++)
+            _window[i] = 0.5f * (1f - MathF.Cos(2f * MathF.PI * i / (FftSize - 1)));
+    }
+
+    public void PushSamples(ReadOnlySpan<float> mono)
+    {
+        foreach (float s in mono)
+        {
+            _sampleBuf[_sampleFill++] = s;
+            if (_sampleFill >= FftSize)
+            {
+                ProcessColumn();
+                _sampleFill = 0;
+            }
+        }
+    }
+
+    void ProcessColumn()
+    {
+        for (int i = 0; i < FftSize; i++)
+        {
+            _fftReal[i] = _sampleBuf[i] * _window[i];
+            _fftImag[i] = 0f;
+        }
+        SpectrumWidget.Fft(_fftReal, _fftImag); // reuse static method via class name
+
+        // Shift existing columns left by 1 pixel
+        for (int y = 0; y < ImgH; y++)
+        {
+            int dst = y * ImgW * 4;
+            int src = dst + 4;
+            Buffer.BlockCopy(_pixels, src, _pixels, dst, (ImgW - 1) * 4);
+        }
+
+        // Write new column on the right
+        float scale = 2f / FftSize;
+        for (int bin = 0; bin < BinCount; bin++)
+        {
+            float mag = MathF.Sqrt(_fftReal[bin] * _fftReal[bin] + _fftImag[bin] * _fftImag[bin]) * scale;
+            float dB  = mag > 0f ? 20f * MathF.Log10(mag) : -80f;
+            float t   = MathF.Max(0f, (dB + 80f) / 80f); // 0 = silent, 1 = loud
+
+            // Color map: black → blue → green → yellow → white
+            byte r, g, byt;
+            if (t < 0.25f)      { float u = t / 0.25f; r = 0; g = 0; byt = (byte)(u * 200); }
+            else if (t < 0.5f)  { float u = (t - 0.25f) / 0.25f; r = 0; g = (byte)(u * 200); byt = (byte)(200 - u * 200); }
+            else if (t < 0.75f) { float u = (t - 0.5f) / 0.25f; r = (byte)(u * 220); g = 200; byt = 0; }
+            else                { float u = (t - 0.75f) / 0.25f; r = (byte)(220 + u * 35); g = (byte)(200 + u * 55); byt = (byte)(u * 255); }
+
+            // bin 0 = low freq → bottom of image (flip Y)
+            int y = ImgH - 1 - bin;
+            if (y < 0 || y >= ImgH) continue;
+            int idx = (y * ImgW + (ImgW - 1)) * 4;
+            _pixels[idx]     = r;
+            _pixels[idx + 1] = g;
+            _pixels[idx + 2] = byt;
+            _pixels[idx + 3] = 255;
+        }
+        _dirty = true;
+    }
+
+    public void Reset()
+    {
+        Array.Clear(_pixels, 0, _pixels.Length);
+        _sampleFill = 0;
+        _dirty = true;
+    }
+
+    public override Vector2 PreferredSize(Renderer renderer) => FixedSize ?? new Vector2(512, 160);
+
+    public override void Draw(Renderer renderer)
+    {
+        if (!Visible) return;
+        float w = Bounds.Width, h = Bounds.Height;
+        renderer.FillRoundedRect(new Rect(0, 0, w, h), 4f, UIColor.FromHex("#090912"));
+
+        var vg = renderer.VGContext;
+
+        if (_imgHandle < 0)
+        {
+            // Pass Unsafe.NullRef so sokol_nvg creates a stream_update (mutable) image.
+            // Passing actual pixel data would create an immutable image that cannot be updated.
+            _imgHandle = nvgCreateImageRGBA(vg, ImgW, ImgH, 0, in Unsafe.NullRef<byte>());
+            // Populate the image immediately with current (cleared) pixels
+            if (_imgHandle >= 0)
+                nvgUpdateImage(vg, _imgHandle, in _pixels[0]);
+        }
+        else if (_dirty)
+        {
+            nvgUpdateImage(vg, _imgHandle, in _pixels[0]);
+            _dirty = false;
+        }
+
+        if (_imgHandle >= 0)
+        {
+            var paint = nvgImagePattern(vg, 0, 0, w, h, 0f, _imgHandle, 1f);
+            nvgBeginPath(vg);
+            nvgRect(vg, 0, 0, w, h);
+            nvgFillPaint(vg, paint);
+            nvgFill(vg);
+        }
+    }
+}
+
+// ── Piano Keyboard Widget ──────────────────────────────────────────────────────
+// Full-screen 2-octave keyboard (C3–B4). Supports mouse and multi-touch.
+
+sealed class PianoKeyboardWidget : Widget
+{
+    public event Action<float>? NoteOn;
+    public event Action?        NoteOff;
+    public event Action<int>?   NoteOnSemi;
+    public event Action<int>?   NoteOffSemi;
+
+    // 2 octaves: C3..B4 — semitone index 0-23, plus isBlack flag
+    static readonly (int semi, bool black)[] Keys = BuildKeys();
+
+    static (int semi, bool black)[] BuildKeys()
+    {
+        var pattern = new[] { false, true, false, true, false, false, true, false, true, false, true, false };
+        var list = new List<(int, bool)>();
+        for (int oct = 0; oct < 2; oct++)
+            for (int i = 0; i < 12; i++)
+                list.Add((oct * 12 + i, pattern[i]));
+        return list.ToArray();
+    }
+
+    static readonly string[] NoteNames = { "C","C#","D","D#","E","F","F#","G","G#","A","A#","B" };
+    static float NoteFreq(int semi) => 440f * MathF.Pow(2f, (semi + 48 - 69) / 12f);
+
+    // Multi-touch/mouse: key → pressed by mouse(-1) or touch id
+    readonly Dictionary<int, int> _pressed = new(); // semi → input id (-1=mouse)
+
+    public override Vector2 PreferredSize(Renderer renderer) => FixedSize ?? new Vector2(400, 200);
+
+    (float wkW, float wkH, float bkW, float bkH, int wkCount) CalcLayout(float w, float h)
+    {
+        int wkCount = Keys.Count(k => !k.black);
+        float gap    = MathF.Max(1f, w * 0.002f);   // thin gap between white keys
+        float wkW    = (w - gap * (wkCount - 1)) / wkCount;
+        float bkW    = wkW * 0.58f;
+        float bkH    = h * 0.60f;
+        return (wkW, h, bkW, bkH, wkCount);
+    }
+
+    // Returns x position of a white key by its white-key index
+    float WhiteKeyX(int wkIdx, float wkW, float w)
+    {
+        int wkCount = Keys.Count(k => !k.black);
+        float gap = MathF.Max(1f, w * 0.002f);
+        return wkIdx * (wkW + gap);
+    }
+
+    int HitTest(float lx, float ly)
+    {
+        float w = Bounds.Width, h = Bounds.Height;
+        var (wkW, wkH, bkW, bkH, _) = CalcLayout(w, h);
+
+        // Black keys first (they're on top)
+        int wkIdx = 0;
+        for (int i = 0; i < Keys.Length; i++)
+        {
+            if (!Keys[i].black) { wkIdx++; continue; }
+            float kx = WhiteKeyX(wkIdx - 1, wkW, w) + wkW - bkW * 0.5f;
+            if (lx >= kx && lx <= kx + bkW && ly >= 0f && ly <= bkH)
+                return Keys[i].semi;
+        }
+        // White keys
+        wkIdx = 0;
+        for (int i = 0; i < Keys.Length; i++)
+        {
+            if (Keys[i].black) continue;
+            float kx = WhiteKeyX(wkIdx, wkW, w);
+            if (lx >= kx && lx <= kx + wkW && ly >= 0f && ly <= wkH)
+                return Keys[i].semi;
+            wkIdx++;
+        }
+        return -1;
+    }
+
+    public override void Draw(Renderer renderer)
+    {
+        if (!Visible) return;
+        float w = Bounds.Width, h = Bounds.Height;
+        var (wkW, wkH, bkW, bkH, _) = CalcLayout(w, h);
+        var vg = renderer.VGContext;
+
+        renderer.FillRect(new Rect(0, 0, w, h), UIColor.FromHex("#0A0A12"));
+
+        // White keys
+        int wkIdx = 0;
+        for (int i = 0; i < Keys.Length; i++)
+        {
+            if (Keys[i].black) continue;
+            float kx = WhiteKeyX(wkIdx, wkW, w);
+            bool pressed = _pressed.ContainsKey(Keys[i].semi);
+            float r = MathF.Max(3f, wkW * 0.06f);
+
+            // Key body with rounded bottom corners
+            nvgBeginPath(vg);
+            nvgMoveTo(vg, kx + r, 0f);
+            nvgLineTo(vg, kx + wkW - r, 0f);
+            nvgLineTo(vg, kx + wkW - r, wkH - r);
+            nvgArcTo(vg, kx + wkW, wkH, kx + wkW, wkH - r, r);
+            nvgLineTo(vg, kx + wkW, wkH - r);
+            nvgArcTo(vg, kx + wkW, wkH, kx + wkW - r, wkH, r);
+            nvgLineTo(vg, kx + r, wkH);
+            nvgArcTo(vg, kx, wkH, kx, wkH - r, r);
+            nvgLineTo(vg, kx, r);
+            nvgArcTo(vg, kx, 0f, kx + r, 0f, r);
+            nvgClosePath(vg);
+
+            if (pressed)
+            {
+                nvgFillColor(vg, new NVGcolor { r = 0.40f, g = 0.78f, b = 1.00f, a = 1f });
+            }
+            else
+            {
+                // Gradient: warm ivory top → slightly darker at bottom
+                var paint = nvgLinearGradient(vg, kx, 0f, kx, wkH,
+                    new NVGcolor { r = 0.97f, g = 0.96f, b = 0.92f, a = 1f },
+                    new NVGcolor { r = 0.82f, g = 0.80f, b = 0.76f, a = 1f });
+                nvgFillPaint(vg, paint);
+            }
+            nvgFill(vg);
+
+            // Border
+            nvgStrokeColor(vg, new NVGcolor { r = 0.18f, g = 0.18f, b = 0.22f, a = 1f });
+            nvgStrokeWidth(vg, 1.2f);
+            nvgStroke(vg);
+
+            // Note label at bottom of key
+            int noteInOct = Keys[i].semi % 12;
+            if (noteInOct == 0) // C notes only
+            {
+                nvgFontSize(vg, MathF.Max(9f, wkW * 0.28f));
+                nvgFontFace(vg, "sans");
+                nvgTextAlign(vg, (int)(NVGalign.NVG_ALIGN_CENTER | NVGalign.NVG_ALIGN_BOTTOM));
+                nvgFillColor(vg, pressed
+                    ? new NVGcolor { r = 0.05f, g = 0.15f, b = 0.25f, a = 0.9f }
+                    : new NVGcolor { r = 0.35f, g = 0.25f, b = 0.15f, a = 0.7f });
+                int octave = 3 + Keys[i].semi / 12;
+                nvgText(vg, kx + wkW * 0.5f, wkH - 6f, $"C{octave}", null);
+            }
+
+            wkIdx++;
+        }
+
+        // Black keys
+        wkIdx = 0;
+        for (int i = 0; i < Keys.Length; i++)
+        {
+            if (!Keys[i].black) { wkIdx++; continue; }
+            float kx = WhiteKeyX(wkIdx - 1, wkW, w) + wkW - bkW * 0.5f;
+            bool pressed = _pressed.ContainsKey(Keys[i].semi);
+            float r = MathF.Max(2f, bkW * 0.10f);
+
+            nvgBeginPath(vg);
+            nvgRoundedRectVarying(vg, kx, 0f, bkW, bkH, 0f, 0f, r, r);
+
+            if (pressed)
+            {
+                nvgFillColor(vg, new NVGcolor { r = 0.15f, g = 0.50f, b = 0.80f, a = 1f });
+            }
+            else
+            {
+                var paint = nvgLinearGradient(vg, kx, 0f, kx, bkH,
+                    new NVGcolor { r = 0.20f, g = 0.20f, b = 0.24f, a = 1f },
+                    new NVGcolor { r = 0.06f, g = 0.06f, b = 0.08f, a = 1f });
+                nvgFillPaint(vg, paint);
+            }
+            nvgFill(vg);
+
+            // Sheen highlight on top edge
+            if (!pressed)
+            {
+                nvgBeginPath(vg);
+                nvgRoundedRect(vg, kx + bkW * 0.15f, 2f, bkW * 0.70f, bkH * 0.18f, r * 0.5f);
+                nvgFillColor(vg, new NVGcolor { r = 1f, g = 1f, b = 1f, a = 0.10f });
+                nvgFill(vg);
+            }
+        }
+    }
+
+    // ── Mouse input ──────────────────────────────────────────────────────────
+
+    public override bool OnMouseDown(MouseEvent e)
+    {
+        if (e.Button == MouseButton.Left)
+        {
+            int semi = HitTest(e.LocalPosition.X, e.LocalPosition.Y);
+            if (semi >= 0)
+            {
+                Press(-1, semi);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public override bool OnMouseUp(MouseEvent e)
+    {
+        if (e.Button == MouseButton.Left)
+        {
+            ReleaseAll(-1);
+            return true;
+        }
+        return false;
+    }
+
+    public override bool OnMouseMove(MouseEvent e)
+    {
+        if (_pressed.ContainsValue(-1))
+        {
+            int semi = HitTest(e.LocalPosition.X, e.LocalPosition.Y);
+            if (semi >= 0)
+            {
+                // Find which semi is currently pressed by mouse
+                int? prev = null;
+                foreach (var kv in _pressed) if (kv.Value == -1) { prev = kv.Key; break; }
+                if (prev.HasValue && prev.Value != semi)
+                {
+                    ReleaseAll(-1);
+                    Press(-1, semi);
+                }
+            }
+        }
+        return false;
+    }
+
+    // ── Touch input ──────────────────────────────────────────────────────────
+
+    public override bool OnTouchDown(TouchEvent e)
+    {
+        foreach (var pt in e.Touches)
+        {
+            if (!pt.Changed) continue;
+            var local = ToLocal(pt.Position);
+            int semi = HitTest(local.X, local.Y);
+            if (semi >= 0) Press(pt.Id, semi);
+        }
+        return true;
+    }
+
+    public override bool OnTouchUp(TouchEvent e)
+    {
+        foreach (var pt in e.Touches)
+        {
+            if (!pt.Changed) continue;
+            ReleaseAll(pt.Id);
+        }
+        return true;
+    }
+
+    public override bool OnTouchMove(TouchEvent e)
+    {
+        foreach (var pt in e.Touches)
+        {
+            if (!pt.Changed) continue;
+            var local = ToLocal(pt.Position);
+            int semi = HitTest(local.X, local.Y);
+            if (semi < 0) continue;
+            // Find previous semi held by this touch id
+            int? prev = null;
+            foreach (var kv in _pressed) if (kv.Value == pt.Id) { prev = kv.Key; break; }
+            if (prev.HasValue && prev.Value != semi)
+            {
+                ReleaseAll(pt.Id);
+                Press(pt.Id, semi);
+            }
+            else if (!prev.HasValue)
+            {
+                Press(pt.Id, semi);
+            }
+        }
+        return true;
+    }
+
+    // ── Press / Release helpers ──────────────────────────────────────────────
+
+    void Press(int inputId, int semi)
+    {
+        // Already pressed by this input — no-op
+        if (_pressed.TryGetValue(semi, out int existing) && existing == inputId) return;
+        // If a different input already holds this key, ignore
+        if (_pressed.ContainsKey(semi)) return;
+        _pressed[semi] = inputId;
+        NoteOn?.Invoke(NoteFreq(semi));
+        NoteOnSemi?.Invoke(semi);
+    }
+
+    void ReleaseAll(int inputId)
+    {
+        var toRelease = new List<int>();
+        foreach (var kv in _pressed) if (kv.Value == inputId) toRelease.Add(kv.Key);
+        foreach (int semi in toRelease)
+        {
+            _pressed.Remove(semi);
+            NoteOff?.Invoke();
+            NoteOffSemi?.Invoke(semi);
+        }
     }
 }
 
