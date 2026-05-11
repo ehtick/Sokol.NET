@@ -371,7 +371,7 @@ prim_types = {
     'ma_encoder_uninit_proc':       'IntPtr',
     'ma_encoder_write_pcm_frames_proc': 'IntPtr',
     'ma_encoder_write_proc':        'IntPtr',
-    'ma_engine_process_proc':       'IntPtr',
+    'ma_engine_process_proc':       'delegate* unmanaged<void*, float*, ulong, void>',
     'ma_read_proc':                 'IntPtr',
     'ma_seek_proc':                 'IntPtr',
     'ma_sound_end_proc':            'IntPtr',

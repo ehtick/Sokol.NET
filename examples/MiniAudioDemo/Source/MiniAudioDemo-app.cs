@@ -87,7 +87,12 @@ public static unsafe class MiniaudiodemoApp
 
     // ── Spectrum Analyzer tab ──────────────────────────────────────────────────
     static ma_sound*           _specSound;
-    static ma_decoder*         _specDecoder;  // monitoring decoder for spectrum
+    // Lock-free ring buffer filled by the engine's onProcess callback.
+    // Audio thread is the sole writer; main thread reads the most-recent SpecFrames.
+    const  int    CaptureRingFrames = 8192;          // power of 2
+    const  int    CaptureRingSize   = CaptureRingFrames * 2;  // stereo floats
+    static float* _captureRing;
+    static volatile int _captureWritePos;
     static SpectrumWidget?     _specWidget;
     static GoniometerWidget?   _gonioWidget;
     static SpectrogramWidget?  _spectroWidget;
@@ -122,7 +127,10 @@ public static unsafe class MiniaudiodemoApp
         SFilesystem.Initialize();
 
         _engine = (ma_engine*)NativeMemory.AllocZeroed((nuint)sizeof(ma_engine));
+        _captureRing = (float*)NativeMemory.AllocZeroed((nuint)(CaptureRingSize * sizeof(float)));
+        _captureWritePos = 0;
         var engCfg = ma_engine_config_init();
+        engCfg.onProcess = &OnEngineProcess;
         _engineReady = ma_engine_init(in engCfg, _engine) == ma_result.MA_SUCCESS;
 
         _passAction = default;
@@ -337,36 +345,28 @@ public static unsafe class MiniaudiodemoApp
             }
         }
 
-        // Spectrum Analyzer tab — read PCM from monitoring decoder
-        if ((_specWidget != null || _gonioWidget != null || _spectroWidget != null) && _specDecoder != null && _specSound != null)
+        // Spectrum Analyzer tab — read most-recent PCM from engine capture ring buffer.
+        // _captureRing is filled by OnEngineProcess (audio thread) with frames as they
+        // exit the mixer, so no cursor estimation or hardware-latency guessing is needed.
+        if ((_specWidget != null || _gonioWidget != null || _spectroWidget != null) && _captureRing != null && _specSound != null)
         {
-            ulong cursor = 0;
-            ma_sound_get_cursor_in_pcm_frames(in *_specSound, ref cursor);
-            ma_decoder_seek_to_pcm_frame(_specDecoder, cursor);
             const int SpecFrames = 2048;
-            Span<float> specBuf = stackalloc float[SpecFrames * 2];
-            fixed (float* p = specBuf)
+            int wp   = _captureWritePos;            // snapshot the volatile write head
+            int mask = CaptureRingSize - 1;
+            // Step back SpecFrames stereo pairs to get the most recently committed audio.
+            int rp   = (wp - SpecFrames * 2 + CaptureRingSize) & mask;
+            Span<float> mono = stackalloc float[SpecFrames];
+            Span<float> smpL = stackalloc float[SpecFrames];
+            Span<float> smpR = stackalloc float[SpecFrames];
+            for (int i = 0; i < SpecFrames; i++)
             {
-                ulong read = 0;
-                ma_decoder_read_pcm_frames(_specDecoder, p, SpecFrames, ref read);
-                int n = (int)read;
-                if (n > 0)
-                {
-                    // De-interleave to mono mid for spectrum, collect L/R for goniometer
-                    Span<float> mono   = stackalloc float[n];
-                    Span<float> smpL   = stackalloc float[n];
-                    Span<float> smpR   = stackalloc float[n];
-                    for (int i = 0; i < n; i++)
-                    {
-                        smpL[i] = p[i * 2];
-                        smpR[i] = p[i * 2 + 1];
-                        mono[i] = (smpL[i] + smpR[i]) * 0.5f;
-                    }
-                    _specWidget?.PushSamples(mono[..n]);
-                    _gonioWidget?.PushSamples(smpL[..n], smpR[..n]);
-                    _spectroWidget?.PushSamples(mono[..n]);
-                }
+                smpL[i] = _captureRing[(rp + i * 2)     & mask];
+                smpR[i] = _captureRing[(rp + i * 2 + 1) & mask];
+                mono[i] = (smpL[i] + smpR[i]) * 0.5f;
             }
+            _specWidget?.PushSamples(mono);
+            _gonioWidget?.PushSamples(smpL, smpR);
+            _spectroWidget?.PushSamples(mono);
         }
 
         float winW = sapp_widthf()  ;
@@ -382,6 +382,22 @@ public static unsafe class MiniaudiodemoApp
 
     [UnmanagedCallersOnly]
     static void Event(sapp_event* e) => _screen?.DispatchEvent(e);
+
+    // Called by the miniaudio engine on the audio thread after mixing, just before
+    // frames are sent to hardware.  Writes interleaved stereo f32 into _captureRing
+    // so Frame() can read the most-recent samples without any cursor estimation.
+    [UnmanagedCallersOnly]
+    static void OnEngineProcess(void* pUserData, float* pFramesOut, ulong frameCount)
+    {
+        float* ring = _captureRing;
+        if (ring == null) return;
+        int count = (int)((long)frameCount * 2);   // stereo pairs → individual floats
+        int wp    = _captureWritePos;
+        int mask  = CaptureRingSize - 1;
+        for (int i = 0; i < count; i++)
+            ring[(wp + i) & mask] = pFramesOut[i];
+        _captureWritePos = (wp + count) & mask;
+    }
 
     // ── Cleanup ───────────────────────────────────────────────────────────────
 
@@ -436,11 +452,10 @@ public static unsafe class MiniaudiodemoApp
             NativeMemory.Free(_specSound);
             _specSound = null;
         }
-        if (_specDecoder != null)
+        if (_captureRing != null)
         {
-            ma_decoder_uninit(_specDecoder);
-            NativeMemory.Free(_specDecoder);
-            _specDecoder = null;
+            NativeMemory.Free(_captureRing);
+            _captureRing = null;
         }
         if (_eqNodesReady)
         {
@@ -1715,12 +1730,6 @@ public static unsafe class MiniaudiodemoApp
                 ma_sound_uninit(_specSound);
                 NativeMemory.Free(_specSound);
                 _specSound = null;
-                if (_specDecoder != null)
-                {
-                    ma_decoder_uninit(_specDecoder);
-                    NativeMemory.Free(_specDecoder);
-                    _specDecoder = null;
-                }
                 _specWidget?.Reset();
                 _gonioWidget?.Reset();
                 _spectroWidget?.Reset();
@@ -1745,16 +1754,6 @@ public static unsafe class MiniaudiodemoApp
             ma_sound_set_looping(_specSound, 1);
             ma_sound_start(_specSound);
 
-            // Monitoring decoder (not in audio graph)
-            var decCfg = ma_decoder_config_init(ma_format.ma_format_f32, 2, 0);
-            _specDecoder = (ma_decoder*)NativeMemory.AllocZeroed((nuint)sizeof(ma_decoder));
-            var buf = _loaded[af.Path];
-            if (ma_decoder_init_memory((void*)buf.GetBufferPointer(), (nuint)buf.Size, in decCfg, _specDecoder)
-                != ma_result.MA_SUCCESS)
-            {
-                NativeMemory.Free(_specDecoder); _specDecoder = null;
-            }
-
             playBtn.Text   = "■  Stop";
             statusLbl.Text = $"▶ {af.Label}";
         };
@@ -1766,11 +1765,6 @@ public static unsafe class MiniaudiodemoApp
             ma_sound_stop(_specSound);
             ma_sound_uninit(_specSound);
             NativeMemory.Free(_specSound); _specSound = null;
-            if (_specDecoder != null)
-            {
-                ma_decoder_uninit(_specDecoder);
-                NativeMemory.Free(_specDecoder); _specDecoder = null;
-            }
             _specWidget?.Reset(); _gonioWidget?.Reset(); _spectroWidget?.Reset();
             playBtn.Text = "▶  Play"; statusLbl.Text = "Stopped";
         };

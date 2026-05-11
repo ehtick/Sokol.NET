@@ -16,6 +16,10 @@ A cross-platform audio demo built with [Sokol.NET](../../README.md), demonstrati
 |---------|----|
 | ![Spatial tab](screenshot/Screenshot%202026-05-11%20at%2013.00.06.png) | ![EQ tab](screenshot/Screenshot%202026-05-11%20at%2013.00.31.png) |
 
+| Spectrum | Piano |
+|----------|-------|
+| ![Spectrum tab](screenshot/Screenshot%202026-05-11%20at%2016.42.52.png) | ![Piano tab](screenshot/Screenshot%202026-05-11%20at%2016.43.15.png) |
+
 ## What It Demonstrates
 
 - **miniaudio integration** — P/Invoke bindings to the [miniaudio](https://miniaud.io) C library (`ma_engine`, `ma_sound`, `ma_resource_manager`)
@@ -25,6 +29,8 @@ A cross-platform audio demo built with [Sokol.NET](../../README.md), demonstrati
 - **Music track picker** — Sound FX, Fade, and Spatial tabs each expose a `ComboBox` to select from 6 bundled music tracks at runtime
 - **Spatialized audio** — Spatial tab lets you drag a sound source on a 2D canvas; `ma_sound_set_position` / `ma_engine_listener_set_position` update the 3D position in real time with configurable attenuation model and min/max distance
 - **Real-time EQ** — EQ tab chains four `ma_lpf_node` / `ma_hpf_node` / `ma_peak_eq_node` filter nodes and visualises the frequency response alongside a VU meter fed from the decoder
+- **Spectrum analyzer** — Spectrum tab shows a real-time FFT bar chart with frequency-gradient colouring (orange→green→cyan), a goniometer (stereo phase/Lissajous scope), and a scrolling spectrogram; all fed from the `onProcess` engine capture ring buffer
+- **Piano keyboard** — Piano tab renders an interactive multi-octave piano keyboard; clicking a key plays the corresponding note via miniaudio and highlights the key in blue; C-note labels are drawn on the keyboard
 - **Waveform visualiser** — oscilloscope and peak VU meter rendered each frame from decoded PCM data
 - **Finished-sound cleanup** — completed one-shot sounds are detected via `ma_sound_at_end` and freed each frame
 - **Scrollable tabs on mobile** — EQ, Waveform, and Spatial tabs are wrapped in `ScrollView` so all controls are reachable on small screens (iPhone / Android)
