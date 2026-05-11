@@ -1440,9 +1440,14 @@ public static unsafe class MiniaudiodemoApp
             ma_sound_start(_eqSound);
 
             // Init monitoring decoder for VU meter (reads same file, not connected to audio graph)
+            // Use ma_decoder_init_memory (not init_file) so it works on iOS/Android where
+            // the C file system is not available — data is already pinned in _loaded.
             var decCfg = ma_decoder_config_init(ma_format.ma_format_f32, 2, 0);
             _eqDecoder = (ma_decoder*)NativeMemory.AllocZeroed((nuint)sizeof(ma_decoder));
-            if (ma_decoder_init_file(af.Path, in decCfg, _eqDecoder) != ma_result.MA_SUCCESS)
+            var loadedBuf = _loaded[af.Path];
+            if (ma_decoder_init_memory(
+                    (void*)loadedBuf.GetBufferPointer(), (nuint)loadedBuf.Size, in decCfg, _eqDecoder)
+                != ma_result.MA_SUCCESS)
             {
                 NativeMemory.Free(_eqDecoder);
                 _eqDecoder = null;
