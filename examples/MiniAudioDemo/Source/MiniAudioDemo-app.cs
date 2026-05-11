@@ -64,6 +64,8 @@ public static unsafe class MiniaudiodemoApp
     static ma_waveform*        _waveformDS;
     static ma_sound*           _waveformSound;
     static OscilloscopeWidget? _oscWidget;
+    static ma_waveform*        _vuWaveform;   // shadow waveform for VU meter PCM reads
+    static VuMeterWidget?      _vuWidget;
 
     // ── Spatialization tab ────────────────────────────────────────────────────
     static ma_sound*                    _spatSound;
@@ -71,12 +73,16 @@ public static unsafe class MiniaudiodemoApp
 
     // ── Equalizer tab ─────────────────────────────────────────────────────────
     static ma_sound*        _eqSound;
+    static ma_decoder*      _eqDecoder;     // monitoring decoder for VU meter (not in audio graph)
+    static VuMeterWidget?   _eqVuWidget;
+    static EqBarsWidget?    _eqBarsWidget;
     static ma_loshelf_node* _eqLoShelf;
     static ma_peak_node*    _eqLowMid;
     static ma_peak_node*    _eqMid;
     static ma_peak_node*    _eqHiMid;
     static ma_hishelf_node* _eqHiShelf;
     static bool             _eqNodesReady;
+    static float            _eqPan;          // -1..+1, mirrors balance slider
 
     [UnmanagedCallersOnly]
     static void Init()
@@ -242,6 +248,64 @@ public static unsafe class MiniaudiodemoApp
         if (_engUptimeLabel != null && _engineReady)
             _engUptimeLabel.Text = $"Uptime: {ma_engine_get_time_in_milliseconds(in *_engine) / 1000.0:F1} s";
 
+        // Sample shadow waveform for VU meter
+        if (_vuWidget != null && _vuWaveform != null)
+        {
+            const int Frames = 512;
+            Span<float> buf = stackalloc float[Frames * 2];
+            fixed (float* p = buf)
+            {
+                ulong read = 0;
+                ma_waveform_read_pcm_frames(_vuWaveform, p, Frames, ref read);
+                float peakL = 0f, peakR = 0f, sumSqL = 0f, sumSqR = 0f;
+                for (int i = 0; i < (int)read; i++)
+                {
+                    float l = MathF.Abs(p[i * 2]);
+                    float r = MathF.Abs(p[i * 2 + 1]);
+                    if (l > peakL) peakL = l;
+                    if (r > peakR) peakR = r;
+                    sumSqL += l * l;
+                    sumSqR += r * r;
+                }
+                float inv = read > 0 ? 1f / read : 0f;
+                float rmsL = MathF.Sqrt(sumSqL * inv);
+                float rmsR = MathF.Sqrt(sumSqR * inv);
+                _vuWidget.UpdateLevels(peakL, rmsL, peakR, rmsR, (float)sapp_frame_duration());
+            }
+        }
+
+        // Sample EQ monitoring decoder for VU meter
+        if (_eqVuWidget != null && _eqDecoder != null && _eqSound != null)
+        {
+            ulong cursor = 0;
+            ma_sound_get_cursor_in_pcm_frames(in *_eqSound, ref cursor);
+            ma_decoder_seek_to_pcm_frame(_eqDecoder, cursor);
+            const int EqFrames = 512;
+            Span<float> eqBuf = stackalloc float[EqFrames * 2];
+            fixed (float* p = eqBuf)
+            {
+                ulong read = 0;
+                ma_decoder_read_pcm_frames(_eqDecoder, p, EqFrames, ref read);
+                float peakL = 0f, peakR = 0f, sumSqL = 0f, sumSqR = 0f;
+                for (int i = 0; i < (int)read; i++)
+                {
+                    float l = MathF.Abs(p[i * 2]);
+                    float r = MathF.Abs(p[i * 2 + 1]);
+                    if (l > peakL) peakL = l;
+                    if (r > peakR) peakR = r;
+                    sumSqL += l * l;
+                    sumSqR += r * r;
+                }
+                float inv = read > 0 ? 1f / read : 0f;
+                float rmsL = MathF.Sqrt(sumSqL * inv);
+                float rmsR = MathF.Sqrt(sumSqR * inv);
+                // Scale by pan so the VU reflects what's audible on each channel
+                float lFactor = _eqPan >= 0f ? 1f - _eqPan : 1f;
+                float rFactor = _eqPan <= 0f ? 1f + _eqPan : 1f;
+                _eqVuWidget.UpdateLevels(peakL * lFactor, rmsL * lFactor, peakR * rFactor, rmsR * rFactor, (float)sapp_frame_duration());
+            }
+        }
+
         float winW = sapp_widthf()  ;
         float winH = sapp_heightf() ;
 
@@ -274,6 +338,12 @@ public static unsafe class MiniaudiodemoApp
             NativeMemory.Free(_waveformDS);
             _waveformDS = null;
         }
+        if (_vuWaveform != null)
+        {
+            ma_waveform_uninit(_vuWaveform);
+            NativeMemory.Free(_vuWaveform);
+            _vuWaveform = null;
+        }
 
         if (_spatSound != null)
         {
@@ -289,6 +359,12 @@ public static unsafe class MiniaudiodemoApp
             ma_sound_uninit(_eqSound);
             NativeMemory.Free(_eqSound);
             _eqSound = null;
+        }
+        if (_eqDecoder != null)
+        {
+            ma_decoder_uninit(_eqDecoder);
+            NativeMemory.Free(_eqDecoder);
+            _eqDecoder = null;
         }
         if (_eqNodesReady)
         {
@@ -367,8 +443,8 @@ public static unsafe class MiniaudiodemoApp
         tabs.AddTab("Fade",     BuildFadeTab());
         tabs.AddTab("Waveform", BuildWaveformTab());
         tabs.AddTab("Spatial",  BuildSpatializationTab());
-        tabs.AddTab("Engine",   BuildEngineTab());
         tabs.AddTab("EQ",       BuildEqTab());
+        tabs.AddTab("Engine",   BuildEngineTab());
     }
 
     // ── Tab: Sound FX ─────────────────────────────────────────────────────────
@@ -796,13 +872,20 @@ public static unsafe class MiniaudiodemoApp
 
         root.AddChild(new Separator());
 
-        // Oscilloscope widget
-        _oscWidget = new OscilloscopeWidget
+        // Side-by-side visualizers: oscilloscope (expands to fill width) + VU meter (fixed 90px wide)
+        var vizRow = new Panel
         {
+            Layout = new BoxLayout(Orientation.Horizontal, Alignment.Stretch, 8),
             Expand = true,
         };
-        root.AddChild(_oscWidget);
 
+        _oscWidget = new OscilloscopeWidget { Expand = true };
+        vizRow.AddChild(_oscWidget);
+
+        _vuWidget = new VuMeterWidget { FixedSize = new Vector2(90, 0) };
+        vizRow.AddChild(_vuWidget);
+
+        root.AddChild(vizRow);
         root.Expand = true;
 
         // Helpers
@@ -842,6 +925,15 @@ public static unsafe class MiniaudiodemoApp
             ma_sound_start(_waveformSound);
             playBtn.Text = "■  Stop";
             if (_oscWidget != null) _oscWidget.IsPlaying = true;
+
+            // Init shadow waveform for VU meter PCM reads
+            _vuWaveform = (ma_waveform*)NativeMemory.AllocZeroed((nuint)sizeof(ma_waveform));
+            var vuCfg = ma_waveform_config_init(ma_format.ma_format_f32, 2, sampleRate,
+                                                waveType, waveAmp, waveFreq);
+            if (ma_waveform_init(in vuCfg, _vuWaveform) != ma_result.MA_SUCCESS)
+            {
+                NativeMemory.Free(_vuWaveform); _vuWaveform = null;
+            }
         }
 
         void StopWaveform()
@@ -859,8 +951,15 @@ public static unsafe class MiniaudiodemoApp
                 NativeMemory.Free(_waveformDS);
                 _waveformDS = null;
             }
+            if (_vuWaveform != null)
+            {
+                ma_waveform_uninit(_vuWaveform);
+                NativeMemory.Free(_vuWaveform);
+                _vuWaveform = null;
+            }
             playBtn.Text = "▶  Play";
             if (_oscWidget != null) _oscWidget.IsPlaying = false;
+            _vuWidget?.Reset();
         }
 
         playBtn.Clicked += () =>
@@ -875,6 +974,7 @@ public static unsafe class MiniaudiodemoApp
             freqLbl.Text = $"{(int)v} Hz";
             if (_oscWidget != null) _oscWidget.Freq = v;
             if (_waveformDS != null) ma_waveform_set_frequency(_waveformDS, v);
+            if (_vuWaveform != null) ma_waveform_set_frequency(_vuWaveform, v);
         };
         ampSlider.ValueChanged += v =>
         {
@@ -882,12 +982,14 @@ public static unsafe class MiniaudiodemoApp
             ampLbl.Text = $"{v:F2}";
             if (_oscWidget != null) _oscWidget.Amp = v;
             if (_waveformDS != null) ma_waveform_set_amplitude(_waveformDS, v);
+            if (_vuWaveform != null) ma_waveform_set_amplitude(_vuWaveform, v);
         };
         typeCombo.SelectionChanged += (_, _) =>
         {
             var wt = CurrentWaveType();
             if (_oscWidget != null) _oscWidget.WaveType = wt;
             if (_waveformDS != null) ma_waveform_set_type(_waveformDS, wt);
+            if (_vuWaveform != null) ma_waveform_set_type(_vuWaveform, wt);
         };
 
         return root;
@@ -1150,19 +1252,31 @@ public static unsafe class MiniaudiodemoApp
     // ── Tab: Equalizer ────────────────────────────────────────────────────────
     static Widget BuildEqTab()
     {
-        var root = new Panel
+        // Outer: controls on the left, VU meter on the right
+        var outer = new Panel
+        {
+            Layout = new BoxLayout(Orientation.Horizontal, Alignment.Stretch, 0),
+            Expand = true,
+        };
+
+        var controls = new Panel
         {
             Layout  = new BoxLayout(Orientation.Vertical, Alignment.Start, 14),
             Padding = new Thickness(20),
+            Expand  = true,
         };
 
-        root.AddChild(new Label { Text = "5-Band Equalizer", FontSize = 20 });
-        root.AddChild(new Label
+        _eqVuWidget = new VuMeterWidget { FixedSize = new Vector2(90, 0) };
+        outer.AddChild(controls);
+        outer.AddChild(_eqVuWidget);
+
+        controls.AddChild(new Label { Text = "5-Band Equalizer", FontSize = 20 });
+        controls.AddChild(new Label
         {
             Text      = "Filter chain: Lo Shelf → Low-Mid → Mid → Hi-Mid → Hi Shelf → endpoint",
             ForeColor = UIColor.FromHex("#AAAAAA"),
         });
-        root.AddChild(new Separator());
+        controls.AddChild(new Separator());
 
         // Source picker + play button
         var fileNames = new string[_audioFiles.Length];
@@ -1181,9 +1295,15 @@ public static unsafe class MiniaudiodemoApp
         ctrlRow.AddChild(new Label { Text = "Source:", FixedSize = new Vector2(56, 32) });
         ctrlRow.AddChild(fileCombo);
         ctrlRow.AddChild(playBtn);
-        root.AddChild(ctrlRow);
+        controls.AddChild(ctrlRow);
 
-        root.AddChild(new Separator());
+        controls.AddChild(new Separator());
+
+        // EQ bars visualizer
+        _eqBarsWidget = new EqBarsWidget { FixedSize = new Vector2(0, 110) };
+        controls.AddChild(_eqBarsWidget);
+
+        controls.AddChild(new Separator());
 
         // Band definitions: (display name, frequency label)
         (string name, string freq)[] bands =
@@ -1217,6 +1337,7 @@ public static unsafe class MiniaudiodemoApp
             {
                 gainLabels[idx].Text = $"{v:+0.0;-0.0; 0.0} dB";
                 EqApplyBand(idx, v);
+                _eqBarsWidget?.SetGain(idx, v);
             };
 
             row.AddChild(sl);
@@ -1224,20 +1345,53 @@ public static unsafe class MiniaudiodemoApp
             return row;
         }
 
-        root.AddChild(new Label { Text = "Gain (−15 to +15 dB)", FontSize = 14,
-                                   ForeColor = UIColor.FromHex("#CCCCCC") });
+        controls.AddChild(new Label { Text = "Gain (−15 to +15 dB)", FontSize = 14,
+                                      ForeColor = UIColor.FromHex("#CCCCCC") });
         for (int i = 0; i < 5; i++)
-            root.AddChild(MakeBandRow(i));
+            controls.AddChild(MakeBandRow(i));
 
-        root.AddChild(new Separator());
+        controls.AddChild(new Separator());
+
+        // L/R Balance control
+        controls.AddChild(new Label { Text = "L/R Balance", FontSize = 14,
+                                      ForeColor = UIColor.FromHex("#CCCCCC") });
+
+        var balLabel  = new Label { Text = "Center", FixedSize = new Vector2(72, 28) };
+        var balSlider = new Slider { Min = -1f, Max = 1f, Value = 0f };
+        balSlider.ValueChanged += v =>
+        {
+            if (_eqSound != null) ma_sound_set_pan(_eqSound, v);
+            _eqPan = v;
+            balLabel.Text = v < -0.05f ? $"L {(-v * 100f):F0}%"
+                          : v >  0.05f ? $"R {( v * 100f):F0}%"
+                          : "Center";
+        };
+
+        var balRow = new Panel
+        {
+            Layout    = new BoxLayout(Orientation.Horizontal, Alignment.Center, 10),
+            FixedSize = new Vector2(0, 34),
+        };
+        balRow.AddChild(new Label { Text = "◀ L", FixedSize = new Vector2(28, 28),
+                                    ForeColor = UIColor.FromHex("#AAAAAA") });
+        balRow.AddChild(balSlider);
+        balRow.AddChild(new Label { Text = "R ▶", FixedSize = new Vector2(28, 28),
+                                    ForeColor = UIColor.FromHex("#AAAAAA") });
+        balRow.AddChild(balLabel);
+        controls.AddChild(balRow);
+
+        controls.AddChild(new Separator());
 
         var resetBtn = new Button { Text = "Reset EQ", FixedSize = new Vector2(100, 32) };
         resetBtn.Clicked += () =>
         {
             for (int i = 0; i < 5; i++)
                 eqSliders[i].Value = 0f;   // fires ValueChanged which calls EqApplyBand
+            balSlider.Value = 0f;          // also reset balance
+            _eqPan = 0f;
+            _eqBarsWidget?.Reset();
         };
-        root.AddChild(resetBtn);
+        controls.AddChild(resetBtn);
 
         // Play/Stop logic
         playBtn.Clicked += () =>
@@ -1248,6 +1402,13 @@ public static unsafe class MiniaudiodemoApp
                 ma_sound_uninit(_eqSound);
                 NativeMemory.Free(_eqSound);
                 _eqSound = null;
+                if (_eqDecoder != null)
+                {
+                    ma_decoder_uninit(_eqDecoder);
+                    NativeMemory.Free(_eqDecoder);
+                    _eqDecoder = null;
+                }
+                _eqVuWidget?.Reset();
                 playBtn.Text = "▶  Play";
                 return;
             }
@@ -1271,13 +1432,26 @@ public static unsafe class MiniaudiodemoApp
             }
 
             ma_sound_set_looping(_eqSound, 1);
+            // Apply current balance before starting
+            if (MathF.Abs(balSlider.Value) > 0.001f)
+                ma_sound_set_pan(_eqSound, balSlider.Value);
             // Route through EQ chain (sound has no default attachment so this is the only path)
             ma_node_attach_output_bus((IntPtr)_eqSound, 0, (IntPtr)_eqLoShelf, 0);
             ma_sound_start(_eqSound);
+
+            // Init monitoring decoder for VU meter (reads same file, not connected to audio graph)
+            var decCfg = ma_decoder_config_init(ma_format.ma_format_f32, 2, 0);
+            _eqDecoder = (ma_decoder*)NativeMemory.AllocZeroed((nuint)sizeof(ma_decoder));
+            if (ma_decoder_init_file(af.Path, in decCfg, _eqDecoder) != ma_result.MA_SUCCESS)
+            {
+                NativeMemory.Free(_eqDecoder);
+                _eqDecoder = null;
+            }
+
             playBtn.Text = "■  Stop";
         };
 
-        return root;
+        return outer;
     }
 
     public static SApp.sapp_desc sokol_main()
@@ -1380,6 +1554,230 @@ sealed class OscilloscopeWidget : Widget
         nvgStrokeColor(vg, NvgRgbaf(0.2f, 0.85f, 1f, 1f));
         nvgStrokeWidth(vg, 2f);
         nvgStroke(vg);
+
+        renderer.Restore();
+    }
+}
+
+// ── VU Meter Widget ────────────────────────────────────────────────────────────
+
+sealed class VuMeterWidget : Widget
+{
+    float _smoothRmsL, _smoothRmsR;
+    float _holdL, _holdR;
+    float _holdTimerL, _holdTimerR;
+
+    const float HoldTime  = 1.5f;   // seconds before peak hold starts falling
+    const float HoldDecay = 1.2f;   // fall speed in linear units per second
+
+    public void UpdateLevels(float peakL, float rmsL, float peakR, float rmsR, float dt)
+    {
+        // Fast attack, exponential decay (~300ms time constant)
+        float decay = MathF.Pow(0.01f, dt);
+        _smoothRmsL = MathF.Max(rmsL, _smoothRmsL * decay);
+        _smoothRmsR = MathF.Max(rmsR, _smoothRmsR * decay);
+
+        // Peak hold
+        if (peakL >= _holdL) { _holdL = peakL; _holdTimerL = HoldTime; }
+        else { _holdTimerL -= dt; if (_holdTimerL < 0f) _holdL = MathF.Max(0f, _holdL - HoldDecay * dt); }
+
+        if (peakR >= _holdR) { _holdR = peakR; _holdTimerR = HoldTime; }
+        else { _holdTimerR -= dt; if (_holdTimerR < 0f) _holdR = MathF.Max(0f, _holdR - HoldDecay * dt); }
+    }
+
+    public void Reset()
+    {
+        _smoothRmsL = _smoothRmsR = 0f;
+        _holdL = _holdR = 0f;
+        _holdTimerL = _holdTimerR = 0f;
+    }
+
+    public override Vector2 PreferredSize(Renderer renderer) =>
+        FixedSize ?? new Vector2(90, 160);
+
+    public override void Draw(Renderer renderer)
+    {
+        if (!Visible) return;
+
+        float w = Bounds.Width;
+        float h = Bounds.Height;
+        var   b = new Rect(0, 0, w, h);
+
+        renderer.FillRoundedRect(b, 6f, UIColor.FromHex("#111122"));
+        renderer.StrokeRoundedRect(b, 6f, 1.5f, UIColor.FromHex("#334466"));
+
+        renderer.Save();
+        renderer.ClipRect(b);
+
+        const float LabelH = 18f;
+        const float Pad    = 6f;
+        const float Gap    = 4f;
+
+        float barAreaW = w - Pad * 2f - Gap;
+        float barW     = barAreaW * 0.5f;
+        float barH     = h - Pad - LabelH;
+
+        if (barW < 2f || barH < 10f) { renderer.Restore(); return; }
+
+        float lx = Pad;
+        float rx = Pad + barW + Gap;
+        float ty = Pad;
+
+        DrawBar(renderer, lx, ty, barW, barH, _smoothRmsL, _holdL);
+        DrawBar(renderer, rx, ty, barW, barH, _smoothRmsR, _holdR);
+
+        // Channel labels
+        renderer.SetFillColor(UIColor.FromHex("#889AAA"));
+        renderer.SetFont("sans");
+        renderer.SetFontSize(11f);
+        renderer.SetTextAlign(NVGalign.NVG_ALIGN_CENTER | NVGalign.NVG_ALIGN_BOTTOM);
+        renderer.DrawText(lx + barW * 0.5f, h - 2f, "L");
+        renderer.DrawText(rx + barW * 0.5f, h - 2f, "R");
+
+        renderer.Restore();
+    }
+
+    static void DrawBar(Renderer renderer, float x, float y, float bw, float bh,
+                        float rms, float hold)
+    {
+        // Background
+        renderer.FillRect(new Rect(x, y, bw, bh), UIColor.FromHex("#1A1A2E"));
+
+        // dB tick marks at 0, -6, -12, -18, -24 dBFS
+        ReadOnlySpan<float> dbTicks = stackalloc float[] { 0f, -6f, -12f, -18f, -24f };
+        foreach (float db in dbTicks)
+        {
+            float level = db >= 0f ? 1f : MathF.Pow(10f, db / 20f);
+            float ty = y + bh - level * bh;
+            if (ty >= y && ty <= y + bh)
+                renderer.FillRect(new Rect(x, ty, bw, 1f), UIColor.FromHex("#2A3A4A"));
+        }
+
+        // RMS fill bar with green→yellow→red gradient (bottom to top)
+        float fillH = MathF.Min(rms, 1f) * bh;
+        if (fillH >= 1f)
+        {
+            float barY = y + bh - fillH;
+            var vg     = renderer.VGContext;
+            // Gradient bottom (green) → top (red), scaled by fill so short bars stay green
+            var paint = nvgLinearGradient(vg, x, y + bh, x, y,
+                new NVGcolor { r = 0.15f, g = 0.85f, b = 0.20f, a = 1f },   // green at bottom
+                new NVGcolor { r = 0.95f, g = 0.20f, b = 0.15f, a = 1f });  // red at top
+            nvgBeginPath(vg);
+            nvgRect(vg, x, barY, bw, fillH);
+            nvgFillPaint(vg, paint);
+            nvgFill(vg);
+        }
+
+        // Peak hold line (white)
+        if (hold > 0.005f)
+        {
+            float holdY = y + bh - MathF.Min(hold, 1f) * bh;
+            renderer.SetStrokeColor(UIColor.FromHex("#FFFFFFCC"));
+            renderer.SetStrokeWidth(2f);
+            renderer.DrawLine(new Vector2(x, holdY), new Vector2(x + bw, holdY), 2f);
+        }
+    }
+}
+
+// ── EQ Bars Widget ────────────────────────────────────────────────────────────
+
+sealed class EqBarsWidget : Widget
+{
+    static readonly string[] FreqLabels = { "80", "300", "1k", "4k", "12k" };
+    const float MaxDB = 15f;
+
+    readonly float[] _gains = new float[5];
+
+    public void SetGain(int band, float db) { if ((uint)band < 5) _gains[band] = db; }
+    public void Reset() { for (int i = 0; i < 5; i++) _gains[i] = 0f; }
+
+    public override Vector2 PreferredSize(Renderer renderer) =>
+        FixedSize ?? new Vector2(300, 110);
+
+    public override void Draw(Renderer renderer)
+    {
+        if (!Visible) return;
+
+        float w = Bounds.Width;
+        float h = Bounds.Height;
+        var   b = new Rect(0, 0, w, h);
+
+        renderer.FillRoundedRect(b, 6f, UIColor.FromHex("#0D0D1A"));
+        renderer.StrokeRoundedRect(b, 6f, 1f, UIColor.FromHex("#334466"));
+
+        renderer.Save();
+        renderer.ClipRect(b);
+
+        const float Pad    = 8f;
+        const float LabelH = 14f;
+        const float Gap    = 4f;
+
+        float barAreaH = h - Pad * 2f - LabelH;
+        float barAreaW = w - Pad * 2f;
+        const int N    = 5;
+        float barW     = (barAreaW - Gap * (N - 1)) / N;
+
+        if (barW < 2f || barAreaH < 10f) { renderer.Restore(); return; }
+
+        float centerY = Pad + barAreaH * 0.5f;
+
+        // Grid lines
+        renderer.SetStrokeWidth(1f);
+        renderer.SetStrokeColor(UIColor.FromHex("#1C2A3A"));
+        renderer.DrawLine(new Vector2(Pad, Pad), new Vector2(w - Pad, Pad), 1f);
+        renderer.DrawLine(new Vector2(Pad, Pad + barAreaH), new Vector2(w - Pad, Pad + barAreaH), 1f);
+        // 0dB center line (brighter)
+        renderer.SetStrokeColor(UIColor.FromHex("#2A4A6A"));
+        renderer.DrawLine(new Vector2(Pad, centerY), new Vector2(w - Pad, centerY), 1f);
+
+        var vg = renderer.VGContext;
+
+        for (int i = 0; i < N; i++)
+        {
+            float gain = MathF.Max(-MaxDB, MathF.Min(MaxDB, _gains[i]));
+            float norm  = gain / MaxDB; // -1..1
+            float bx    = Pad + i * (barW + Gap);
+
+            if (MathF.Abs(norm) < 0.015f)
+            {
+                // Flat — thin tick at center
+                renderer.FillRect(new Rect(bx, centerY - 1f, barW, 2f), UIColor.FromHex("#2A4A6A"));
+            }
+            else if (norm > 0f)
+            {
+                // Boost: grow upward from center line
+                float fillH = norm * barAreaH * 0.5f;
+                float barY  = centerY - fillH;
+                var paint = nvgLinearGradient(vg, bx, centerY, bx, Pad,
+                    new NVGcolor { r = 0.05f, g = 0.55f, b = 1.0f, a = 0.85f },  // blue at center
+                    new NVGcolor { r = 0.30f, g = 0.85f, b = 1.0f, a = 1.0f });  // bright cyan at top
+                nvgBeginPath(vg);
+                nvgRoundedRect(vg, bx, barY, barW, fillH, 3f);
+                nvgFillPaint(vg, paint);
+                nvgFill(vg);
+            }
+            else
+            {
+                // Cut: grow downward from center line
+                float fillH = -norm * barAreaH * 0.5f;
+                float barY  = centerY;
+                var paint = nvgLinearGradient(vg, bx, centerY, bx, Pad + barAreaH,
+                    new NVGcolor { r = 1.0f, g = 0.55f, b = 0.05f, a = 0.85f },  // orange at center
+                    new NVGcolor { r = 1.0f, g = 0.15f, b = 0.0f,  a = 1.0f });  // red at bottom
+                nvgBeginPath(vg);
+                nvgRoundedRect(vg, bx, barY, barW, fillH, 3f);
+                nvgFillPaint(vg, paint);
+                nvgFill(vg);
+            }
+
+            // Frequency label
+            renderer.SetFillColor(UIColor.FromHex("#6688AA"));
+            renderer.SetFont("sans");
+            renderer.SetFontSize(10f);
+            renderer.SetTextAlign(NVGalign.NVG_ALIGN_CENTER | NVGalign.NVG_ALIGN_BOTTOM);
+            renderer.DrawText(bx + barW * 0.5f, h - 1f, FreqLabels[i]);
+        }
 
         renderer.Restore();
     }
