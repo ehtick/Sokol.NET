@@ -69,6 +69,15 @@ public static unsafe class MiniaudiodemoApp
     static ma_sound*                    _spatSound;
     static SpatializationCanvasWidget?  _spatCanvas;
 
+    // ── Equalizer tab ─────────────────────────────────────────────────────────
+    static ma_sound*        _eqSound;
+    static ma_loshelf_node* _eqLoShelf;
+    static ma_peak_node*    _eqLowMid;
+    static ma_peak_node*    _eqMid;
+    static ma_peak_node*    _eqHiMid;
+    static ma_hishelf_node* _eqHiShelf;
+    static bool             _eqNodesReady;
+
     [UnmanagedCallersOnly]
     static void Init()
     {
@@ -274,6 +283,29 @@ public static unsafe class MiniaudiodemoApp
             _spatSound = null;
         }
 
+        if (_eqSound != null)
+        {
+            ma_sound_stop(_eqSound);
+            ma_sound_uninit(_eqSound);
+            NativeMemory.Free(_eqSound);
+            _eqSound = null;
+        }
+        if (_eqNodesReady)
+        {
+            ref ma_allocation_callbacks na = ref Unsafe.NullRef<ma_allocation_callbacks>();
+            ma_loshelf_node_uninit(_eqLoShelf, in na);
+            ma_peak_node_uninit(_eqLowMid,     in na);
+            ma_peak_node_uninit(_eqMid,        in na);
+            ma_peak_node_uninit(_eqHiMid,      in na);
+            ma_hishelf_node_uninit(_eqHiShelf, in na);
+            NativeMemory.Free(_eqLoShelf);  _eqLoShelf  = null;
+            NativeMemory.Free(_eqLowMid);   _eqLowMid   = null;
+            NativeMemory.Free(_eqMid);      _eqMid      = null;
+            NativeMemory.Free(_eqHiMid);    _eqHiMid    = null;
+            NativeMemory.Free(_eqHiShelf);  _eqHiShelf  = null;
+            _eqNodesReady = false;
+        }
+
         if (_mixSound != null)
         {
             ma_sound_stop(_mixSound);
@@ -336,6 +368,7 @@ public static unsafe class MiniaudiodemoApp
         tabs.AddTab("Waveform", BuildWaveformTab());
         tabs.AddTab("Spatial",  BuildSpatializationTab());
         tabs.AddTab("Engine",   BuildEngineTab());
+        tabs.AddTab("EQ",       BuildEqTab());
     }
 
     // ── Tab: Sound FX ─────────────────────────────────────────────────────────
@@ -1021,6 +1054,227 @@ public static unsafe class MiniaudiodemoApp
         attenCombo.SelectionChanged += (_, _) =>
         {
             if (_spatSound != null) ma_sound_set_attenuation_model(_spatSound, CurrentAttenModel());
+        };
+
+        return root;
+    }
+
+    // ── EQ helpers ────────────────────────────────────────────────────────────
+
+    static void EqInitNodes()
+    {
+        if (_eqNodesReady || !_engineReady) return;
+
+        var ng       = ma_engine_get_node_graph(_engine);
+        var endpoint = ma_engine_get_endpoint(_engine);
+        uint ch      = ma_engine_get_channels(in *_engine);
+        uint sr      = ma_engine_get_sample_rate(in *_engine);
+        // Pass null for allocation callbacks so miniaudio uses its default allocators.
+        // 'new ma_allocation_callbacks()' is a non-null pointer with null fn ptrs, which
+        // causes miniaudio to use null function pointers for alloc → init failure.
+        ref ma_allocation_callbacks nullAlloc = ref Unsafe.NullRef<ma_allocation_callbacks>();
+
+        _eqLoShelf = (ma_loshelf_node*)NativeMemory.AllocZeroed((nuint)sizeof(ma_loshelf_node));
+        _eqLowMid  = (ma_peak_node*)   NativeMemory.AllocZeroed((nuint)sizeof(ma_peak_node));
+        _eqMid     = (ma_peak_node*)   NativeMemory.AllocZeroed((nuint)sizeof(ma_peak_node));
+        _eqHiMid   = (ma_peak_node*)   NativeMemory.AllocZeroed((nuint)sizeof(ma_peak_node));
+        _eqHiShelf = (ma_hishelf_node*)NativeMemory.AllocZeroed((nuint)sizeof(ma_hishelf_node));
+
+        var loShelfCfg = ma_loshelf_node_config_init(ch, sr, 0.0, 1.0,    80.0);
+        ma_loshelf_node_init(ng, in loShelfCfg, in nullAlloc, _eqLoShelf);
+
+        var lowMidCfg = ma_peak_node_config_init(ch, sr, 0.0, 0.71,  300.0);
+        ma_peak_node_init(ng, in lowMidCfg, in nullAlloc, _eqLowMid);
+
+        var midCfg = ma_peak_node_config_init(ch, sr, 0.0, 0.71, 1000.0);
+        ma_peak_node_init(ng, in midCfg, in nullAlloc, _eqMid);
+
+        var hiMidCfg = ma_peak_node_config_init(ch, sr, 0.0, 0.71, 4000.0);
+        ma_peak_node_init(ng, in hiMidCfg, in nullAlloc, _eqHiMid);
+
+        var hiShelfCfg = ma_hishelf_node_config_init(ch, sr, 0.0, 1.0, 12000.0);
+        ma_hishelf_node_init(ng, in hiShelfCfg, in nullAlloc, _eqHiShelf);
+
+        // Wire chain: loShelf → lowMid → mid → hiMid → hiShelf → endpoint
+        ma_node_attach_output_bus((IntPtr)_eqLoShelf, 0, (IntPtr)_eqLowMid,  0);
+        ma_node_attach_output_bus((IntPtr)_eqLowMid,  0, (IntPtr)_eqMid,     0);
+        ma_node_attach_output_bus((IntPtr)_eqMid,     0, (IntPtr)_eqHiMid,   0);
+        ma_node_attach_output_bus((IntPtr)_eqHiMid,   0, (IntPtr)_eqHiShelf, 0);
+        ma_node_attach_output_bus((IntPtr)_eqHiShelf, 0, endpoint,            0);
+
+        _eqNodesReady = true;
+    }
+
+    static void EqApplyBand(int index, float gainDB)
+    {
+        if (!_eqNodesReady || !_engineReady) return;
+
+        uint ch = ma_engine_get_channels(in *_engine);
+        uint sr = ma_engine_get_sample_rate(in *_engine);
+
+        switch (index)
+        {
+            case 0:
+            {
+                var cfg = ma_loshelf2_config_init(ma_format.ma_format_f32, ch, sr, gainDB, 1.0, 80.0);
+                ma_loshelf_node_reinit(in cfg, _eqLoShelf);
+                break;
+            }
+            case 1:
+            {
+                var cfg = ma_peak2_config_init(ma_format.ma_format_f32, ch, sr, gainDB, 0.71, 300.0);
+                ma_peak_node_reinit(in cfg, _eqLowMid);
+                break;
+            }
+            case 2:
+            {
+                var cfg = ma_peak2_config_init(ma_format.ma_format_f32, ch, sr, gainDB, 0.71, 1000.0);
+                ma_peak_node_reinit(in cfg, _eqMid);
+                break;
+            }
+            case 3:
+            {
+                var cfg = ma_peak2_config_init(ma_format.ma_format_f32, ch, sr, gainDB, 0.71, 4000.0);
+                ma_peak_node_reinit(in cfg, _eqHiMid);
+                break;
+            }
+            case 4:
+            {
+                var cfg = ma_hishelf2_config_init(ma_format.ma_format_f32, ch, sr, gainDB, 1.0, 12000.0);
+                ma_hishelf_node_reinit(in cfg, _eqHiShelf);
+                break;
+            }
+        }
+    }
+
+    // ── Tab: Equalizer ────────────────────────────────────────────────────────
+    static Widget BuildEqTab()
+    {
+        var root = new Panel
+        {
+            Layout  = new BoxLayout(Orientation.Vertical, Alignment.Start, 14),
+            Padding = new Thickness(20),
+        };
+
+        root.AddChild(new Label { Text = "5-Band Equalizer", FontSize = 20 });
+        root.AddChild(new Label
+        {
+            Text      = "Filter chain: Lo Shelf → Low-Mid → Mid → Hi-Mid → Hi Shelf → endpoint",
+            ForeColor = UIColor.FromHex("#AAAAAA"),
+        });
+        root.AddChild(new Separator());
+
+        // Source picker + play button
+        var fileNames = new string[_audioFiles.Length];
+        for (int i = 0; i < _audioFiles.Length; i++) fileNames[i] = _audioFiles[i].Label;
+        var fileCombo = new ComboBox { FixedSize = new Vector2(200, 32) };
+        fileCombo.SetItems(fileNames);
+        fileCombo.SelectedIndex = 0;
+
+        var playBtn = new Button { Text = "▶  Play", FixedSize = new Vector2(100, 32) };
+
+        var ctrlRow = new Panel
+        {
+            Layout    = new BoxLayout(Orientation.Horizontal, Alignment.Center, 12),
+            FixedSize = new Vector2(0, 36),
+        };
+        ctrlRow.AddChild(new Label { Text = "Source:", FixedSize = new Vector2(56, 32) });
+        ctrlRow.AddChild(fileCombo);
+        ctrlRow.AddChild(playBtn);
+        root.AddChild(ctrlRow);
+
+        root.AddChild(new Separator());
+
+        // Band definitions: (display name, frequency label)
+        (string name, string freq)[] bands =
+        {
+            ("Lo Shelf",  " 80 Hz"),
+            ("Low-Mid",   "300 Hz"),
+            ("Mid",       "1 kHz"),
+            ("Hi-Mid",    "4 kHz"),
+            ("Hi Shelf",  "12 kHz"),
+        };
+
+        var eqSliders   = new Slider[5];
+        var gainLabels  = new Label[5];
+
+        Panel MakeBandRow(int idx)
+        {
+            var row = new Panel
+            {
+                Layout    = new BoxLayout(Orientation.Horizontal, Alignment.Center, 10),
+                FixedSize = new Vector2(0, 34),
+            };
+            row.AddChild(new Label { Text = bands[idx].name, FixedSize = new Vector2(72, 28) });
+            row.AddChild(new Label { Text = bands[idx].freq, FixedSize = new Vector2(52, 28),
+                                     ForeColor = UIColor.FromHex("#AAAAAA") });
+
+            var sl = new Slider { Min = -15f, Max = 15f, Value = 0f };
+            eqSliders[idx] = sl;
+            gainLabels[idx] = new Label { Text = " 0.0 dB", FixedSize = new Vector2(72, 28) };
+
+            sl.ValueChanged += v =>
+            {
+                gainLabels[idx].Text = $"{v:+0.0;-0.0; 0.0} dB";
+                EqApplyBand(idx, v);
+            };
+
+            row.AddChild(sl);
+            row.AddChild(gainLabels[idx]);
+            return row;
+        }
+
+        root.AddChild(new Label { Text = "Gain (−15 to +15 dB)", FontSize = 14,
+                                   ForeColor = UIColor.FromHex("#CCCCCC") });
+        for (int i = 0; i < 5; i++)
+            root.AddChild(MakeBandRow(i));
+
+        root.AddChild(new Separator());
+
+        var resetBtn = new Button { Text = "Reset EQ", FixedSize = new Vector2(100, 32) };
+        resetBtn.Clicked += () =>
+        {
+            for (int i = 0; i < 5; i++)
+                eqSliders[i].Value = 0f;   // fires ValueChanged which calls EqApplyBand
+        };
+        root.AddChild(resetBtn);
+
+        // Play/Stop logic
+        playBtn.Clicked += () =>
+        {
+            if (_eqSound != null)
+            {
+                ma_sound_stop(_eqSound);
+                ma_sound_uninit(_eqSound);
+                NativeMemory.Free(_eqSound);
+                _eqSound = null;
+                playBtn.Text = "▶  Play";
+                return;
+            }
+
+            if (!_engineReady) return;
+            var af = _audioFiles[fileCombo.SelectedIndex];
+            if (!_loaded.ContainsKey(af.Path)) return;
+
+            EqInitNodes();
+            if (!_eqNodesReady) return;
+
+            _eqSound = (ma_sound*)NativeMemory.AllocZeroed((nuint)sizeof(ma_sound));
+            uint flags = (uint)(ma_sound_flags.MA_SOUND_FLAG_DECODE |
+                                ma_sound_flags.MA_SOUND_FLAG_NO_SPATIALIZATION);
+            var result = ma_sound_init_from_file(_engine, af.Path, flags, null, null, _eqSound);
+            if (result != ma_result.MA_SUCCESS)
+            {
+                NativeMemory.Free(_eqSound);
+                _eqSound = null;
+                return;
+            }
+
+            ma_sound_set_looping(_eqSound, 1);
+            // Route through EQ chain (sound has no default attachment so this is the only path)
+            ma_node_attach_output_bus((IntPtr)_eqSound, 0, (IntPtr)_eqLoShelf, 0);
+            ma_sound_start(_eqSound);
+            playBtn.Text = "■  Stop";
         };
 
         return root;
