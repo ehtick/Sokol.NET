@@ -2920,8 +2920,7 @@ sealed class PianoKeyboardWidget : Widget
             if (!pt.Changed) continue;
             var local = ToLocal(pt.Position);
             int semi = HitTest(local.X, local.Y);
-            if (semi < 0) continue;
-            // Find previous semi held by this touch id
+            if (semi < 0) { ReleaseAll(pt.Id); continue; }
             int? prev = null;
             foreach (var kv in _pressed) if (kv.Value == pt.Id) { prev = kv.Key; break; }
             if (prev.HasValue && prev.Value != semi)
@@ -2941,9 +2940,7 @@ sealed class PianoKeyboardWidget : Widget
 
     void Press(int inputId, int semi)
     {
-        // Already pressed by this input — no-op
         if (_pressed.TryGetValue(semi, out int existing) && existing == inputId) return;
-        // If a different input already holds this key, ignore
         if (_pressed.ContainsKey(semi)) return;
         _pressed[semi] = inputId;
         NoteOn?.Invoke(NoteFreq(semi));

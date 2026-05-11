@@ -28,6 +28,9 @@ public sealed class InputRouter
     private double      _lastClickTime;
     private int         _clickCount;
 
+    // Touch ownership: maps touch id → widget that received TOUCHES_BEGAN for that touch
+    private readonly Dictionary<int, Widget> _touchOwners = new();
+
     public InputRouter(Screen screen, FocusManager focus)
     {
         _screen = screen;
@@ -261,28 +264,96 @@ public sealed class InputRouter
 
         var pos = primary.Position;
 
-        // Forward raw touch events first, to every active touch position.
-        // Track whether the primary touch was handled natively by its target widget.
-        bool primaryHandled = false;
-        foreach (var pt in te.Touches)
+        // Each widget must only see the touches it owns. Without filtering,
+        // two fingers touching down on different widgets in the same event
+        // causes both widgets to see both touch points, so a widget can
+        // accidentally press a key for a touch it doesn't own — then never
+        // receive the ENDED for it (since the router routes ENDED to the real
+        // owner), leaving the key stuck.
+        //
+        // Strategy:
+        //   1. For BEGAN: register new owners first so they appear in the table.
+        //   2. Build per-widget touch lists (all owned touches, changed or not).
+        //      Capture primaryTarget in the same pass.
+        //   3. For ENDED/CANCELLED: remove ended touch IDs from the table.
+        //   4. Dispatch a filtered TouchEvent to each widget that has ≥1 Changed touch.
+
+        // Step 1 — register new owners for BEGAN.
+        if (type == sapp_event_type.SAPP_EVENTTYPE_TOUCHES_BEGAN)
         {
-            var target = _screen.HitTestDeep(pt.Position);
-            if (target == null) continue;
-            bool handled = type switch
+            foreach (var pt in te.Touches)
             {
-                sapp_event_type.SAPP_EVENTTYPE_TOUCHES_BEGAN     => target.OnTouchDown(te),
-                sapp_event_type.SAPP_EVENTTYPE_TOUCHES_ENDED     => target.OnTouchUp(te),
-                sapp_event_type.SAPP_EVENTTYPE_TOUCHES_CANCELLED => target.OnTouchUp(te),
-                sapp_event_type.SAPP_EVENTTYPE_TOUCHES_MOVED     => target.OnTouchMove(te),
-                _ => false,
-            };
-            if (pt.Id == primary.Id)
-                primaryHandled = handled;
+                if (!pt.Changed) continue;
+                var target = _screen.HitTestDeep(pt.Position);
+                if (target != null) _touchOwners[pt.Id] = target;
+
+            }
         }
 
-        // Widget handled touch natively — skip synthetic mouse simulation so it
-        // does not interfere with multi-touch state tracking in the widget.
-        if (primaryHandled) return;
+        // Step 2 — build per-widget touch lists.
+        Widget? primaryTarget = null;
+        var targetTouches = new Dictionary<Widget, List<TouchPoint>>();
+        foreach (var pt in te.Touches)
+        {
+            if (!_touchOwners.TryGetValue(pt.Id, out var owner)) continue;
+            if (!targetTouches.TryGetValue(owner, out var list))
+                targetTouches[owner] = list = new List<TouchPoint>();
+            list.Add(pt);
+            if (pt.Id == primary.Id) primaryTarget = owner;
+        }
+
+        // Step 3 — remove ended/cancelled touch IDs.
+        if (type == sapp_event_type.SAPP_EVENTTYPE_TOUCHES_ENDED ||
+            type == sapp_event_type.SAPP_EVENTTYPE_TOUCHES_CANCELLED)
+        {
+            foreach (var pt in te.Touches)
+            {
+                if (!pt.Changed) continue;
+
+                _touchOwners.Remove(pt.Id);
+            }
+        }
+
+        // Step 3b — ghost touch cleanup.
+        // iOS can silently drop touches without TOUCHES_ENDED when the hardware touch
+        // limit is exceeded. Detect any owned touch that no longer appears in the current
+        // event's Touches array and fire a virtual OnTouchUp so keys don't get stuck.
+        {
+            var presentIds = new HashSet<int>(te.Touches.Length);
+            foreach (var pt in te.Touches) presentIds.Add(pt.Id);
+            var dropped = new List<(int id, Widget owner)>();
+            foreach (var (id, owner) in _touchOwners)
+                if (!presentIds.Contains(id)) dropped.Add((id, owner));
+            foreach (var (id, owner) in dropped)
+            {
+                _touchOwners.Remove(id);
+                var ghostPt = new TouchPoint { Id = id, Changed = true, Position = Vector2.Zero };
+                owner.OnTouchUp(new TouchEvent { Touches = new[] { ghostPt } });
+            }
+        }
+
+        // Step 4 — dispatch filtered events.
+        bool primaryHandled = false;
+        foreach (var (target, touches) in targetTouches)
+        {
+            if (!touches.Exists(t => t.Changed)) continue; // no state change for this widget
+            var filteredTe = new TouchEvent { Touches = touches.ToArray() };
+            bool handled = type switch
+            {
+                sapp_event_type.SAPP_EVENTTYPE_TOUCHES_BEGAN     => target.OnTouchDown(filteredTe),
+                sapp_event_type.SAPP_EVENTTYPE_TOUCHES_ENDED     => target.OnTouchUp(filteredTe),
+                sapp_event_type.SAPP_EVENTTYPE_TOUCHES_CANCELLED => target.OnTouchUp(filteredTe),
+                sapp_event_type.SAPP_EVENTTYPE_TOUCHES_MOVED     => target.OnTouchMove(filteredTe),
+                _ => false,
+            };
+            if (target == primaryTarget) primaryHandled = handled;
+        }
+
+        // Skip synthetic mouse if no touch in the event actually changed state.
+        // iOS sends TOUCHES_BEGAN with all ch=False when over the hardware touch limit —
+        // if we let the synthetic path run, it calls Press(-1, semi) with no matching
+        // mouse-up, leaving a key stuck. Also skip if a widget handled natively.
+        if (!primary.Changed || primaryHandled) return;
 
         // Synthetic mouse fallback: lets widgets that only handle mouse events
         // work on touch screens without any per-widget changes.
