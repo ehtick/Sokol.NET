@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Sokol;
@@ -19,7 +20,11 @@ public static unsafe class MiniaudiodemoApp
     struct AudioFile { public string Path; public string Label; public bool IsMusic; }
     static readonly AudioFile[] _audioFiles =
     {
-        new() { Path = "Music/music.ogg",      Label = "music",      IsMusic = true  },
+        new() { Path = "Music/bombinsound-upbeat-music-kids-music-499480.ogg",                                         Label = "Upbeat Kids",     IsMusic = true  },
+        new() { Path = "Music/openmindaudio-upbeat-background-music-clear-momentum-short-preview-497394.ogg",          Label = "Clear Momentum",  IsMusic = true  },
+        new() { Path = "Music/sonican-cooking-background-music-loop-486763.ogg",                                       Label = "Cooking Loop",    IsMusic = true  },
+        new() { Path = "Music/soulfuljamtracks-classical-background-music-483075.ogg",                                 Label = "Classical",       IsMusic = true  },
+        new() { Path = "Music/white_records-inception-cinematic-background-music-for-video-stories-31-second-478713.ogg", Label = "Cinematic",    IsMusic = true  },
         new() { Path = "Sounds/BigExplosion.wav",    Label = "Big Explosion",   IsMusic = false },
         new() { Path = "Sounds/MachineGun.wav",      Label = "Machine Gun",     IsMusic = false },
         new() { Path = "Sounds/NutThrow.wav",        Label = "Nut Throw",       IsMusic = false },
@@ -472,15 +477,21 @@ public static unsafe class MiniaudiodemoApp
         // ── Music ──────────────────────────────────────────────────────────────
         root.AddChild(new Label { Text = "Music", FontSize = 16 });
 
+        var musicFiles  = _audioFiles.Where(af => af.IsMusic).ToArray();
+        var musicCombo  = new ComboBox { FixedSize = new Vector2(180, 32) };
+        musicCombo.SetItems(musicFiles.Select(af => af.Label).ToArray());
+        musicCombo.SelectedIndex = 0;
+
         var musicRow = new Panel
         {
             Layout    = new BoxLayout(Orientation.Horizontal, Alignment.Center, 12),
             FixedSize = new Vector2(0, 40),
         };
         _musicButton = new Button("▶  Play") { CornerRadius = 6 };
-        _musicButton.Clicked += () => ToggleMusic("Music/music.ogg");
+        _musicButton.Clicked += () => ToggleMusic(musicFiles[musicCombo.SelectedIndex].Path);
         musicRow.AddChild(_musicButton);
-        musicRow.AddChild(new Label { Text = "music.ogg  (loops while playing)" });
+        musicRow.AddChild(musicCombo);
+        musicRow.AddChild(new Label { Text = "(loops while playing)", ForeColor = UIColor.FromHex("#AAAAAA") });
         root.AddChild(musicRow);
 
         root.AddChild(new Separator());
@@ -643,6 +654,22 @@ public static unsafe class MiniaudiodemoApp
                                   ForeColor = UIColor.FromHex("#AAAAAA") });
         root.AddChild(new Separator());
 
+        // Music picker
+        var fadeMusicFiles = _audioFiles.Where(af => af.IsMusic).ToArray();
+        var fadeMusicCombo = new ComboBox { FixedSize = new Vector2(180, 32) };
+        fadeMusicCombo.SetItems(fadeMusicFiles.Select(af => af.Label).ToArray());
+        fadeMusicCombo.SelectedIndex = 0;
+        var fadePickerRow = new Panel
+        {
+            Layout    = new BoxLayout(Orientation.Horizontal, Alignment.Center, 12),
+            FixedSize = new Vector2(0, 36),
+        };
+        fadePickerRow.AddChild(new Label { Text = "Track:", FixedSize = new Vector2(50, 32) });
+        fadePickerRow.AddChild(fadeMusicCombo);
+        root.AddChild(fadePickerRow);
+
+        root.AddChild(new Separator());
+
         // Duration slider
         float fadeMs = 2000f;
         var durationLbl = new Label { Text = "2000 ms", FixedSize = new Vector2(80, 26) };
@@ -682,10 +709,11 @@ public static unsafe class MiniaudiodemoApp
                 statusLbl.Text = $"Fading in ({(int)fadeMs} ms)\u2026";
                 return;
             }
-            if (!_loaded.ContainsKey("Music/music.ogg")) { statusLbl.Text = "Music not loaded yet"; return; }
+            var fadePath = fadeMusicFiles[fadeMusicCombo.SelectedIndex].Path;
+            if (!_loaded.ContainsKey(fadePath)) { statusLbl.Text = "Still loading — try again"; return; }
             _fadeSound = (ma_sound*)NativeMemory.AllocZeroed((nuint)sizeof(ma_sound));
             uint flags = (uint)(ma_sound_flags.MA_SOUND_FLAG_DECODE | ma_sound_flags.MA_SOUND_FLAG_NO_SPATIALIZATION);
-            if (ma_sound_init_from_file(_engine, "Music/music.ogg", flags, null, null, _fadeSound) != ma_result.MA_SUCCESS)
+            if (ma_sound_init_from_file(_engine, fadePath, flags, null, null, _fadeSound) != ma_result.MA_SUCCESS)
             {
                 NativeMemory.Free(_fadeSound); _fadeSound = null;
                 statusLbl.Text = "Init failed"; return;
@@ -1008,11 +1036,11 @@ public static unsafe class MiniaudiodemoApp
                                   ForeColor = UIColor.FromHex("#AAAAAA") });
         root.AddChild(new Separator());
 
-        // Sound picker
+        // Sound picker (all files — SFX and music)
         var sfxPaths  = new List<string>();
         var sfxLabels = new List<string>();
         foreach (var af in _audioFiles)
-            if (!af.IsMusic) { sfxPaths.Add(af.Path); sfxLabels.Add(af.Label); }
+            { sfxPaths.Add(af.Path); sfxLabels.Add(af.Label); }
 
         var pickerRow = new Panel
         {

@@ -309,7 +309,7 @@ public sealed class Screen : Widget
             var local = _activePopup.ToLocal(screenPoint);
             if (_activePopup.HitTest(local))
             {
-                Sokol.SLog.Info($"HitTest: popup {_activePopup.GetType().Name} captured screenPoint={screenPoint} local={local}", "Sokol.GUI");
+                // Sokol.SLog.Info($"HitTest: popup {_activePopup.GetType().Name} captured screenPoint={screenPoint} local={local}", "Sokol.GUI");
                 return _activePopup;
             }
             // Mouse is outside the popup — do NOT dismiss here (dismissal

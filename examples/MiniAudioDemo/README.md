@@ -2,9 +2,19 @@
 
 A cross-platform audio demo built with [Sokol.NET](../../README.md), demonstrating real-time sound-effect and music playback powered by [miniaudio](https://miniaud.io).
 
-## Screenshot
+## Screenshots
 
-![MiniAudio Demo](screenshot/Screenshot%202026-05-10%20at%2019.15.52.png)
+| Sound FX | Mixing |
+|----------|--------|
+| ![Sound FX tab](screenshot/Screenshot%202026-05-11%20at%2012.53.28.png) | ![Mixing tab](screenshot/Screenshot%202026-05-11%20at%2012.53.32.png) |
+
+| Fade | Waveform |
+|------|----------|
+| ![Fade tab](screenshot/Screenshot%202026-05-11%20at%2012.53.34.png) | ![Waveform tab](screenshot/Screenshot%202026-05-11%20at%2012.53.55.png) |
+
+| Spatial | EQ |
+|---------|----|
+| ![Spatial tab](screenshot/Screenshot%202026-05-11%20at%2013.00.06.png) | ![EQ tab](screenshot/Screenshot%202026-05-11%20at%2013.00.31.png) |
 
 ## What It Demonstrates
 
@@ -12,15 +22,24 @@ A cross-platform audio demo built with [Sokol.NET](../../README.md), demonstrati
 - **Async asset loading** — all audio files are loaded via `SFilesystem.LoadFileAsync`; audio data is owned by a `SharedBuffer` (GC-pinned) and registered with miniaudio's resource manager
 - **Concurrent sound effects** — each button press spawns an independent `ma_sound` instance; multiple sounds of the same type can play simultaneously
 - **Looping music** — a single persistent `ma_sound` toggles play/stop with `ma_sound_set_looping`
+- **Music track picker** — Sound FX, Fade, and Spatial tabs each expose a `ComboBox` to select from 6 bundled music tracks at runtime
+- **Spatialized audio** — Spatial tab lets you drag a sound source on a 2D canvas; `ma_sound_set_position` / `ma_engine_listener_set_position` update the 3D position in real time with configurable attenuation model and min/max distance
+- **Real-time EQ** — EQ tab chains four `ma_lpf_node` / `ma_hpf_node` / `ma_peak_eq_node` filter nodes and visualises the frequency response alongside a VU meter fed from the decoder
+- **Waveform visualiser** — oscilloscope and peak VU meter rendered each frame from decoded PCM data
 - **Finished-sound cleanup** — completed one-shot sounds are detected via `ma_sound_at_end` and freed each frame
-- **Sokol.GUI layout** — UI built with the custom `Sokol.GUI` retained-mode framework (NanoVG rendering, `BoxLayout`, `Button`, `Label`)
+- **Scrollable tabs on mobile** — EQ, Waveform, and Spatial tabs are wrapped in `ScrollView` so all controls are reachable on small screens (iPhone / Android)
+- **Sokol.GUI layout** — UI built with the custom `Sokol.GUI` retained-mode framework (NanoVG rendering, `BoxLayout`, `Button`, `Label`, `ComboBox`, `Slider`, `ScrollView`)
 - **Cross-platform** — Desktop (macOS Metal, Windows D3D11, Linux OpenGL), iOS (Metal), Android (GLES3), and WebAssembly (WebGL2)
 
 ## Audio Assets
 
 | File | Type | Description |
 |------|------|-------------|
-| `Music/music.ogg` | OGG | Background music loop |
+| `Music/bombinsound-upbeat-music-kids-music-499480.ogg` | OGG | Upbeat kids music |
+| `Music/openmindaudio-upbeat-background-music-clear-momentum-short-preview-497394.ogg` | OGG | Clear Momentum |
+| `Music/sonican-cooking-background-music-loop-486763.ogg` | OGG | Cooking background loop |
+| `Music/soulfuljamtracks-classical-background-music-483075.ogg` | OGG | Classical background |
+| `Music/white_records-inception-cinematic-background-music-for-video-stories-31-second-478713.ogg` | OGG | Cinematic background |
 | `Sounds/BigExplosion.wav` | WAV | Large explosion effect |
 | `Sounds/MachineGun.wav` | WAV | Machine gun burst |
 | `Sounds/NutThrow.wav` | WAV | Projectile throw |
@@ -29,6 +48,8 @@ A cross-platform audio demo built with [Sokol.NET](../../README.md), demonstrati
 | `Sounds/PlayerLand.wav` | WAV | Landing thud |
 | `Sounds/Powerup.wav` | WAV | Power-up pickup |
 | `Sounds/SmallExplosion.wav` | WAV | Small explosion effect |
+
+All music files were sourced from [Pixabay](https://pixabay.com/). The Pixabay Content License applies — see [https://pixabay.com/service/license-summary/](https://pixabay.com/service/license-summary/).
 
 ## Project Files
 
