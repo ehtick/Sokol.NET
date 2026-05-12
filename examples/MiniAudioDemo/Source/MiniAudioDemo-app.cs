@@ -363,7 +363,7 @@ public static unsafe class MiniaudiodemoApp
     {
         SFilesystem.Update();
 
-        if (_tsf != IntPtr.Zero && tsf_active_voice_count(_tsf) == 0)
+        if (_tsf != IntPtr.Zero && tsf_active_voice_count(_tsf) == 0 && !_tmlPlaying)
         {
             StopTSFLoopingWave();
         }
@@ -518,9 +518,56 @@ public static unsafe class MiniaudiodemoApp
             ring[(wp + i) & mask] = pFramesOut[i];
         _captureWritePos = (wp + count) & mask;
 
-        if (_tsf != IntPtr.Zero)
+        if (_tsf == IntPtr.Zero) return;
+        IntPtr tsf = _tsf;
+
+        if (_tmlPlaying)
         {
-            tsf_render_float(_tsf, ref *pFramesOut, (int)frameCount, 1); // flag_mixing=1: mix into what's already in the output buffer
+            // Process MIDI in 64-sample blocks (TSF_RENDER_EFFECTSAMPLEBLOCK) for accurate timing.
+            // Mirrors the AudioCallback in example3.c.
+            const int blockSize = 64;
+            double sampleMs = 1000.0 / _tsfSampleRate;
+            float* stream   = pFramesOut;
+            int remaining   = (int)frameCount;
+            while (remaining > 0)
+            {
+                int block = remaining < blockSize ? remaining : blockSize;
+                _tmlMsec += block * sampleMs;
+                tml_message* msg = _tmlCurrent;
+                while (msg != null && _tmlMsec >= msg->time)
+                {
+                    switch (msg->type)
+                    {
+                        case 0xC0: // TML_PROGRAM_CHANGE
+                            tsf_channel_set_presetnumber(tsf, msg->channel, msg->data.program, msg->channel == 9 ? 1 : 0);
+                            break;
+                        case 0x90: // TML_NOTE_ON
+                            tsf_channel_note_on(tsf, msg->channel, msg->data.key, msg->data.vel / 127.0f);
+                            break;
+                        case 0x80: // TML_NOTE_OFF
+                            tsf_channel_note_off(tsf, msg->channel, msg->data.key);
+                            break;
+                        case 0xE0: // TML_PITCH_BEND
+                            tsf_channel_set_pitchwheel(tsf, msg->channel, msg->data.pitch_bend);
+                            break;
+                        case 0xB0: // TML_CONTROL_CHANGE
+                            tsf_channel_midi_control(tsf, msg->channel, msg->data.control, msg->data.value);
+                            break;
+                    }
+                    msg = msg->next;
+                }
+                _tmlCurrent = msg;
+                tsf_render_float(tsf, ref *stream, block, 1); // flag_mixing=1: mix into existing output
+                stream    += block * 2; // stereo
+                remaining -= block;
+            }
+            if (_tmlCurrent == null)
+                _tmlPlaying = false; // reached end of MIDI file
+        }
+        else
+        {
+            // Not playing MIDI — still render TSF voices (interactive piano, etc.)
+            tsf_render_float(tsf, ref *pFramesOut, (int)frameCount, 1);
         }
     }
 
@@ -1101,6 +1148,8 @@ public static unsafe class MiniaudiodemoApp
                     _tmlCurrent = _tmlFirst;
                     _tmlMsec    = 0;
                 }
+                if (tsf_active_voice_count(_tsf) == 0)
+                    StartTSFLoopingWave();
                 _tmlPlaying = true;
             }
         };
