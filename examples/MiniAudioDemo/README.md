@@ -31,6 +31,7 @@ A cross-platform audio demo built with [Sokol.NET](../../README.md), demonstrati
 - **Real-time EQ** — EQ tab chains four `ma_lpf_node` / `ma_hpf_node` / `ma_peak_eq_node` filter nodes and visualises the frequency response alongside a VU meter fed from the decoder
 - **Spectrum analyzer** — Spectrum tab shows a real-time FFT bar chart with frequency-gradient colouring (orange→green→cyan), a goniometer (stereo phase/Lissajous scope), and a scrolling spectrogram; all fed from the `onProcess` engine capture ring buffer
 - **Piano keyboard** — Piano tab renders an interactive multi-octave piano keyboard; clicking a key plays the corresponding note via miniaudio and highlights the key in blue; C-note labels are drawn on the keyboard
+- **SoundFont synthesizer** — SoundFont tab loads `florestan-subset.sf2` via [TinySoundFont](https://github.com/schellingb/TinySoundFont) and plays back `venture.mid` (MIDI) in real time; MIDI events are processed in 64-sample blocks inside the engine's `onProcess` callback for accurate note timing; an interactive piano keyboard lets you audition individual notes using the loaded SF2 preset; the tab also shows a live voice count and a playback position timer
 - **Waveform visualiser** — oscilloscope and peak VU meter rendered each frame from decoded PCM data
 - **Finished-sound cleanup** — completed one-shot sounds are detected via `ma_sound_at_end` and freed each frame
 - **Scrollable tabs on mobile** — EQ, Waveform, and Spatial tabs are wrapped in `ScrollView` so all controls are reachable on small screens (iPhone / Android)
@@ -54,6 +55,9 @@ A cross-platform audio demo built with [Sokol.NET](../../README.md), demonstrati
 | `Sounds/PlayerLand.wav` | WAV | Landing thud |
 | `Sounds/Powerup.wav` | WAV | Power-up pickup |
 | `Sounds/SmallExplosion.wav` | WAV | Small explosion effect |
+
+| `SoundFont/florestan-subset.sf2` | SF2 | Subset of the Florestan GM SoundFont, used by TinySoundFont |
+| `SoundFont/venture.mid` | MIDI | "Venture (Original WIP)" by Ximon — CC0 ([musescore.com](https://musescore.com/user/2391686/scores/841451)) |
 
 All music files were sourced from [Pixabay](https://pixabay.com/). The Pixabay Content License applies — see [https://pixabay.com/service/license-summary/](https://pixabay.com/service/license-summary/).
 
@@ -82,3 +86,9 @@ dotnet run --project ../../tools/SokolApplicationBuilder -- --task build --archi
 # WebAssembly
 dotnet run --project ../../tools/SokolApplicationBuilder -- --task build --architecture web --path .
 ```
+
+> **Web / SoundFont note:** The SoundFont tab crashes on WebAssembly when running in the default **Interpreted** mode (the `dotnet run` / dev build path). This is because TinySoundFont's audio-thread callback uses unsafe pointer arithmetic that the interpreter does not support correctly at runtime. To use the SoundFont tab on Web you must build with **NativeAOT**:
+>
+> ```bash
+> dotnet publish MiniAudioDemoWeb.csproj
+> ```
