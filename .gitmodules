@@ -51,3 +51,7 @@
 	path = ext/miniaudio
 	url = https://github.com/elix22/miniaudio.git
 	branch = sokol-dev
+[submodule "ext/TinySoundFont"]
+	path = ext/TinySoundFont
+	url = https://github.com/elix22/TinySoundFont.git
+	branch = sokol-dev

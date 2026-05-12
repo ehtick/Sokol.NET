@@ -30,6 +30,8 @@ tasks = [
     [ '../ext/nanosvg/src/nanosvg.h',        'nsvg',     [] ],
     [ '../ext/nanosvg/src/nanosvgrast.h',    'nsvg',     [] ],
     [ '../ext/miniaudio/miniaudio.h',        'ma_',      [] ],
+    [ '../ext/TinySoundFont/tsf.h',          'tsf_',     [] ],
+    [ '../ext/TinySoundFont/tml.h',          'tml_',     ['tsf_'] ],
 
 ]
 
@@ -90,3 +92,10 @@ miniaudio_header_output_path = '../ext/miniaudio/miniaudio_csharp_internal_wrapp
 with open(miniaudio_header_output_path, 'w', newline='\n') as f_header:
     f_header.write(miniaudio_header_content)
 print(f'  Generated miniaudio wrappers: {miniaudio_header_output_path}')
+
+# Generate TinySoundFont wrappers header (only tsf_/tml_ functions)
+tsf_header_content = gen_csharp.gen_c_tsf_wrappers_header(all_irs)
+tsf_header_output_path = '../ext/TinySoundFont/tsf_csharp_internal_wrappers.h'
+with open(tsf_header_output_path, 'w', newline='\n') as f_header:
+    f_header.write(tsf_header_content)
+print(f'  Generated TinySoundFont wrappers: {tsf_header_output_path}')

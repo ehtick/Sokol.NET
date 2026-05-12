@@ -41,6 +41,8 @@ module_names = {
     'nvg':       'NanoVG',
     'nsvg':      'NanoSVG',
     'ma_':       'MiniAudio',
+    'tsf_':      'TSF',
+    'tml_':      'TML',
 }
 
 # Namespace names per prefix
@@ -49,6 +51,8 @@ namespace_names = {
     'cam':      'System.Hardware',
     'manifold_': 'Manifold',
     'ma_':       'MiniAudioNS',
+    'tsf_':      'TinySoundFont',
+    'tml_':      'TinySoundFont',
 }
 default_namespace = 'Sokol'
 
@@ -58,6 +62,8 @@ output_dirs = {
     'cam':      '../src/System.Hardware',
     'manifold_': '../ext/manifold/bindings/csharp',
     'ma_':       '../ext/miniaudio/bindings/csharp',
+    'tsf_':      '../ext/TinySoundFont/bindings/csharp',
+    'tml_':      '../ext/TinySoundFont/bindings/csharp',
 }
 default_output_dir = '../src/sokol/generated'
 
@@ -77,6 +83,8 @@ extra_api_prefixes = {
     'manifold_': ['Manifold'],
     'nvg':       ['NVG', 'snvg_'],
     'nsvg':      ['NSVG'],
+    'tsf_':      ['TSF'],
+    'tml_':      ['tsf_', 'TSF'],
 }
 
 # Library names for DllImport statements
@@ -109,6 +117,8 @@ library_names = {
     'nvg':       'sokol',
     'nsvg':      'sokol',
     'ma_':       'miniaudio',
+    'tsf_':      'tsf',
+    'tml_':      'tsf',
 }
 
 
@@ -143,6 +153,8 @@ c_source_paths = {
     'nvg':       'c/nanovg.c',
     'nsvg':      'c/nanosvg.c',
     'ma_':       'c/miniaudio.c',
+    'tsf_':      'c/TinySoundFont.c',
+    'tml_':      'c/TinyMidiLoader.c',
 }
 
 # Overrides for anonymous/unnamed union fields that the generator cannot auto-map.
@@ -174,11 +186,33 @@ struct_field_overrides = {
     # union { struct{pVFS*,file*} vfs; struct{pData*,size_t,size_t} memory; }
     # largest branch = memory = 3 × pointer_size → 24 B (x64) / 12 B (wasm32)
     'ma_decoder.data':              ['    public ma_decoder_data_union data; // union { vfs { pVFS, file }; memory { pData, dataSize, currentReadPos }; }'],
+    # tml_message: inject the anonymous union (skipped by the IR as IndirectFieldDecl)
+    # before the 'next' pointer. SequentialLayout will insert the 2 padding bytes between
+    # channel and data automatically, so offsets match the C struct exactly.
+    'tml_message.next': [
+        '    public tml_union data; // union: data.key, data.vel, data.control, data.value, data.program, data.pitch_bend, data.tempo',
+        '    public tml_message* next;',
+    ],
 }
 
 # C# declarations that must be emitted immediately BEFORE specific struct definitions.
 # Key: c_struct_name   Value: list of raw C# lines
 struct_type_preambles = {
+    # tml_message needs a helper union type for its anonymous union field
+    'tml_message': [
+        '// Helper union for tml_message: note_on/off (key+vel), control_change (control+val),',
+        '// program_change (program), pitch_bend (int), set_tempo (uint) — 4 bytes wide.',
+        '[StructLayout(LayoutKind.Explicit, Size = 4)]',
+        'public struct tml_union {',
+        '    [FieldOffset(0)] public byte key;',
+        '    [FieldOffset(1)] public byte vel;',
+        '    [FieldOffset(0)] public byte control;',
+        '    [FieldOffset(1)] public byte value;',
+        '    [FieldOffset(0)] public byte program;',
+        '    [FieldOffset(0)] public int pitch_bend;',
+        '    [FieldOffset(0)] public uint tempo;',
+        '}',
+    ],
     # ma_decoder needs a helper type whose size is platform-conditional
     'ma_decoder': [
         '// Helper for ma_decoder.data union: max(vfs:2 ptrs, memory:3 ptr-sized) = 3 * pointer_size',
@@ -401,6 +435,15 @@ prim_types = {
     'ma_enum_devices_callback_proc': 'IntPtr',
     # miniaudio spinlock is volatile uint
     'volatile ma_spinlock *':      'uint*',
+    # TinySoundFont opaque handle (tsf* is the main synthesizer context)
+    'tsf *':                       'IntPtr',
+    'const tsf *':                 'IntPtr',
+    # TinySoundFont enum passed as parameter
+    'enum TSFOutputMode':          'TSFOutputMode',
+    # TinyMidiLoader message linked list pointer
+    'tml_message *':               'tml_message*',
+    # short* PCM buffer (tsf_render_short)
+    'short *':                     'short*',
 }
 
 
@@ -914,6 +957,12 @@ def gen_struct(decl, prefix):
         field_name = as_pascal_case(check_name_override(field['name']), "")
         field_type = field['type']
         field_type = check_type_override(struct_name, field_name, field_type)
+        # Check explicit override first — handles injecting extra fields before a known field.
+        override_key = f"{struct_name}.{field['name']}"
+        if override_key in struct_field_overrides:
+            for line in struct_field_overrides[override_key]:
+                l(line)
+            continue
         if field_type == "bool":
             # Conditional for bool fields with properties
             l("#if WEB")
@@ -1014,12 +1063,7 @@ def gen_struct(decl, prefix):
             #t0 = f"[{array_nums[0]}][{array_nums[1]}]{csharp_type}"
             #l(f"    {field_name}: {t0} = [_][{array_nums[1]}]{csharp_type}{{[_]{csharp_type}{{ {def_val} }}**{array_nums[1]}}}**{array_nums[0]},")
         else:
-            # Check for explicit override first (handles anonymous union fields)
-            override_key = f"{struct_name}.{field['name']}" if 'name' in field else None
-            if override_key and override_key in struct_field_overrides:
-                for line in struct_field_overrides[override_key]:
-                    l(line)
-            elif 'unnamed struct' not in field_type and 'unnamed union' not in field_type and \
+            if 'unnamed struct' not in field_type and 'unnamed union' not in field_type and \
                'anonymous' not in field_type:
                 # Silently skip true anonymous/unnamed inner types (layout preserved by C side).
                 l(f"// FIXME: {field_name}: {field_type};")
@@ -1309,7 +1353,8 @@ def pre_parse(inp):
 def gen_imports(inp, dep_prefixes):
     for dep_prefix in dep_prefixes:
         dep_module_name = module_names[dep_prefix]
-        l(f'using static Sokol.{dep_module_name};')
+        dep_namespace = namespace_names.get(dep_prefix, default_namespace)
+        l(f'using static {dep_namespace}.{dep_module_name};')
         l('')
 
 def gen_internal_functions(inp, prefix):
@@ -1815,6 +1860,76 @@ def gen_c_miniaudio_wrappers_header(all_inputs):
                     header_lines.append("")
 
     header_lines.append("#endif // MINIAUDIO_CSHARP_INTERNAL_WRAPPERS_H")
+    header_lines.append("")
+
+    return "\n".join(header_lines)
+
+def gen_c_tsf_wrappers_header(all_inputs):
+    """Generate C header file with TinySoundFont _internal wrapper function implementations."""
+    header_lines = []
+    header_lines.append("/*")
+    header_lines.append("    AUTO-GENERATED TINYSOUNDFONT INTERNAL WRAPPER FUNCTIONS")
+    header_lines.append("    This file is automatically generated by gen_csharp.py")
+    header_lines.append("    DO NOT EDIT MANUALLY")
+    header_lines.append("")
+    header_lines.append("    WebAssembly/Emscripten cannot marshal structs returned by value through P/Invoke.")
+    header_lines.append("    These _internal helper functions work around this limitation by taking an output")
+    header_lines.append("    pointer parameter instead.")
+    header_lines.append("*/")
+    header_lines.append("")
+    header_lines.append("#ifndef TSF_CSHARP_INTERNAL_WRAPPERS_H")
+    header_lines.append("#define TSF_CSHARP_INTERNAL_WRAPPERS_H")
+    header_lines.append("")
+    header_lines.append("#include \"tsf.h\"")
+    header_lines.append("#include \"tml.h\"")
+    header_lines.append("")
+    header_lines.append("// For Emscripten builds, these functions need to be exported")
+    header_lines.append("#ifdef __EMSCRIPTEN__")
+    header_lines.append("    #include <emscripten.h>")
+    header_lines.append("    #define TSF_EXPORT EMSCRIPTEN_KEEPALIVE")
+    header_lines.append("#else")
+    header_lines.append("    #define TSF_EXPORT")
+    header_lines.append("#endif")
+    header_lines.append("")
+
+    for inp in all_inputs:
+        prefix = inp['prefix']
+        if prefix not in ('tsf_', 'tml_'):
+            continue
+
+        module_name = inp['module']
+        has_functions = False
+
+        for decl in inp['decls']:
+            if not decl['is_dep'] and decl['kind'] == 'func':
+                c_func_name = decl['name']
+                if c_func_name in web_wrapper_struct_return_functions:
+                    if not has_functions:
+                        header_lines.append(f"// ========== {module_name} ({prefix}) ===========")
+                        header_lines.append("")
+                        has_functions = True
+
+                    return_type = web_wrapper_struct_return_functions[c_func_name]
+
+                    params_c = []
+                    for param in decl['params']:
+                        param_type = check_type_override(c_func_name, param['name'], param['type'])
+                        param_name = param['name']
+                        params_c.append(f"{param_type} {param_name}")
+
+                    params_str = ", ".join(params_c) if params_c else ""
+                    if params_str:
+                        params_str = ", " + params_str
+
+                    args = [param['name'] for param in decl['params']]
+                    args_str = ", ".join(args)
+
+                    header_lines.append(f"TSF_EXPORT void {c_func_name}_internal({return_type}* result{params_str}) {{")
+                    header_lines.append(f"    *result = {c_func_name}({args_str});")
+                    header_lines.append("}")
+                    header_lines.append("")
+
+    header_lines.append("#endif // TSF_CSHARP_INTERNAL_WRAPPERS_H")
     header_lines.append("")
 
     return "\n".join(header_lines)
