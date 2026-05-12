@@ -518,7 +518,6 @@ public abstract class DemoBase
         string dir = Marshal.PtrToStringUTF8(dirPtr) ?? "";
         SFilesystem.sfs_free_path(dirPtr);
         if(dir == "") throw new System.IO.DirectoryNotFoundException("Assets directory not found");
-        if(dir == "/") dir = "./"; // WEB hack , TBD ELI
         string fullPath = System.IO.Path.Combine(dir, rel);
         IntPtr fh = SFilesystem.sfs_open_file(fullPath, SFilesystem.sfs_open_mode_t.SFS_OPEN_READ);
         if (fh == IntPtr.Zero) throw new System.IO.FileNotFoundException(fullPath);

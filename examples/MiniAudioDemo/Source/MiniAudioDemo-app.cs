@@ -145,6 +145,7 @@ public static unsafe class MiniaudiodemoApp
         _screen = Screen.Initialize(_vg);
         FontRegistry.Instance.RegisterAsync(_vg, "sans", "fonts/Roboto-Regular.ttf");
         FontRegistry.Instance.RegisterAsync(_vg, "bold", "fonts/Roboto-Bold.ttf");
+        FontRegistry.Instance.RegisterFallbackAsync(_vg, "symbols", "fonts/NotoSansSymbols2-Regular.ttf", ["sans", "bold"]);
 
         foreach (var af in _audioFiles)
             LoadAudioFileAsync(af.Path);

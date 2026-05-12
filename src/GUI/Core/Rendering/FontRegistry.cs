@@ -1,5 +1,5 @@
-using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices;
 using static Sokol.NanoVG;
 
@@ -53,6 +53,57 @@ public sealed class FontRegistry
             _unmanagedBuffers.Add(unmanaged);
         }
         return Register(name, id);
+    }
+
+    /// <summary>
+    /// Load a font synchronously from the Sokol file system and register it
+    /// immediately.  Returns null if the file cannot be opened.
+    /// </summary>
+    public unsafe Font? RegisterSync(IntPtr vg, string name, string assetPath)
+    {
+        IntPtr dirPtr = SFilesystem.sfs_get_assets_dir();
+        string dir = Marshal.PtrToStringUTF8(dirPtr) ?? "";
+        SFilesystem.sfs_free_path(dirPtr);
+        if (dir == "") return null;
+
+        string fullPath = Path.Combine(dir, assetPath);
+        IntPtr fh = SFilesystem.sfs_open_file(fullPath, SFilesystem.sfs_open_mode_t.SFS_OPEN_READ);
+        if (fh == IntPtr.Zero) return null;
+
+        long size = SFilesystem.sfs_get_file_size(fh);
+        IntPtr unmanaged = Marshal.AllocHGlobal((int)size);
+        SFilesystem.sfs_read_file(fh, (void*)unmanaged, size);
+        SFilesystem.sfs_close_file(fh);
+
+        int id = nvgCreateFontMem(vg, name, (byte*)unmanaged, (int)size, 1);
+        Sokol.SLog.Info($"GUI: Font '{name}' loaded sync — nvgId={id}, {size} bytes", "Sokol.GUI");
+        ResolvePendingFallbacks(vg);
+        return Register(name, id);
+    }
+
+    /// <summary>
+    /// Load a font synchronously and immediately register it as a NanoVG fallback
+    /// for one or more base fonts.  Guarantees the fallback is wired before
+    /// any subsequent <c>RegisterFallbackAsync</c> callbacks fire.
+    /// </summary>
+    public Font? RegisterFallbackSync(IntPtr vg, string name, string assetPath,
+        string[] baseFontNames)
+    {
+        var font = RegisterSync(vg, name, assetPath);
+        if (font == null || !font.IsValid) return null;
+
+        foreach (var baseName in baseFontNames)
+        {
+            var baseFont = Get(baseName);
+            if (baseFont != null && baseFont.IsValid)
+                WireFallback(vg, baseName, baseFont.Id, font.Id, name);
+            else
+            {
+                _pendingFallbacks.Add((baseName, font.Id));
+                Sokol.SLog.Info($"GUI: Deferred fallback '{name}' for '{baseName}' (base not yet loaded)", "Sokol.GUI");
+            }
+        }
+        return font;
     }
 
     /// <summary>
@@ -111,10 +162,7 @@ public sealed class FontRegistry
                 {
                     var baseFont = Get(baseName);
                     if (baseFont != null && baseFont.IsValid)
-                    {
-                        nvgAddFallbackFontId(vg, baseFont.Id, id);
-                        Sokol.SLog.Info($"GUI: Added '{name}' (id={id}) as fallback for '{baseName}' (id={baseFont.Id})", "Sokol.GUI");
-                    }
+                        WireFallback(vg, baseName, baseFont.Id, id, name);
                     else
                     {
                         // Base font not loaded yet — store for deferred wiring
@@ -160,6 +208,7 @@ public sealed class FontRegistry
             Marshal.FreeHGlobal(ptr);
         _unmanagedBuffers.Clear();
         _pendingFallbacks.Clear();
+        _wiredFallbacks.Clear();
         _fonts.Clear();
         _default = null;
     }
@@ -169,21 +218,47 @@ public sealed class FontRegistry
     // -------------------------------------------------------------------------
 
     /// <summary>
-    /// Try to wire up any pending fallbacks whose base font has now been loaded.
-    /// Called after every font registration.
+    /// Wire <paramref name="fallbackId"/> as the next fallback for <paramref name="baseFontId"/>.
+    /// Calls <c>nvgResetFallbackFontsId</c> first to clear any glyph-cache entries that were
+    /// cached as "not found" before this fallback font arrived (async timing fix), then
+    /// re-adds all previously wired fallbacks in registration order before appending the new one.
+    /// </summary>
+    private void WireFallback(IntPtr vg, string baseName, int baseFontId, int fallbackId, string fallbackName)
+    {
+        if (!_wiredFallbacks.TryGetValue(baseName, out var list))
+            _wiredFallbacks[baseName] = list = [];
+
+        list.Add(fallbackId);
+
+        // Reset clears both the glyph cache (removing poisoned "not found" entries cached
+        // before this font arrived) and all existing fallback registrations for the base font.
+        nvgResetFallbackFontsId(vg, baseFontId);
+
+        // Re-add all fallbacks in registration order so priority is deterministic.
+        foreach (var fid in list)
+            _ = nvgAddFallbackFontId(vg, baseFontId, fid);
+
+        SLog.Info($"GUI: Wired '{fallbackName}' (id={fallbackId}) as fallback for '{baseName}' (id={baseFontId}), total fallbacks={list.Count}", "Sokol.GUI");
+    }
+
+    /// <summary>
+    /// Resolve pending fallbacks whose base font has now loaded.
+    /// Iterates forward to preserve registration order.
     /// </summary>
     private void ResolvePendingFallbacks(IntPtr vg)
     {
-        for (int i = _pendingFallbacks.Count - 1; i >= 0; i--)
+        int i = 0;
+        while (i < _pendingFallbacks.Count)
         {
             var (baseName, fallbackId) = _pendingFallbacks[i];
             var baseFont = Get(baseName);
             if (baseFont != null && baseFont.IsValid)
             {
-                nvgAddFallbackFontId(vg, baseFont.Id, fallbackId);
-                Sokol.SLog.Info($"GUI: Resolved deferred fallback id={fallbackId} for '{baseName}' (id={baseFont.Id})", "Sokol.GUI");
+                WireFallback(vg, baseName, baseFont.Id, fallbackId, $"id={fallbackId}");
                 _pendingFallbacks.RemoveAt(i);
             }
+            else
+                i++;
         }
     }
 
@@ -191,4 +266,6 @@ public sealed class FontRegistry
     private readonly List<IntPtr> _unmanagedBuffers = new();
     // Fallbacks waiting for their base font to load (baseFontName, fallbackFontId).
     private readonly List<(string baseName, int fallbackId)> _pendingFallbacks = new();
+    // Ordered list of wired fallback IDs per base font name — used to re-apply after reset.
+    private readonly Dictionary<string, List<int>> _wiredFallbacks = [];
 }
