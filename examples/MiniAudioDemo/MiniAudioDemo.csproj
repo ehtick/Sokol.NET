@@ -79,11 +79,13 @@
       <PropertyGroup>
         <BuildConfigLower>$(Configuration.ToLower())</BuildConfigLower>
         <libSokol>$(SokolLibsPath)windows/$(OSArch)/$(BuildConfigLower)/sokol.dll</libSokol>
-           <libMiniAudio>$(SokolNetHome)/ext/miniaudio/libs/windows/$(OSArch)/release/miniaudio.dll</libMiniAudio>
+        <libMiniAudio>$(SokolNetHome)/ext/miniaudio/libs/windows/$(OSArch)/release/miniaudio.dll</libMiniAudio>
+        <libTinySoundFont>$(SokolNetHome)/ext/TinySoundFont/libs/windows/$(OSArch)/release/tsf.dll</libTinySoundFont>
       </PropertyGroup>
       <Error Condition="! Exists('$(libSokol)')" Text="sokol.dll not found at $(libSokol). Please build the library using .\scripts\build-vs2022-windows.ps1" />
       <Copy SourceFiles="$(libSokol)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
       <Copy SourceFiles="$(libMiniAudio)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+      <Copy SourceFiles="$(libTinySoundFont)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
       <Copy SourceFiles="@(AssetsSourceFiles)" DestinationFolder="$(OutDir)\%(RecursiveDir)" SkipUnchangedFiles="true" Retries="3" RetryDelayMilliseconds="300" />
   </Target>
 
@@ -92,10 +94,12 @@
         <BuildConfigLower>$(Configuration.ToLower())</BuildConfigLower>
         <libSokol>$(SokolLibsPath)windows/$(OSArch)/$(BuildConfigLower)/sokol.dll</libSokol>
         <libMiniAudio>$(SokolNetHome)/ext/miniaudio/libs/windows/$(OSArch)/release/miniaudio.dll</libMiniAudio>
+        <libTinySoundFont>$(SokolNetHome)/ext/TinySoundFont/libs/windows/$(OSArch)/release/tsf.dll</libTinySoundFont>
       </PropertyGroup>
       <Error Condition="! Exists('$(libSokol)')" Text="sokol.dll not found at $(libSokol). Please build the library using .\scripts\build-vs2022-windows.ps1" />
       <Copy SourceFiles="$(libSokol)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
       <Copy SourceFiles="$(libMiniAudio)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+      <Copy SourceFiles="$(libTinySoundFont)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
       <Copy SourceFiles="@(AssetsSourceFiles)" DestinationFolder="$(PublishDir)\%(RecursiveDir)" SkipUnchangedFiles="true" Retries="3" RetryDelayMilliseconds="300" />
   </Target>
 
@@ -104,10 +108,12 @@
         <BuildConfigLower>$(Configuration.ToLower())</BuildConfigLower>
         <libSokol>$(SokolLibsPath)macos/$(OSArch)/$(BuildConfigLower)/libsokol.dylib</libSokol>
         <libMiniAudio>$(SokolNetHome)/ext/miniaudio/libs/macos/$(OSArch)/release/libminiaudio.dylib</libMiniAudio>
+        <libTinySoundFont>$(SokolNetHome)/ext/TinySoundFont/libs/macos/$(OSArch)/release/libtsf.dylib</libTinySoundFont>
       </PropertyGroup>
       <Error Condition="! Exists('$(libSokol)')" Text="libSokol.dylib not found at $(libSokol). Please build the library using ./scripts/build-xcode-macos.sh" /> 
       <Copy SourceFiles="$(libSokol)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
        <Copy SourceFiles="$(libMiniAudio)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+       <Copy SourceFiles="$(libTinySoundFont)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
        <Copy SourceFiles="@(AssetsSourceFiles)" DestinationFolder="$(OutDir)\%(RecursiveDir)" SkipUnchangedFiles="true" Retries="3" RetryDelayMilliseconds="300" />
   </Target>
 
@@ -116,10 +122,12 @@
         <BuildConfigLower>$(Configuration.ToLower())</BuildConfigLower>
         <libSokol>$(SokolLibsPath)macos/$(OSArch)/$(BuildConfigLower)/libsokol.dylib</libSokol>
         <libMiniAudio>$(SokolNetHome)/ext/miniaudio/libs/macos/$(OSArch)/release/libminiaudio.dylib</libMiniAudio>
+        <libTinySoundFont>$(SokolNetHome)/ext/TinySoundFont/libs/macos/$(OSArch)/release/libtsf.dylib</libTinySoundFont>
       </PropertyGroup>
       <Error Condition="! Exists('$(libSokol)')" Text="libSokol.dylib not found at $(libSokol). Please build the library using ./scripts/build-xcode-macos.sh" /> 
       <Copy SourceFiles="$(libSokol)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
       <Copy SourceFiles="$(libMiniAudio)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+      <Copy SourceFiles="$(libTinySoundFont)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
       <Copy SourceFiles="@(AssetsSourceFiles)" DestinationFolder="$(PublishDir)\%(RecursiveDir)" SkipUnchangedFiles="true" Retries="3" RetryDelayMilliseconds="300" />
   </Target>
 
@@ -128,10 +136,12 @@
         <BuildConfigLower>$(Configuration.ToLower())</BuildConfigLower>
         <libSokol>$(SokolLibsPath)linux/$(OSArch)/$(BuildConfigLower)/libsokol.so</libSokol>
         <libMiniAudio>$(SokolNetHome)/ext/miniaudio/libs/linux/$(OSArch)/release/libminiaudio.so</libMiniAudio>
+        <libTinySoundFont>$(SokolNetHome)/ext/TinySoundFont/libs/linux/$(OSArch)/release/libtsf.so</libTinySoundFont>
       </PropertyGroup>
       <Error Condition="! Exists('$(libSokol)')" Text="libsokol.so not found at $(libSokol). Please build the library using ./scripts/build-linux-library.sh" />
       <Copy SourceFiles="$(libSokol)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
       <Copy SourceFiles="$(libMiniAudio)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+      <Copy SourceFiles="$(libTinySoundFont)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
       <Copy SourceFiles="@(AssetsSourceFiles)" DestinationFolder="$(OutDir)\%(RecursiveDir)" SkipUnchangedFiles="true" Retries="3" RetryDelayMilliseconds="300" />
   </Target>
 
@@ -140,10 +150,12 @@
         <BuildConfigLower>$(Configuration.ToLower())</BuildConfigLower>
         <libSokol>$(SokolLibsPath)linux/$(OSArch)/$(BuildConfigLower)/libsokol.so</libSokol>
         <libMiniAudio>$(SokolNetHome)/ext/miniaudio/libs/linux/$(OSArch)/release/libminiaudio.so</libMiniAudio>
+        <libTinySoundFont>$(SokolNetHome)/ext/TinySoundFont/libs/linux/$(OSArch)/release/libtsf.so</libTinySoundFont>
       </PropertyGroup>
       <Error Condition="! Exists('$(libSokol)')" Text="libsokol.so not found at $(libSokol). Please build the library using ./scripts/build-linux-library.sh" />
       <Copy SourceFiles="$(libSokol)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
       <Copy SourceFiles="$(libMiniAudio)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+      <Copy SourceFiles="$(libTinySoundFont)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
       <Copy SourceFiles="@(AssetsSourceFiles)" DestinationFolder="$(PublishDir)\%(RecursiveDir)" SkipUnchangedFiles="true" Retries="3" RetryDelayMilliseconds="300" />
   </Target>
 

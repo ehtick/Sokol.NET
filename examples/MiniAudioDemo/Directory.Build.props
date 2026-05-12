@@ -55,6 +55,12 @@
    </ItemGroup>
 
    <ItemGroup>
+    <Compile Include="../../ext/TinySoundFont/bindings/csharp/*.cs" >
+        <Link>TinySoundFont\%(Filename)%(Extension)</Link>
+    </Compile>
+   </ItemGroup>
+
+   <ItemGroup>
       <ShaderFiles Include="shaders/**/*.glsl" />
    </ItemGroup>
 
@@ -78,7 +84,10 @@
       <AndroidNativeLibrary_miniaudioPath>../../ext/miniaudio/libs/android</AndroidNativeLibrary_miniaudioPath>
        <!-- iOS miniaudio Library Configuration -->
       <IOSNativeLibrary_miniaudioPath>../../ext/miniaudio/libs/ios/release</IOSNativeLibrary_miniaudioPath>
-       <!-- macOS miniaudio Library Configuration -->
+      <!-- Android TinySoundFont Library Configuration -->
+      <AndroidNativeLibrary_tsfPath>../../ext/TinySoundFont/libs/android</AndroidNativeLibrary_tsfPath>
+       <!-- iOS TinySoundFont Library Configuration -->
+      <IOSNativeLibrary_tsfPath>../../ext/TinySoundFont/libs/ios/release</IOSNativeLibrary_tsfPath>
    </PropertyGroup>
 
 

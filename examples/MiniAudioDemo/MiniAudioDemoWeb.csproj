@@ -40,6 +40,8 @@
       <SokolLibPath>$(SokolLibsPath)emscripten/x86/$(BuildConfigLower)/sokol.a</SokolLibPath>
       <MiniAudioLibsPath>$(SokolNetHome)/ext/miniaudio/libs/</MiniAudioLibsPath>
       <MiniAudioLibPath>$(MiniAudioLibsPath)emscripten/x86/release/miniaudio.a</MiniAudioLibPath>
+      <TinySoundFontLibsPath>$(SokolNetHome)/ext/TinySoundFont/libs/</TinySoundFontLibsPath>
+      <TinySoundFontLibPath>$(TinySoundFontLibsPath)emscripten/x86/release/tsf.a</TinySoundFontLibPath>
     </PropertyGroup>
 
     <ItemGroup>
@@ -48,6 +50,9 @@
       </NativeFileReference>
       <NativeFileReference Include="$(MiniAudioLibPath)">
         <Link>libs\miniaudio.a</Link>
+      </NativeFileReference>
+      <NativeFileReference Include="$(TinySoundFontLibPath)">
+        <Link>libs\tsf.a</Link>
       </NativeFileReference>
     </ItemGroup>
 

@@ -13,9 +13,12 @@ using static Sokol.SLog;
 using static Sokol.NanoVG;
 using static Sokol.STM;
 using static MiniAudioNS.MiniAudio;
+using static TinySoundFont.TSF;
+using static TinySoundFont.TML;
 
 public static unsafe class MiniaudiodemoApp
 {
+
     // ── Audio file catalogue ──────────────────────────────────────────────────
     struct AudioFile { public string Path; public string Label; public bool IsMusic; }
     static readonly AudioFile[] _audioFiles =
@@ -85,6 +88,24 @@ public static unsafe class MiniaudiodemoApp
         "Piano/g1s.mp3", "Piano/a1.mp3",  "Piano/a1s.mp3", "Piano/b1.mp3",
     };
 
+    // ── SoundFont tab ─────────────────────────────────────────────────────────
+    static IntPtr               _tsf            = IntPtr.Zero;
+    static tml_message*         _tmlFirst       = null;
+    static tml_message*         _tmlCurrent     = null;
+    static double               _tmlMsec        = 0.0;
+    static volatile bool        _tmlPlaying     = false;
+    static double               _tmlTotalMs     = 0.0;
+    static int                  _tsfSampleRate  = 44100;
+    static SharedBuffer?        _sf2Buf;
+    static SharedBuffer?        _midBuf;
+    static Label?               _tsfVoiceLabel;
+    static Label?               _tsfTimeLabel;
+    static Button?              _tsfPlayBtn;
+    static ComboBox?            _tsfPresetCombo;
+    static PianoKeyboardWidget? _tsfPianoWidget;
+    static ma_waveform*         _tsfKeepAliveWaveform;
+    static ma_sound*            _tsfKeepAliveSound;
+
     // ── Spectrum Analyzer tab ──────────────────────────────────────────────────
     static ma_sound*           _specSound;
     // Lock-free ring buffer filled by the engine's onProcess callback.
@@ -120,7 +141,7 @@ public static unsafe class MiniaudiodemoApp
         sg_setup(new sg_desc
         {
             environment = sglue_environment(),
-            logger      = { func = &slog_func },
+            logger = { func = &slog_func },
         });
 
         stm_setup();
@@ -136,10 +157,10 @@ public static unsafe class MiniaudiodemoApp
         _passAction = default;
         _passAction.colors[0].load_action = sg_load_action.SG_LOADACTION_CLEAR;
         _passAction.colors[0].clear_value = new sg_color { r = 0.12f, g = 0.12f, b = 0.15f, a = 1f };
-        _passAction.depth.load_action     = sg_load_action.SG_LOADACTION_CLEAR;
-        _passAction.depth.clear_value     = 1.0f;
-        _passAction.stencil.load_action   = sg_load_action.SG_LOADACTION_CLEAR;
-        _passAction.stencil.clear_value   = 0;
+        _passAction.depth.load_action = sg_load_action.SG_LOADACTION_CLEAR;
+        _passAction.depth.clear_value = 1.0f;
+        _passAction.stencil.load_action = sg_load_action.SG_LOADACTION_CLEAR;
+        _passAction.stencil.clear_value = 0;
 
         _vg = nvgCreateSokol(NVG_ANTIALIAS | NVG_STENCIL_STROKES);
         _screen = Screen.Initialize(_vg);
@@ -153,7 +174,85 @@ public static unsafe class MiniaudiodemoApp
         foreach (var p in _pianoNoteFiles)
             LoadAudioFileAsync(p);
 
+        SFilesystem.LoadFileAsync("SoundFont/florestan-subset.sf2", (_, bytes, status) =>
+        {
+            if (status != SFileLoadStatus.Success || bytes == null) return;
+            _sf2Buf = SharedBuffer.Create((uint)bytes.Length);
+            bytes.CopyTo(_sf2Buf.Buffer, 0);
+            _tsf = tsf_load_memory((void*)_sf2Buf.GetBufferPointer(), bytes.Length);
+            if (_tsf != IntPtr.Zero && _engineReady)
+            {
+                _tsfSampleRate = (int)ma_engine_get_sample_rate(in *_engine);
+                tsf_set_output(_tsf, TinySoundFont.TSF.TSFOutputMode.TSF_STEREO_INTERLEAVED, _tsfSampleRate, 0f);
+                tsf_set_max_voices(_tsf, 64);
+            }
+            if (_tsfPresetCombo != null && _tsf != IntPtr.Zero)
+            {
+                int count = tsf_get_presetcount(_tsf);
+                var names = new string[count];
+                for (int i = 0; i < count; i++)
+                    names[i] = $"{i}: {tsf_get_presetname(_tsf, i)}";
+                _tsfPresetCombo.SetItems(names);
+                _tsfPresetCombo.SelectedIndex = 0;
+            }
+        });
+
+        SFilesystem.LoadFileAsync("SoundFont/venture.mid", (_, bytes, status) =>
+        {
+            if (status != SFileLoadStatus.Success || bytes == null) return;
+            _midBuf = SharedBuffer.Create((uint)bytes.Length);
+            bytes.CopyTo(_midBuf.Buffer, 0);
+            _tmlFirst = tml_load_memory((void*)_midBuf.GetBufferPointer(), bytes.Length);
+            if (_tmlFirst != null)
+            {
+                int ch = 0, prog = 0, notes = 0;
+                uint tFirst = 0, tLen = 0;
+                tml_get_info(_tmlFirst, ref ch, ref prog, ref notes, ref tFirst, ref tLen);
+                _tmlTotalMs = tLen;
+            }
+        });
+
         BuildUI();
+    }
+
+    private static void StartTSFLoopingWave()
+    {
+        if(_tsfKeepAliveSound != null) return;
+        // Silent looping waveform — keeps OnEngineProcess firing with real frame
+        // counts even when no ma_sound is playing, so TSF piano renders audio.
+        if (_engineReady)
+        {
+            uint sr = ma_engine_get_sample_rate(in *_engine);
+            _tsfKeepAliveWaveform = (ma_waveform*)NativeMemory.AllocZeroed((nuint)sizeof(ma_waveform));
+            var kaCfg = ma_waveform_config_init(ma_format.ma_format_f32, 2, sr,
+                                                ma_waveform_type.ma_waveform_type_sine, 0.0, 440.0);
+            ma_waveform_init(in kaCfg, _tsfKeepAliveWaveform);
+            _tsfKeepAliveSound = (ma_sound*)NativeMemory.AllocZeroed((nuint)sizeof(ma_sound));
+            uint kaFlags = (uint)ma_sound_flags.MA_SOUND_FLAG_NO_SPATIALIZATION;
+            if (ma_sound_init_from_data_source(_engine, (IntPtr)_tsfKeepAliveWaveform, kaFlags, null, _tsfKeepAliveSound)
+                == ma_result.MA_SUCCESS)
+            {
+                ma_sound_set_looping(_tsfKeepAliveSound, 1);
+                ma_sound_start(_tsfKeepAliveSound);
+            }
+        }
+    }
+
+    private static void StopTSFLoopingWave()
+    {
+        if (_tsfKeepAliveSound != null)
+        {
+            ma_sound_stop(_tsfKeepAliveSound);
+            ma_sound_uninit(_tsfKeepAliveSound);
+            NativeMemory.Free(_tsfKeepAliveSound);
+            _tsfKeepAliveSound = null;
+        }
+        if (_tsfKeepAliveWaveform != null)
+        {
+            ma_waveform_uninit(_tsfKeepAliveWaveform);
+            NativeMemory.Free(_tsfKeepAliveWaveform);
+            _tsfKeepAliveWaveform = null;
+        }
     }
 
     // ── File loading ──────────────────────────────────────────────────────────
@@ -264,6 +363,12 @@ public static unsafe class MiniaudiodemoApp
     {
         SFilesystem.Update();
 
+        if (_tsf != IntPtr.Zero && tsf_active_voice_count(_tsf) == 0)
+        {
+            StopTSFLoopingWave();
+        }
+
+
         // Drain finished one-shot sounds
         for (int i = _active.Count - 1; i >= 0; i--)
         {
@@ -370,6 +475,19 @@ public static unsafe class MiniaudiodemoApp
             _spectroWidget?.PushSamples(mono);
         }
 
+        if (_tsfVoiceLabel != null && _tsf != IntPtr.Zero)
+            _tsfVoiceLabel.Text = $"voices:{tsf_active_voice_count(_tsf)}";
+
+        if (_tsfTimeLabel != null && _tmlTotalMs > 0)
+        {
+            int eMs   = (int)_tmlMsec;
+            int totMs = (int)_tmlTotalMs;
+            _tsfTimeLabel.Text = $"{eMs / 60000}:{(eMs / 1000) % 60:D2} / {totMs / 60000}:{(totMs / 1000) % 60:D2}";
+        }
+
+        if (_tsfPlayBtn != null)
+            _tsfPlayBtn.Text = _tmlPlaying ? "⏸  Pause" : "▶  Play";
+
         float winW = sapp_widthf()  ;
         float winH = sapp_heightf() ;
 
@@ -383,6 +501,7 @@ public static unsafe class MiniaudiodemoApp
 
     [UnmanagedCallersOnly]
     static void Event(sapp_event* e) => _screen?.DispatchEvent(e);
+
 
     // Called by the miniaudio engine on the audio thread after mixing, just before
     // frames are sent to hardware.  Writes interleaved stereo f32 into _captureRing
@@ -398,6 +517,11 @@ public static unsafe class MiniaudiodemoApp
         for (int i = 0; i < count; i++)
             ring[(wp + i) & mask] = pFramesOut[i];
         _captureWritePos = (wp + count) & mask;
+
+        if (_tsf != IntPtr.Zero)
+        {
+            tsf_render_float(_tsf, ref *pFramesOut, (int)frameCount, 1); // flag_mixing=1: mix into what's already in the output buffer
+        }
     }
 
     // ── Cleanup ───────────────────────────────────────────────────────────────
@@ -495,6 +619,20 @@ public static unsafe class MiniaudiodemoApp
             NativeMemory.Free(_musicSound);
         }
 
+        if (_tsf != IntPtr.Zero)
+        {
+            tsf_note_off_all(_tsf);
+            tsf_close(_tsf);
+            _tsf = IntPtr.Zero;
+        }
+        if (_tmlFirst != null)
+        {
+            tml_free(_tmlFirst);
+            _tmlFirst = null;
+        }
+        if (_sf2Buf != null) { SharedBuffer.Dispose(_sf2Buf); _sf2Buf = null; }
+        if (_midBuf != null) { SharedBuffer.Dispose(_midBuf); _midBuf = null; }
+
         foreach (var s in _active)
         {
             ma_sound_uninit(s.Sound);
@@ -511,6 +649,20 @@ public static unsafe class MiniaudiodemoApp
                 NativeMemory.Free(_pianoVoices[i]);
                 _pianoVoices[i] = null;
             }
+        }
+
+        if (_tsfKeepAliveSound != null)
+        {
+            ma_sound_stop(_tsfKeepAliveSound);
+            ma_sound_uninit(_tsfKeepAliveSound);
+            NativeMemory.Free(_tsfKeepAliveSound);
+            _tsfKeepAliveSound = null;
+        }
+        if (_tsfKeepAliveWaveform != null)
+        {
+            ma_waveform_uninit(_tsfKeepAliveWaveform);
+            NativeMemory.Free(_tsfKeepAliveWaveform);
+            _tsfKeepAliveWaveform = null;
         }
 
         if (_engineReady)
@@ -548,8 +700,9 @@ public static unsafe class MiniaudiodemoApp
         tabs.AddTab("Spatial",  BuildSpatializationTab());
         tabs.AddTab("EQ",       BuildEqTab());
         tabs.AddTab("Spectrum", BuildSpectrumTab());
-        tabs.AddTab("Piano",    BuildPianoTab());
-        tabs.AddTab("Engine",   BuildEngineTab());
+        tabs.AddTab("Piano",     BuildPianoTab());
+        tabs.AddTab("SoundFont", BuildSoundFontTab());
+        tabs.AddTab("Engine",    BuildEngineTab());
     }
 
     // ── Tab: Sound FX ─────────────────────────────────────────────────────────
@@ -901,6 +1054,112 @@ public static unsafe class MiniaudiodemoApp
         // Transfer to _active for cleanup when the sound stops
         _active.Add(new ActiveSound { Sound = _pianoVoices[semi], CheckIsPlaying = true });
         _pianoVoices[semi] = null;
+    }
+
+    // ── Tab: SoundFont ────────────────────────────────────────────────────────
+    static Widget BuildSoundFontTab()
+    {
+        var root = new Panel
+        {
+            Layout  = new BoxLayout(Orientation.Vertical, Alignment.Start, 14),
+            Padding = new Thickness(20),
+        };
+
+        root.AddChild(new Label { Text = "SoundFont Synthesizer", FontSize = 20 });
+        root.AddChild(new Label
+        {
+            Text      = "SF2 synthesis via TinySoundFont · MIDI playback (venture.mid) · Interactive piano",
+            ForeColor = UIColor.FromHex("#AAAAAA"),
+        });
+        root.AddChild(new Separator());
+
+        // ── MIDI Player ───────────────────────────────────────────────────────
+        root.AddChild(new Label { Text = "MIDI Playback — venture.mid", FontSize = 16 });
+
+        var midiRow = new Panel
+        {
+            Layout    = new BoxLayout(Orientation.Horizontal, Alignment.Center, 12),
+            FixedSize = new Vector2(0, 36),
+        };
+
+        _tsfPlayBtn    = new Button("▶  Play") { CornerRadius = 6, FixedSize = new Vector2(110, 32) };
+        var stopBtn    = new Button("■  Stop")  { CornerRadius = 6, FixedSize = new Vector2(100, 32) };
+        _tsfTimeLabel  = new Label { Text = "—",        ForeColor = UIColor.FromHex("#66AAFF"), FixedSize = new Vector2(110, 26) };
+        _tsfVoiceLabel = new Label { Text = "Voices: 0", ForeColor = UIColor.FromHex("#AAAAAA") };
+
+        _tsfPlayBtn.Clicked += () =>
+        {
+            if (_tsf == IntPtr.Zero || _tmlFirst == null) return;
+            if (_tmlPlaying)
+            {
+                _tmlPlaying = false;
+            }
+            else
+            {
+                if (_tmlCurrent == null)
+                {
+                    _tmlCurrent = _tmlFirst;
+                    _tmlMsec    = 0;
+                }
+                _tmlPlaying = true;
+            }
+        };
+
+        stopBtn.Clicked += () =>
+        {
+            _tmlPlaying = false;
+            _tmlCurrent = null;
+            _tmlMsec    = 0;
+            if (_tsf != IntPtr.Zero) tsf_note_off_all(_tsf);
+        };
+
+        midiRow.AddChild(_tsfPlayBtn);
+        midiRow.AddChild(stopBtn);
+        midiRow.AddChild(_tsfTimeLabel);
+        midiRow.AddChild(_tsfVoiceLabel);
+        root.AddChild(midiRow);
+
+        root.AddChild(new Separator());
+
+        // ── Interactive Piano ─────────────────────────────────────────────────
+        root.AddChild(new Label { Text = "Interactive Piano", FontSize = 16 });
+
+        var presetRow = new Panel
+        {
+            Layout    = new BoxLayout(Orientation.Horizontal, Alignment.Center, 12),
+            FixedSize = new Vector2(0, 36),
+        };
+
+        _tsfPresetCombo = new ComboBox { FixedSize = new Vector2(300, 32) };
+        _tsfPresetCombo.SetItems(new[] { "Loading SF2…" });
+        _tsfPresetCombo.SelectedIndex = 0;
+
+        presetRow.AddChild(new Label { Text = "Preset:", FixedSize = new Vector2(55, 32) });
+        presetRow.AddChild(_tsfPresetCombo);
+        root.AddChild(presetRow);
+
+        _tsfPianoWidget = new PianoKeyboardWidget { Expand = true };
+        _tsfPianoWidget.NoteOnSemi += semi =>
+        {
+            if (_tsf != IntPtr.Zero)
+            {
+                if (tsf_active_voice_count(_tsf) == 0)
+                {
+                    StartTSFLoopingWave();
+                }
+                tsf_note_on(_tsf, _tsfPresetCombo?.SelectedIndex ?? 0, 60 + semi, 1f);
+            }
+        };
+        _tsfPianoWidget.NoteOffSemi += semi =>
+        {
+            if (_tsf != IntPtr.Zero)
+            {
+                tsf_note_off(_tsf, _tsfPresetCombo?.SelectedIndex ?? 0, 60 + semi);
+            }
+        };
+        root.AddChild(_tsfPianoWidget);
+
+        return new ScrollView { Content = root, CanScrollVertical = true };
     }
 
     // ── Tab: Engine ───────────────────────────────────────────────────────────

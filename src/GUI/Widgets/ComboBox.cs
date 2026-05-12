@@ -13,6 +13,13 @@ public class ComboBox : Widget
     private int                 _hoveredIndex  = -1;
     private readonly List<string> _items = [];
 
+    // Scrollbar state
+    private float _scrollOffset;       // pixels scrolled inside the dropdown
+    private bool  _sbDragging;
+    private float _sbDragStartY;
+    private float _sbDragStartScroll;
+    private bool  _sbHovered;
+
     public IReadOnlyList<string> Items => _items;
 
     public int SelectedIndex
@@ -106,31 +113,73 @@ public class ComboBox : Widget
         // DrawDropdown is called via DrawPopupOverlay when _open.
     }
 
+    // Returns how tall the visible part of the dropdown should be, and whether a scrollbar is needed.
+    private (float visibleH, bool needsScroll) ComputeDropdownMetrics()
+    {
+        float itemH   = ThemeManager.Current.InputHeight;
+        float totalH  = _items.Count * itemH;
+        float sp      = ScreenPosition.Y;
+        float screenH = Screen.Instance.LogicalHeight;
+        float avail   = screenH - (sp + Bounds.Height) - 4f;   // 4 px bottom margin
+        avail = MathF.Max(itemH, avail);                        // always show at least one row
+        bool  need    = totalH > avail;
+        return (need ? avail : totalH, need);
+    }
+
     private void DrawDropdown(Renderer renderer, Theme theme, Rect bounds)
     {
-        float itemH  = ThemeManager.Current.InputHeight;
-        float ddH    = _items.Count * itemH;
-        float ddY    = bounds.Height;
-        var   ddRect = new Rect(0, ddY, bounds.Width, ddH);
+        float itemH   = ThemeManager.Current.InputHeight;
+        float totalH  = _items.Count * itemH;
+        float ddY     = bounds.Height;
+        float sbW     = theme.ScrollBarWidth;
 
-        // Drop shadow under the popup
+        var (visibleH, needsScroll) = ComputeDropdownMetrics();
+
+        // Clamp scroll so we never go past the end.
+        float maxScroll = MathF.Max(0f, totalH - visibleH);
+        _scrollOffset = Math.Clamp(_scrollOffset, 0f, maxScroll);
+
+        var ddRect = new Rect(0, ddY, bounds.Width, visibleH);
+
+        // Drop shadow
         renderer.DrawDropShadow(ddRect, theme.InputCornerRadius,
             new Vector2(0, 2), 8f, new UIColor(0f, 0f, 0f, 0.5f));
 
         renderer.FillRoundedRect(ddRect, theme.InputCornerRadius, theme.InputBackColor);
         renderer.StrokeRoundedRect(ddRect, theme.InputCornerRadius, 1f, theme.BorderDark);
 
+        // Clip item rendering to the visible dropdown area.
+        renderer.Save();
+        renderer.IntersectClip(ddRect);
+
         ApplyFont(renderer, theme);
         renderer.SetTextAlign(TextHAlign.Left);
 
+        float textAreaW = needsScroll ? bounds.Width - sbW : bounds.Width;
+
         for (int i = 0; i < _items.Count; i++)
         {
-            var rowR = new Rect(0, ddY + i * itemH, bounds.Width, itemH);
+            float rowTop = ddY + i * itemH - _scrollOffset;
+            var   rowR   = new Rect(0, rowTop, textAreaW, itemH);
+
             if (i == _selectedIndex)
                 renderer.FillRect(rowR, theme.SelectionColor);
             else if (i == _hoveredIndex)
                 renderer.FillRect(rowR, theme.AccentColor.WithAlpha(0.12f));
+
             renderer.DrawText(rowR.X + 6, rowR.Y + rowR.Height * 0.5f, _items[i], theme.TextColor);
+        }
+
+        renderer.Restore();
+
+        // Scrollbar (drawn on top of clip, so outside the save/restore)
+        if (needsScroll)
+        {
+            ScrollbarRenderer.DrawVertical(renderer,
+                trackX: bounds.Width - sbW, trackY: ddY,
+                trackW: sbW, trackH: visibleH,
+                scrollOffset: _scrollOffset, contentSize: totalH, viewSize: visibleH,
+                isHovered: _sbHovered);
         }
     }
 
@@ -139,8 +188,8 @@ public class ComboBox : Widget
     {
         if (_open)
         {
-            float itemH  = ThemeManager.Current.InputHeight;
-            float totalH = Bounds.Height + _items.Count * itemH;
+            var (visibleH, _) = ComputeDropdownMetrics();
+            float totalH = Bounds.Height + visibleH;
             return localPoint.X >= 0 && localPoint.Y >= 0 &&
                    localPoint.X < Bounds.Width && localPoint.Y < totalH;
         }
@@ -166,29 +215,46 @@ public class ComboBox : Widget
     // ─── Input ───────────────────────────────────────────────────────────────
     public override bool OnMouseDown(MouseEvent e)
     {
-        var local = e.LocalPosition;
-        float itemH = ThemeManager.Current.InputHeight;
+        var   local   = e.LocalPosition;
+        float itemH   = ThemeManager.Current.InputHeight;
+        float sbW     = ThemeManager.Current.ScrollBarWidth;
 
         if (_open)
         {
-            // Hit-test dropdown rows
+            var (visibleH, needsScroll) = ComputeDropdownMetrics();
             float ddY = Bounds.Height;
-            if (local.Y >= ddY && local.Y < ddY + _items.Count * itemH)
+
+            // Click on scrollbar?
+            if (needsScroll && local.X >= Bounds.Width - sbW && local.Y >= ddY && local.Y < ddY + visibleH)
             {
-                int idx = (int)((local.Y - ddY) / itemH);
-                Sokol.SLog.Info($"ComboBox: selected index {idx} ('{_items[idx]}')", "Sokol.GUI");
-                SelectedIndex = idx;
+                _sbDragging       = true;
+                _sbDragStartY     = local.Y;
+                _sbDragStartScroll = _scrollOffset;
+                return true;
+            }
+
+            // Click on item rows?
+            if (local.Y >= ddY && local.Y < ddY + visibleH)
+            {
+                int idx = (int)((local.Y - ddY + _scrollOffset) / itemH);
+                if (idx >= 0 && idx < _items.Count)
+                {
+                    Sokol.SLog.Info($"ComboBox: selected index {idx} ('{_items[idx]}')", "Sokol.GUI");
+                    SelectedIndex = idx;
+                }
             }
             _open = false;
             _hoveredIndex = -1;
+            _sbDragging   = false;
             Screen.SetActivePopup(null);
             return true;
         }
 
         if (e.Button == MouseButton.Left && Enabled)
         {
-            _open = true;
+            _open         = true;
             _hoveredIndex = -1;
+            _scrollOffset = 0f;     // reset scroll each time we open
             Screen.SetActivePopup(this);
             Sokol.SLog.Info($"ComboBox: opened, registered as popup", "Sokol.GUI");
             return true;
@@ -196,18 +262,57 @@ public class ComboBox : Widget
         return false;
     }
 
-    public override bool OnMouseLeave(MouseEvent e) { IsHovered = false; _hoveredIndex = -1; return false; }
+    public override bool OnMouseUp(MouseEvent e)
+    {
+        _sbDragging = false;
+        return false;
+    }
+
+    public override bool OnMouseLeave(MouseEvent e) { IsHovered = false; _hoveredIndex = -1; _sbHovered = false; return false; }
 
     public override bool OnMouseMove(MouseEvent e)
     {
         if (!_open) return false;
-        var   local = e.LocalPosition;
-        float itemH = ThemeManager.Current.InputHeight;
-        float ddY   = Bounds.Height;
-        if (local.Y >= ddY && local.Y < ddY + _items.Count * itemH)
-            _hoveredIndex = (int)((local.Y - ddY) / itemH);
+        var   local   = e.LocalPosition;
+        float itemH   = ThemeManager.Current.InputHeight;
+        float sbW     = ThemeManager.Current.ScrollBarWidth;
+        var (visibleH, needsScroll) = ComputeDropdownMetrics();
+        float totalH  = _items.Count * itemH;
+        float ddY     = Bounds.Height;
+
+        // Scrollbar drag
+        if (_sbDragging)
+        {
+            float maxScroll = MathF.Max(0f, totalH - visibleH);
+            float ratio     = visibleH / MathF.Max(totalH, 1f);
+            float dy        = (local.Y - _sbDragStartY) / ratio;
+            _scrollOffset   = Math.Clamp(_sbDragStartScroll + dy, 0f, maxScroll);
+            return true;
+        }
+
+        // Scrollbar hover
+        _sbHovered = needsScroll && local.X >= Bounds.Width - sbW &&
+                     local.Y >= ddY && local.Y < ddY + visibleH;
+
+        // Row hover
+        if (local.Y >= ddY && local.Y < ddY + visibleH)
+        {
+            int idx = (int)((local.Y - ddY + _scrollOffset) / itemH);
+            _hoveredIndex = (idx >= 0 && idx < _items.Count) ? idx : -1;
+        }
         else
             _hoveredIndex = -1;
+        return true;
+    }
+
+    public override bool OnMouseScroll(MouseEvent e)
+    {
+        if (!_open) return false;
+        float itemH   = ThemeManager.Current.InputHeight;
+        float totalH  = _items.Count * itemH;
+        var (visibleH, _) = ComputeDropdownMetrics();
+        float maxScroll   = MathF.Max(0f, totalH - visibleH);
+        _scrollOffset     = Math.Clamp(_scrollOffset - e.Scroll.Y * itemH, 0f, maxScroll);
         return true;
     }
 

@@ -190,7 +190,7 @@ struct_field_overrides = {
     # before the 'next' pointer. SequentialLayout will insert the 2 padding bytes between
     # channel and data automatically, so offsets match the C struct exactly.
     'tml_message.next': [
-        '    public tml_union data; // union: data.key, data.vel, data.control, data.value, data.program, data.pitch_bend, data.tempo',
+        '    public tml_union data; // union: data.key, data.vel, data.control, data.value, data.program, data.pitch_bend (ushort)',
         '    public tml_message* next;',
     ],
 }
@@ -198,19 +198,21 @@ struct_field_overrides = {
 # C# declarations that must be emitted immediately BEFORE specific struct definitions.
 # Key: c_struct_name   Value: list of raw C# lines
 struct_type_preambles = {
-    # tml_message needs a helper union type for its anonymous union field
+    # tml_message needs a helper union type for its anonymous union field.
+    # The C union is 2 bytes: byte0=(key/control/program), byte1=(vel/value),
+    # or as an unsigned short (pitch_bend).  Size MUST be 2 to keep next at offset 8.
     'tml_message': [
-        '// Helper union for tml_message: note_on/off (key+vel), control_change (control+val),',
-        '// program_change (program), pitch_bend (int), set_tempo (uint) — 4 bytes wide.',
-        '[StructLayout(LayoutKind.Explicit, Size = 4)]',
+        '// Helper union for tml_message: 2 bytes wide matching the actual C union.',
+        '// Byte 0: key / control / program (all aliases).  Byte 1: vel / value (aliases).',
+        '// pitch_bend is the raw unsigned short spanning both bytes.',
+        '[StructLayout(LayoutKind.Explicit, Size = 2)]',
         'public struct tml_union {',
         '    [FieldOffset(0)] public byte key;',
         '    [FieldOffset(1)] public byte vel;',
         '    [FieldOffset(0)] public byte control;',
         '    [FieldOffset(1)] public byte value;',
         '    [FieldOffset(0)] public byte program;',
-        '    [FieldOffset(0)] public int pitch_bend;',
-        '    [FieldOffset(0)] public uint tempo;',
+        '    [FieldOffset(0)] public ushort pitch_bend;',
         '}',
     ],
     # ma_decoder needs a helper type whose size is platform-conditional
@@ -442,10 +444,9 @@ prim_types = {
     'enum TSFOutputMode':          'TSFOutputMode',
     # TinyMidiLoader message linked list pointer
     'tml_message *':               'tml_message*',
-    # short* PCM buffer (tsf_render_short)
+    # short*/float* PCM buffers (tsf_render_short)
     'short *':                     'short*',
 }
-
 
 
 prim_defaults = {
@@ -535,10 +536,11 @@ def as_csharp_enum_type(s, prefix):
 
 def check_type_override(func_or_struct_name, field_or_arg_name, orig_type):
     s = f"{func_or_struct_name}.{field_or_arg_name}"
+    print(f"Checking override for {s}")  # Debugging output
     if s in type_overrides:
+        print(f"Applying override for {s}: {type_overrides[s]}")
         return type_overrides[s]
-    else:
-        return orig_type
+    return orig_type
 
 def check_name_override(name):
     if name in name_overrides:
@@ -1534,23 +1536,16 @@ def gen_c_spine_wrappers_header(all_inputs):
                     for param in decl['params']:
                         param_type = check_type_override(c_func_name, param['name'], param['type'])
                         param_name = param['name']
-                        
-                        # Convert type to C syntax
-                        if is_const_struct_ptr(param_type):
-                            params_c.append(f"{param_type} {param_name}")
-                        elif is_prim_type(param_type):
-                            params_c.append(f"{param_type} {param_name}")
-                        else:
-                            params_c.append(f"{param_type} {param_name}")
-                    
+                        params_c.append(f"{param_type} {param_name}")
+
                     params_str = ", ".join(params_c) if params_c else ""
                     if params_str:
                         params_str = ", " + params_str
-                    
+
                     # Build argument list for function call
                     args = [param['name'] for param in decl['params']]
                     args_str = ", ".join(args)
-                    
+
                     header_lines.append(f"SPINE_EXPORT void {c_func_name}_internal({return_type}* result{params_str}) {{")
                     header_lines.append(f"    *result = {c_func_name}({args_str});")
                     header_lines.append("}")
@@ -1613,23 +1608,16 @@ def gen_c_ozzutil_wrappers_header(all_inputs):
                     for param in decl['params']:
                         param_type = check_type_override(c_func_name, param['name'], param['type'])
                         param_name = param['name']
-                        
-                        # Convert type to C syntax
-                        if is_const_struct_ptr(param_type):
-                            params_c.append(f"{param_type} {param_name}")
-                        elif is_prim_type(param_type):
-                            params_c.append(f"{param_type} {param_name}")
-                        else:
-                            params_c.append(f"{param_type} {param_name}")
-                    
+                        params_c.append(f"{param_type} {param_name}")
+
                     params_str = ", ".join(params_c) if params_c else ""
                     if params_str:
                         params_str = ", " + params_str
-                    
+
                     # Build argument list for function call
                     args = [param['name'] for param in decl['params']]
                     args_str = ", ".join(args)
-                    
+
                     header_lines.append(f"OZZUTIL_EXPORT void {c_func_name}_internal({return_type}* result{params_str}) {{")
                     header_lines.append(f"    *result = {c_func_name}({args_str});")
                     header_lines.append("}")
@@ -1693,23 +1681,16 @@ def gen_c_box2d_wrappers_header(all_inputs):
                     for param in decl['params']:
                         param_type = check_type_override(c_func_name, param['name'], param['type'])
                         param_name = param['name']
-                        
-                        # Convert type to C syntax
-                        if is_const_struct_ptr(param_type):
-                            params_c.append(f"{param_type} {param_name}")
-                        elif is_prim_type(param_type):
-                            params_c.append(f"{param_type} {param_name}")
-                        else:
-                            params_c.append(f"{param_type} {param_name}")
-                    
+                        params_c.append(f"{param_type} {param_name}")
+
                     params_str = ", ".join(params_c) if params_c else ""
                     if params_str:
                         params_str = ", " + params_str
-                    
+
                     # Build argument list for function call
                     args = [param['name'] for param in decl['params']]
                     args_str = ", ".join(args)
-                    
+
                     header_lines.append(f"BOX2D_EXPORT void {c_func_name}_internal({return_type}* result{params_str}) {{")
                     header_lines.append(f"    *result = {c_func_name}({args_str});")
                     header_lines.append("}")
