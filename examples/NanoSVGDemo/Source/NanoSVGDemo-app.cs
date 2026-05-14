@@ -142,6 +142,18 @@ public static unsafe class NanosvgdemoApp
         LoadSvg(0);
     }
 
+    // nanosvg has no <clipPath> support — inner paths are parsed as solid black shapes and
+    // cover the actual content. Strip clipPath blocks and clip-path attributes entirely.
+    // (All clipPath elements in Pixelmator-exported SVGs are near-full-viewport rectangles
+    // that don't clip anything meaningful.)
+    private static byte[] StripClipPaths(byte[] data)
+    {
+        string svg = Encoding.UTF8.GetString(data);
+        svg = Regex.Replace(svg, @"<clipPath\b[^>]*>.*?</clipPath>", "", RegexOptions.Singleline);
+        svg = Regex.Replace(svg, @"\s*clip-path=""[^""]*""", "");
+        return Encoding.UTF8.GetBytes(svg);
+    }
+
     // nanosvg only handles inline style= attributes, not CSS class selectors.
     // This converts <style> class rules into inline style attributes so colors render correctly.
     private static byte[] InlineCSSClasses(byte[] data)
@@ -191,6 +203,8 @@ public static unsafe class NanosvgdemoApp
 
         // nanosvg doesn't support CSS class-based styles — inline them first
         data = InlineCSSClasses(data);
+        // nanosvg has no <clipPath> support — strip them to prevent black rectangles
+        data = StripClipPaths(data);
 
         // nsvgParse modifies the input buffer in-place (XML parsing), so we need a mutable null-terminated copy
         byte[] svgBuf = new byte[data.Length + 1];
