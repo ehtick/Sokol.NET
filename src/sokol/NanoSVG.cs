@@ -7,8 +7,9 @@ namespace Sokol
     {
         // NSVGpaint has an anonymous union { unsigned int color; NSVGgradient* gradient; }
         // after a signed char type field.  The union is aligned to pointer-size, so the
-        // offset differs between WASM (32-bit, offset 4) and 64-bit platforms (offset 8).
-#if WEB
+        // offset differs between 32-bit platforms (WASM and Android armeabi-v7a: offset 4)
+        // and 64-bit platforms (offset 8).
+#if WEB || __ANDROID_ARM32__
         [StructLayout(LayoutKind.Explicit, Size = 8)]
         public struct NSVGpaint
         {

@@ -983,7 +983,10 @@ namespace SokolApplicationBuilder
                     string projectFile = Path.Combine(opts.ProjectPath, $"{PROJECT_NAME}.csproj");
 
                     // Include DEBUG symbol for Debug builds (semicolon must be URL-encoded for MSBuild)
-                    string defineConstants = configuration == "Debug" ? "__ANDROID__%3BDEBUG" : "__ANDROID__";
+                    // Also include __ANDROID_ARM32__ for 32-bit ARM builds — needed for struct layouts
+                    // (e.g. NSVGpaint) that differ between 32-bit and 64-bit pointer sizes.
+                    string arm32Extra = arch == "linux-bionic-arm" ? "__ANDROID_ARM32__%3B" : "";
+                    string defineConstants = configuration == "Debug" ? $"{arm32Extra}__ANDROID__%3BDEBUG" : $"{arm32Extra}__ANDROID__";
 
                     var result = Cli.Wrap("dotnet")
                         .WithArguments($"publish \"{projectFile}\" -r {arch} -c {configuration} -p:BuildAsLibrary=true -p:DisableUnsupportedError=true -p:PublishAotUsingRuntimePack=true -p:RemoveSections=true -p:DefineConstants=\"{defineConstants}\" --verbosity quiet")
