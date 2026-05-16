@@ -337,7 +337,7 @@ public static unsafe class NanosvgdemoApp
     // We recover gradient endpoints by solving the 2x2 system at gy=0 and gy=1 (linear) or gd=0 (radial center).
     private static NVGpaint GradientPaint(IntPtr ctx, NSVGpaint* paint, float opacity)
     {
-#if WEB
+#if WEB || __ANDROID_ARM32__
         NSVGgradient* grad = (NSVGgradient*)(nuint)paint->gradient;  // gradient ptr is same union member as color on WASM
 #else
         NSVGgradient* grad = paint->gradient;
