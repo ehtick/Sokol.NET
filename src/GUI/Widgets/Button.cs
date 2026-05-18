@@ -16,6 +16,7 @@ public class Button : Widget
     public float    BorderWidth { get; set; } = 1f;
     public float    CornerRadius { get; set; } = 0f;  // 0 = theme default
     public Font?    Font        { get; set; }
+    public string?  FontName    { get; set; }
     public float    FontSize    { get; set; } = 0f;
     public TextAlign Align      { get; set; } = TextAlign.Center;
 
@@ -160,7 +161,7 @@ public class Button : Widget
     // ─── Helpers ─────────────────────────────────────────────────────────────
     private void ApplyFont(Renderer renderer, Theme theme)
     {
-        renderer.SetFont(Font?.Name ?? theme.DefaultFont);
+        renderer.SetFont(FontName ?? Font?.Name ?? theme.DefaultFont);
         renderer.SetFontSize(FontSize > 0 ? FontSize : theme.FontSize);
     }
 }

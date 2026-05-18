@@ -11,6 +11,7 @@ public class Label : Widget
     public virtual string  Text      { get; set; } = string.Empty;
     public UIColor? ForeColor { get; set; }
     public Font?   Font      { get; set; }
+    public string? FontName  { get; set; }          // font name override (resolved at render time)
     public float   FontSize  { get; set; } = 0f;   // 0 = theme default
     public TextAlign Align   { get; set; } = TextAlign.Left;
     public TextWrap  Wrap    { get; set; } = TextWrap.None;
@@ -70,7 +71,7 @@ public class Label : Widget
         float y = inner.Y + inner.Height * 0.5f;
 
         if (Wrap == TextWrap.Wrap)
-            renderer.DrawTextBox(x, inner.Y, inner.Width, Text, fg);
+            renderer.DrawTextBox(inner.X, inner.Y, inner.Width, Text, fg);
         else
             renderer.DrawText(x, y, Text, fg);
 
@@ -80,7 +81,7 @@ public class Label : Widget
     protected void ApplyFont(Renderer renderer)
     {
         var theme = ThemeManager.Current;
-        renderer.SetFont(Font?.Name ?? theme.DefaultFont);
+        renderer.SetFont(FontName ?? Font?.Name ?? theme.DefaultFont);
         renderer.SetFontSize(FontSize > 0 ? FontSize : theme.FontSize);
     }
 }

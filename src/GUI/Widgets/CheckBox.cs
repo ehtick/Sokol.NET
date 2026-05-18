@@ -92,9 +92,13 @@ public class CheckBox : Widget
             ApplyFont(renderer, theme);
             if (rtl)
             {
-                float lx = boxLeft - theme.CheckBoxLabelSpacing;
+                float lx            = boxLeft - theme.CheckBoxLabelSpacing;
+                float availableW    = lx - Padding.Left;
                 renderer.SetTextAlign(TextHAlign.Right);
+                renderer.Save();
+                renderer.IntersectClip(new Rect(Padding.Left, 0f, availableW, Bounds.Height));
                 renderer.DrawText(lx, cy, Label, ForeColor ?? theme.TextColor);
+                renderer.Restore();
             }
             else
             {

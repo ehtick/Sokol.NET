@@ -143,22 +143,32 @@ public sealed class BoxLayout : ILayout
                 if (!vertical && fs.Y == 0f) childCross = crossMax;
             }
 
+            // When the child fills the full cross dimension there is no room to center or end-align it;
+            // always place it at the start so its right/bottom edge stays within the container.
+            bool fillsCross = childCross >= crossMax;
             float crossPos;
-            switch (Alignment)
+            if (fillsCross)
             {
-                case Alignment.Center:
-                    crossPos = vertical
-                        ? inner.Left + Margin.Left + (crossMax - childCrossReq) * 0.5f
-                        : inner.Top  + Margin.Top  + (crossMax - childCrossReq) * 0.5f;
-                    break;
-                case Alignment.End:
-                    crossPos = vertical
-                        ? inner.Right  - Margin.Right  - childCrossReq
-                        : inner.Bottom - Margin.Bottom - childCrossReq;
-                    break;
-                default: // Start / Stretch
-                    crossPos = vertical ? inner.Left + Margin.Left : inner.Top + Margin.Top;
-                    break;
+                crossPos = vertical ? inner.Left + Margin.Left : inner.Top + Margin.Top;
+            }
+            else
+            {
+                switch (Alignment)
+                {
+                    case Alignment.Center:
+                        crossPos = vertical
+                            ? inner.Left + Margin.Left + (crossMax - childCrossReq) * 0.5f
+                            : inner.Top  + Margin.Top  + (crossMax - childCrossReq) * 0.5f;
+                        break;
+                    case Alignment.End:
+                        crossPos = vertical
+                            ? inner.Right  - Margin.Right  - childCrossReq
+                            : inner.Bottom - Margin.Bottom - childCrossReq;
+                        break;
+                    default: // Start / Stretch
+                        crossPos = vertical ? inner.Left + Margin.Left : inner.Top + Margin.Top;
+                        break;
+                }
             }
 
             if (vertical)
