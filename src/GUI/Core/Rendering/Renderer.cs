@@ -243,7 +243,7 @@ public sealed class Renderer
 
     /// <summary>Draw text wrapped inside a bounding box with automatic BiDi reordering.</summary>
     public void DrawTextBox(Rect bounds, string text) =>
-        nvgTextBox(_vg, bounds.X, bounds.Y, bounds.Width, BidiHelper.ToVisual(text), null);
+        DrawTextBox(bounds.X, bounds.Y, bounds.Width, text);
 
     /// <summary>Draw a single-line text string without BiDi reordering (for widgets that handle BiDi at a higher level).</summary>
     public float DrawTextRaw(float x, float y, string text) =>
@@ -431,7 +431,46 @@ public sealed class Renderer
     }
 
     public void DrawTextBox(float x, float y, float maxW, string text)
-        => nvgTextBox(_vg, x, y, maxW, BidiHelper.ToVisual(text), null);
+    {
+        if (!BidiHelper.IsRTLParagraph(text))
+        {
+            nvgTextBox(_vg, x, y, maxW, BidiHelper.ToVisual(text), null);
+            return;
+        }
+        // RTL: applying ToVisual to the whole paragraph reverses line order when
+        // nvgTextBox subsequently wraps it. Break into lines first on the logical
+        // text, then apply ToVisual per line so character order is correct and
+        // line order is preserved top-to-bottom.
+        var metrics = MeasureTextMetrics();
+        var utf8 = System.Text.Encoding.UTF8.GetBytes(text);
+        unsafe
+        {
+            fixed (byte* ptr = utf8)
+            {
+                const int MaxRows = 32;
+                Sokol.NanoVG.NVGtextRowRaw* rows = stackalloc Sokol.NanoVG.NVGtextRowRaw[MaxRows];
+                byte* cur = ptr;
+                byte* end = ptr + utf8.Length;
+                float lineY = y;
+                int count;
+                while ((count = nvgTextBreakLines(_vg, cur, end, maxW, rows, MaxRows)) > 0)
+                {
+                    for (int i = 0; i < count; i++)
+                    {
+                        int len = (int)(rows[i].end - rows[i].start);
+                        if (len > 0)
+                        {
+                            string line = System.Text.Encoding.UTF8.GetString(rows[i].start, len);
+                            nvgTextBox(_vg, x, lineY, maxW, BidiHelper.ToVisual(line), null);
+                        }
+                        lineY += metrics.lineHeight;
+                    }
+                    cur = rows[count - 1].next;
+                    if (cur >= end) break;
+                }
+            }
+        }
+    }
 
     public void DrawTextBox(float x, float y, float maxW, string text, UIColor c)
     {
