@@ -73,6 +73,11 @@ android {
             path 'src/main/cpp/CMakeLists.txt'
         }
     }
+
+    bundle {
+        density { enableSplit false }
+        language { enableSplit false }
+    }
 }
 
 afterEvaluate {

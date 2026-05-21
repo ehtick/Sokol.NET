@@ -556,6 +556,15 @@ namespace SokolApplicationBuilder
                 Log.LogMessage(MessageImportance.High, "✅ Generated AndroidManifest.xml with properties from Directory.Build.props");
             }
 
+            // Copy platform/android/res/ → app/src/main/res/ (e.g. xml/file_provider_paths.xml)
+            string platformResPath = Path.Combine(opts.ProjectPath, "platform", "android", "res");
+            if (Directory.Exists(platformResPath))
+            {
+                string destResPath = Path.Combine(androidPath, "app", "src", "main", "res");
+                Utils.CopyDirectory(platformResPath, destResPath);
+                Log.LogMessage(MessageImportance.High, "✅ Copied platform/android/res/ → app/src/main/res/");
+            }
+
             // Update build.gradle
             string buildGradlePath = Path.Combine(androidPath, "app", "build.gradle");
             if (File.Exists(buildGradlePath))
@@ -584,6 +593,28 @@ namespace SokolApplicationBuilder
                     content = versionNameRegex.Replace(content, $"versionName \"{versionName}\"");
                 }
                 
+                // Inject AndroidGradleDependency_* entries from Directory.Build.props
+                var gradleDeps = androidProperties
+                    .Where(kv => kv.Key.StartsWith("AndroidGradleDependency_"))
+                    .Select(kv => kv.Value)
+                    .ToList();
+                if (gradleDeps.Count > 0)
+                {
+                    var depsBlock = new StringBuilder();
+                    depsBlock.AppendLine("dependencies {");
+                    foreach (var dep in gradleDeps)
+                        depsBlock.AppendLine($"    implementation '{dep}'");
+                    depsBlock.AppendLine("}");
+                    depsBlock.AppendLine();
+                    // Insert before the closing of the file (before afterEvaluate or at end)
+                    int afterEvalIdx = content.IndexOf("afterEvaluate");
+                    if (afterEvalIdx >= 0)
+                        content = content.Insert(afterEvalIdx, depsBlock.ToString());
+                    else
+                        content += depsBlock.ToString();
+                    Log.LogMessage(MessageImportance.High, $"✅ Injected {gradleDeps.Count} Gradle dependenc{(gradleDeps.Count == 1 ? "y" : "ies")} into build.gradle");
+                }
+
                 File.WriteAllText(buildGradlePath, content);
                 Log.LogMessage(MessageImportance.High, $"✅ Updated build.gradle: versionCode={versionCode}, versionName={versionName}");
             }
@@ -622,6 +653,10 @@ namespace SokolApplicationBuilder
                         content += $"\norg.gradle.java.home={javaHomePath}\n";
                     }
                     
+                    // Ensure android.useAndroidX=true is present (required for androidx.* deps)
+                    if (!content.Contains("android.useAndroidX"))
+                        content += "\nandroid.useAndroidX=true\n";
+
                     File.WriteAllText(gradlePropertiesPath, content);
                     Log.LogMessage(MessageImportance.High, $"📦 Configured Gradle to use Java from: {javaHome}");
                 }
@@ -925,7 +960,7 @@ namespace SokolApplicationBuilder
         {
             Log.LogMessage(MessageImportance.High, "Compiling shaders...");
 
-            string projectFile = Path.Combine(opts.ProjectPath, $"{PROJECT_NAME}.csproj");
+            string projectFile = Path.GetFullPath(Path.Combine(opts.ProjectPath, $"{PROJECT_NAME}.csproj"));
 
             var result = Cli.Wrap("dotnet")
                 .WithArguments($"msbuild \"{projectFile}\" -t:CompileShaders -p:DefineConstants=\"__ANDROID__\"")
@@ -980,7 +1015,7 @@ namespace SokolApplicationBuilder
 
                 try
                 {
-                    string projectFile = Path.Combine(opts.ProjectPath, $"{PROJECT_NAME}.csproj");
+                    string projectFile = Path.GetFullPath(Path.Combine(opts.ProjectPath, $"{PROJECT_NAME}.csproj"));
 
                     // Include DEBUG symbol for Debug builds (semicolon must be URL-encoded for MSBuild)
                     // Also include __ANDROID_ARM32__ for 32-bit ARM builds — needed for struct layouts
@@ -2353,6 +2388,15 @@ KeyAlias={keystoreInfo.KeyAlias}
             manifest.AppendLine("        <category android:name=\"android.intent.category.LAUNCHER\" />");
             manifest.AppendLine("      </intent-filter>");
             manifest.AppendLine("    </activity>");
+
+            // Inject Providers.xml (e.g. FileProvider) before </application>
+            string providersXmlPath = Path.Combine(opts.ProjectPath, "platform/android/manifest/Providers.xml");
+            if (File.Exists(providersXmlPath))
+            {
+                string extra = File.ReadAllText(providersXmlPath);
+                manifest.AppendLine(extra);
+            }
+
             manifest.AppendLine("  </application>");
             manifest.AppendLine();
             manifest.AppendLine("</manifest>");
@@ -3039,6 +3083,12 @@ KeyAlias={keystoreInfo.KeyAlias}
             if (File.Exists(Path.Combine(opts.ProjectPath, "platform/android/manifest/Activities.xml")))
             {
                 string extra = File.ReadAllText(Path.Combine(opts.ProjectPath, "platform/android/manifest/Activities.xml"));
+                AndroidManifest.AppendText(extra);
+            }
+
+            if (File.Exists(Path.Combine(opts.ProjectPath, "platform/android/manifest/Providers.xml")))
+            {
+                string extra = File.ReadAllText(Path.Combine(opts.ProjectPath, "platform/android/manifest/Providers.xml"));
                 AndroidManifest.AppendText(extra);
             }
 

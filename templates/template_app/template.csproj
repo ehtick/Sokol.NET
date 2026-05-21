@@ -16,6 +16,9 @@
     <IsAndroid>$(RuntimeIdentifier.ToLower().StartsWith('android'))</IsAndroid>
 		<IsAndroid Condition="'$(IsAndroid)'=='false'">$(RuntimeIdentifier.ToLower().StartsWith('linux-bionic'))</IsAndroid>
     <IsIOS Condition="$(DefineConstants.Contains('__IOS__'))">true</IsIOS>
+    <DefineConstants Condition="'$(IsOSX)'=='true'">$(DefineConstants);__MACOS__</DefineConstants>
+    <DefineConstants Condition="'$(IsWindows)'=='true'">$(DefineConstants);__WINDOWS__</DefineConstants>
+    <DefineConstants Condition="'$(IsLinux)'=='true'">$(DefineConstants);__LINUX__</DefineConstants>
     <BaseIntermediateOutputPath Condition="'$(BaseIntermediateOutputPath)'=='' ">obj\</BaseIntermediateOutputPath>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
