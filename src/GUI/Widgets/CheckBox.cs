@@ -19,6 +19,7 @@ public class CheckBox : Widget
     public UIColor? ForeColor   { get; set; }
     public Font?    Font        { get; set; }
     public float    FontSize    { get; set; } = 0f;
+    public float    BoxSize     { get; set; } = 0f;
 
     public event Action<bool>? CheckedChanged;
 
@@ -26,7 +27,7 @@ public class CheckBox : Widget
     {
         if (FixedSize.HasValue) return FixedSize.Value;
         var theme  = ThemeManager.Current;
-        float size = theme.CheckBoxSize;
+        float size = BoxSize > 0f ? BoxSize : theme.CheckBoxSize;
         ApplyFont(renderer, theme);
         float tw = renderer.MeasureText(Label);
         return new Vector2(size + theme.CheckBoxLabelSpacing + tw + Padding.Horizontal,
@@ -38,7 +39,7 @@ public class CheckBox : Widget
         if (!Visible) return;
 
         var theme  = ThemeManager.Current;
-        float size = theme.CheckBoxSize;
+        float size = BoxSize > 0f ? BoxSize : theme.CheckBoxSize;
         var bounds = new Rect(0, 0, Bounds.Width, Bounds.Height);
         float cy   = bounds.Height * 0.5f;
         bool  rtl  = ResolvedFlowDirection == FlowDirection.RightToLeft;
