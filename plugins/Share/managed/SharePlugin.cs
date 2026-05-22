@@ -21,6 +21,16 @@ public static unsafe class SharePlugin
         ShareImageAndText(imagePath, text);
     }
 
+    // Overload that composites the score card overlay onto a caller-supplied RGB screenshot.
+    // rgbPixels must be w*h*3 bytes (3 bytes per pixel, no alpha).
+    public static void ShareScore(byte[] rgbPixels, int w, int h,
+                                  int score, string gameName = "Sokol.NET Game")
+    {
+        string imagePath = GenerateScoreCard(rgbPixels, w, h, score, gameName);
+        string text      = $"I scored {score:N0} pts in {gameName}! Can you beat me?";
+        ShareImageAndText(imagePath, text);
+    }
+
     // ── Image generation ──────────────────────────────────────────────────────
 
     static string GenerateScoreCard(int score, string gameName)
@@ -31,6 +41,24 @@ public static unsafe class SharePlugin
 
         string path     = dir + "score_card.png";
         byte[] pngBytes = ScoreCardRenderer.Render(score, gameName);
+
+        var file = sfs_open_file(path, sfs_open_mode_t.SFS_OPEN_CREATE_WRITE);
+        if (file != IntPtr.Zero)
+        {
+            fixed (byte* p = pngBytes) sfs_write_file(file, p, pngBytes.Length);
+            sfs_close_file(file);
+        }
+        return path;
+    }
+
+    static string GenerateScoreCard(byte[] rgbPixels, int w, int h, int score, string gameName)
+    {
+        IntPtr dirPtr = sfs_get_temp_dir();
+        string dir = Marshal.PtrToStringUTF8(dirPtr) ?? "";
+        sfs_free_path(dirPtr);
+
+        string path     = dir + "score_card.png";
+        byte[] pngBytes = ScoreCardRenderer.Render(rgbPixels, w, h, score, gameName,w,h);
 
         var file = sfs_open_file(path, sfs_open_mode_t.SFS_OPEN_CREATE_WRITE);
         if (file != IntPtr.Zero)
