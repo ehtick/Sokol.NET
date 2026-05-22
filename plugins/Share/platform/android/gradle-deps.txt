@@ -1,0 +1,4 @@
+# Gradle dependencies required by the Share plugin.
+# The builder reads these and injects them into the Android project's build.gradle automatically.
+# No need to duplicate them in Directory.Build.props.
+androidx.core:core:1.12.0

@@ -84,6 +84,33 @@ namespace SokolApplicationBuilder
             return Path.GetFullPath(Path.Combine(opts.ProjectPath, "..", "..", ".."));
         }
 
+        // Returns platform/android/ paths for plugins this project uses,
+        // detected by AndroidNativeLibrary_*Path props pointing into the plugin's directory.
+        private IEnumerable<string> GetActivePluginAndroidPlatformPaths()
+        {
+            string pluginsDir = Path.Combine(GetSokolNetHome(), "plugins");
+            if (!Directory.Exists(pluginsDir))
+                yield break;
+
+            var nativeLibPaths = androidProperties
+                .Where(kv => kv.Key.StartsWith("AndroidNativeLibrary_", StringComparison.OrdinalIgnoreCase)
+                          && kv.Key.EndsWith("Path", StringComparison.OrdinalIgnoreCase))
+                .Select(kv => Path.IsPathRooted(kv.Value)
+                    ? kv.Value
+                    : Path.GetFullPath(Path.Combine(opts.ProjectPath, kv.Value)))
+                .ToList();
+
+            foreach (string pluginDir in Directory.GetDirectories(pluginsDir))
+            {
+                string pluginAndroid = Path.Combine(pluginDir, "platform", "android");
+                if (!Directory.Exists(pluginAndroid))
+                    continue;
+                string pluginDirNorm = pluginDir.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                if (nativeLibPaths.Any(p => p.StartsWith(pluginDirNorm, StringComparison.OrdinalIgnoreCase)))
+                    yield return pluginAndroid;
+            }
+        }
+
         private string FindJava17OrHigher()
         {
             // Check JAVA_HOME first
@@ -546,23 +573,39 @@ namespace SokolApplicationBuilder
             // Read Android properties from Directory.Build.props
             androidProperties = ReadAndroidPropertiesFromDirectoryBuildProps();
 
+            // Detect which plugins this project uses (by AndroidNativeLibrary_*Path pointing into plugins/)
+            var activePluginAndroidPaths = GetActivePluginAndroidPlatformPaths().ToList();
+
             // Update AndroidManifest.xml
             string manifestPath = Path.Combine(androidPath, "app", "src", "main", "AndroidManifest.xml");
             if (File.Exists(manifestPath))
             {
                 // Generate manifest content dynamically
-                string manifestContent = GenerateAndroidManifest(appName, androidProperties);
+                string manifestContent = GenerateAndroidManifest(appName, androidProperties, activePluginAndroidPaths);
                 File.WriteAllText(manifestPath, manifestContent);
                 Log.LogMessage(MessageImportance.High, "✅ Generated AndroidManifest.xml with properties from Directory.Build.props");
             }
 
             // Copy platform/android/res/ → app/src/main/res/ (e.g. xml/file_provider_paths.xml)
             string platformResPath = Path.Combine(opts.ProjectPath, "platform", "android", "res");
+            string destResPath = Path.Combine(androidPath, "app", "src", "main", "res");
             if (Directory.Exists(platformResPath))
             {
-                string destResPath = Path.Combine(androidPath, "app", "src", "main", "res");
                 Utils.CopyDirectory(platformResPath, destResPath);
                 Log.LogMessage(MessageImportance.High, "✅ Copied platform/android/res/ → app/src/main/res/");
+            }
+            else
+            {
+                foreach (string pluginAndroid in activePluginAndroidPaths)
+                {
+                    string pluginRes = Path.Combine(pluginAndroid, "res");
+                    if (Directory.Exists(pluginRes))
+                    {
+                        Utils.CopyDirectory(pluginRes, destResPath);
+                        string pluginName = Path.GetFileName(Directory.GetParent(pluginAndroid)!.FullName);
+                        Log.LogMessage(MessageImportance.High, $"✅ Copied {pluginName} plugin platform/android/res/ → app/src/main/res/ (fallback)");
+                    }
+                }
             }
 
             // Update build.gradle
@@ -593,11 +636,39 @@ namespace SokolApplicationBuilder
                     content = versionNameRegex.Replace(content, $"versionName \"{versionName}\"");
                 }
                 
-                // Inject AndroidGradleDependency_* entries from Directory.Build.props
+                // Collect Gradle deps from three sources (duplicates skipped):
+                //   1. AndroidGradleDependency_* properties in Directory.Build.props
+                //   2. platform/android/gradle-deps.txt in the project itself
+                //   3. gradle-deps.txt from each active plugin
                 var gradleDeps = androidProperties
                     .Where(kv => kv.Key.StartsWith("AndroidGradleDependency_"))
                     .Select(kv => kv.Value)
                     .ToList();
+
+                string projectGradleDepsFile = Path.Combine(opts.ProjectPath, "platform", "android", "gradle-deps.txt");
+                if (File.Exists(projectGradleDepsFile))
+                {
+                    var projectDeps = File.ReadAllLines(projectGradleDepsFile)
+                        .Select(l => l.Trim())
+                        .Where(l => l.Length > 0 && !l.StartsWith('#'))
+                        .Where(d => !gradleDeps.Contains(d));
+                    gradleDeps.AddRange(projectDeps);
+                    Log.LogMessage(MessageImportance.High, "✅ Loaded Gradle deps from project platform/android/gradle-deps.txt");
+                }
+
+                foreach (string pluginAndroid in activePluginAndroidPaths)
+                {
+                    string gradleDepsFile = Path.Combine(pluginAndroid, "gradle-deps.txt");
+                    if (!File.Exists(gradleDepsFile))
+                        continue;
+                    string pluginName = Path.GetFileName(Directory.GetParent(pluginAndroid)!.FullName);
+                    var pluginDeps = File.ReadAllLines(gradleDepsFile)
+                        .Select(l => l.Trim())
+                        .Where(l => l.Length > 0 && !l.StartsWith('#'))
+                        .Where(d => !gradleDeps.Contains(d));
+                    gradleDeps.AddRange(pluginDeps);
+                    Log.LogMessage(MessageImportance.High, $"✅ Loaded Gradle deps from {pluginName} plugin gradle-deps.txt");
+                }
                 if (gradleDeps.Count > 0)
                 {
                     var depsBlock = new StringBuilder();
@@ -2241,7 +2312,7 @@ KeyAlias={keystoreInfo.KeyAlias}
             return properties;
         }
 
-        string GenerateAndroidManifest(string appName, Dictionary<string, string> androidProperties)
+        string GenerateAndroidManifest(string appName, Dictionary<string, string> androidProperties, List<string> activePluginAndroidPaths)
         {
             var manifest = new StringBuilder();
             manifest.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
@@ -2391,6 +2462,18 @@ KeyAlias={keystoreInfo.KeyAlias}
 
             // Inject Providers.xml (e.g. FileProvider) before </application>
             string providersXmlPath = Path.Combine(opts.ProjectPath, "platform/android/manifest/Providers.xml");
+            if (!File.Exists(providersXmlPath))
+            {
+                foreach (string pluginAndroid in activePluginAndroidPaths)
+                {
+                    string pluginProviders = Path.Combine(pluginAndroid, "manifest", "Providers.xml");
+                    if (File.Exists(pluginProviders))
+                    {
+                        providersXmlPath = pluginProviders;
+                        break;
+                    }
+                }
+            }
             if (File.Exists(providersXmlPath))
             {
                 string extra = File.ReadAllText(providersXmlPath);

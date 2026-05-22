@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Configures the paths that FileProvider may expose via content:// URIs.
+     files-path maps to getFilesDir() which is the same root that
+     sfs_get_pref_path("SmilingFruits","SmilingFruits") returns on Android. -->
+<paths>
+    <files-path name="share_root" path="." />
+</paths>

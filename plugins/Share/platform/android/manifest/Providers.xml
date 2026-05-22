@@ -1,0 +1,13 @@
+<!-- FileProvider declaration — injected into the <application> block by SokolApplicationBuilder.
+     Allows sharing the generated score_card.png via content:// URI on Android 7+.
+     Requires androidx.core:core:1.12.0 in app/build.gradle
+     (set AndroidGradleDependency_AndroidXCore in Directory.Build.props). -->
+<provider
+    android:name="androidx.core.content.FileProvider"
+    android:authorities="${applicationId}.fileprovider"
+    android:exported="false"
+    android:grantUriPermissions="true">
+  <meta-data
+      android:name="android.support.FILE_PROVIDER_PATHS"
+      android:resource="@xml/file_provider_paths"/>
+</provider>
