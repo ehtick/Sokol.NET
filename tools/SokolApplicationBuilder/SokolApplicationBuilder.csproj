@@ -10,16 +10,17 @@
 
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Build.Tasks.Core" Version="17.13.9"   />
-    <PackageReference Include="Microsoft.Build" Version="17.13.9"   />
-    <PackageReference Include="Microsoft.Build.Utilities.Core" Version="17.13.9"  />
+    <PackageReference Include="Microsoft.Build.Tasks.Core" Version="17.13.9" />
+    <PackageReference Include="Microsoft.Build" Version="17.13.9" />
+    <PackageReference Include="Microsoft.Build.Utilities.Core" Version="17.13.9" />
     <PackageReference Include="Microsoft.Build.Locator" Version="1.9.1" />
+    <PackageReference Include="Svg.Skia" Version="5.0.0" />
   </ItemGroup>
 
   <ItemGroup>
   <PackageReference Include="CommandLineParser" Version="2.9.1" />
   <PackageReference Include="CliWrap" Version="3.9.0" />
-  <PackageReference Include="SkiaSharp" Version="3.119.1" />
+  <PackageReference Include="SkiaSharp" Version="3.119.2" />
  </ItemGroup>
 
   <!-- Copy templates folder to output directory -->
@@ -30,7 +31,7 @@
   </ItemGroup>
 
 
-  <Target Name = "CustomAfterClean" AfterTargets="AfterClean">
+  <Target Name="CustomAfterClean" AfterTargets="AfterClean">
         <RemoveDir Directories="bin" />
         <RemoveDir Directories="obj" />
   </Target>

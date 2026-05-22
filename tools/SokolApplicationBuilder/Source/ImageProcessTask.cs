@@ -27,6 +27,7 @@ using Task = Microsoft.Build.Utilities.Task;
 using CliWrap;
 using CliWrap.Buffered;
 using SkiaSharp;
+using Svg.Skia;
 
 namespace SokolApplicationBuilder
 {
@@ -208,12 +209,40 @@ namespace SokolApplicationBuilder
             return true; // Return true since we at least copied the file
         }
 
+        // Returns an SKBitmap for any raster or SVG source.
+        // For SVG, renders at a resolution that covers targetWidth × targetHeight
+        // so subsequent crop/fit operations never need to upscale.
+        SKBitmap? LoadBitmapFromSource(string sourcePath, int targetWidth, int targetHeight)
+        {
+            if (Path.GetExtension(sourcePath).Equals(".svg", StringComparison.OrdinalIgnoreCase))
+            {
+                using var svg = new SKSvg();
+                if (svg.Load(sourcePath) is not { } picture)
+                    return null;
+                var bounds = picture.CullRect;
+                if (bounds.Width <= 0 || bounds.Height <= 0)
+                    return null;
+                float scale = Math.Max(
+                    Math.Max(targetWidth / bounds.Width, targetHeight / bounds.Height),
+                    1.0f);
+                int w = Math.Max(1, (int)MathF.Ceiling(bounds.Width * scale));
+                int h = Math.Max(1, (int)MathF.Ceiling(bounds.Height * scale));
+                var bitmap = new SKBitmap(w, h);
+                using var canvas = new SKCanvas(bitmap);
+                canvas.Clear(SKColors.Transparent);
+                canvas.Scale(scale);
+                canvas.DrawPicture(picture);
+                return bitmap;
+            }
+            using var inputStream = File.OpenRead(sourcePath);
+            return SKBitmap.Decode(inputStream);
+        }
+
         bool ResizeAndCropWithSkiaSharp(string sourcePath, string destPath, int width, int height, int startX = 0, int startY = 0)
         {
-            // Load the source image
-            using var inputStream = File.OpenRead(sourcePath);
-            using var original = SKBitmap.Decode(inputStream);
-            
+            // Load the source image (SVG is rasterized at sufficient resolution to cover the target)
+            using var original = LoadBitmapFromSource(sourcePath, width, height);
+
             if (original == null)
             {
                 Log.LogWarning($"   ⚠️  Failed to decode image: {sourcePath}");
@@ -383,10 +412,8 @@ namespace SokolApplicationBuilder
 
         bool ResizeAndFitWithSkiaSharp(string sourcePath, string destPath, int width, int height, int startX = 0, int startY = 0)
         {
-            // Load the source image
-            using var inputStream = File.OpenRead(sourcePath);
-            using var original = SKBitmap.Decode(inputStream);
-            
+            using var original = LoadBitmapFromSource(sourcePath, width, height);
+
             if (original == null)
             {
                 Log.LogWarning($"   ⚠️  Failed to decode image: {sourcePath}");
@@ -531,10 +558,8 @@ namespace SokolApplicationBuilder
 
         bool CutImageRegionWithSkiaSharp(string sourcePath, string destPath, int x, int y, int width, int height)
         {
-            // Load the source image
-            using var inputStream = File.OpenRead(sourcePath);
-            using var original = SKBitmap.Decode(inputStream);
-            
+            using var original = LoadBitmapFromSource(sourcePath, x + width, y + height);
+
             if (original == null)
             {
                 Log.LogWarning($"   ⚠️  Failed to decode image: {sourcePath}");
