@@ -2143,8 +2143,6 @@ sealed class OscilloscopeWidget : Widget
             return;
         }
 
-        // Draw waveform curve using raw NanoVG through VGContext
-        var vg   = renderer.VGContext;
         int n    = (int)(w - 8f);
         if (n < 2) { renderer.Restore(); return; }
 
@@ -2154,10 +2152,7 @@ sealed class OscilloscopeWidget : Widget
         float displayTime = 3f / 440f;
         float usableH = (h - 16f) * 0.5f;
 
-        static NVGcolor NvgRgbaf(float r, float g, float b, float a) =>
-            new NVGcolor { r = r, g = g, b = b, a = a };
-
-        nvgBeginPath(vg);
+        renderer.BeginPath();
         for (int i = 0; i < n; i++)
         {
             float t   = (float)i / n * displayTime;
@@ -2176,11 +2171,11 @@ sealed class OscilloscopeWidget : Widget
             };
             float px = 4f + i;
             float py = cy - sample * Amp * usableH;
-            if (i == 0) nvgMoveTo(vg, px, py); else nvgLineTo(vg, px, py);
+            if (i == 0) renderer.MoveTo(px, py); else renderer.LineTo(px, py);
         }
-        nvgStrokeColor(vg, NvgRgbaf(0.2f, 0.85f, 1f, 1f));
-        nvgStrokeWidth(vg, 2f);
-        nvgStroke(vg);
+        renderer.SetStrokeColor(new UIColor(0.2f, 0.85f, 1f, 1f));
+        renderer.SetStrokeWidth(2f);
+        renderer.Stroke();
 
         renderer.Restore();
     }
@@ -2294,15 +2289,11 @@ sealed class VuMeterWidget : Widget
         if (fillH >= 1f)
         {
             float barY = y + bh - fillH;
-            var vg     = renderer.VGContext;
             // Gradient bottom (green) → top (red)
-            var paint = nvgLinearGradient(vg, x, y + bh, x, y,
-                new NVGcolor { r = 0.15f, g = 0.85f, b = 0.20f, a = 1f },   // green at bottom
-                new NVGcolor { r = 0.95f, g = 0.20f, b = 0.15f, a = 1f });  // red at top
-            nvgBeginPath(vg);
-            nvgRect(vg, x, barY, bw, fillH);
-            nvgFillPaint(vg, paint);
-            nvgFill(vg);
+            var paint = renderer.LinearGradient(x, y + bh, x, y,
+                new UIColor(0.15f, 0.85f, 0.20f, 1f),
+                new UIColor(0.95f, 0.20f, 0.15f, 1f));
+            renderer.FillRectWithPaint(new Rect(x, barY, bw, fillH), paint);
         }
 
         // Peak hold line (white)
@@ -2367,8 +2358,6 @@ sealed class EqBarsWidget : Widget
         renderer.SetStrokeColor(UIColor.FromHex("#2A4A6A"));
         renderer.DrawLine(new Vector2(Pad, centerY), new Vector2(w - Pad, centerY), 1f);
 
-        var vg = renderer.VGContext;
-
         for (int i = 0; i < N; i++)
         {
             float gain = MathF.Max(-MaxDB, MathF.Min(MaxDB, _gains[i]));
@@ -2385,26 +2374,20 @@ sealed class EqBarsWidget : Widget
                 // Boost: grow upward from center line
                 float fillH = norm * barAreaH * 0.5f;
                 float barY  = centerY - fillH;
-                var paint = nvgLinearGradient(vg, bx, centerY, bx, Pad,
-                    new NVGcolor { r = 0.05f, g = 0.55f, b = 1.0f, a = 0.85f },  // blue at center
-                    new NVGcolor { r = 0.30f, g = 0.85f, b = 1.0f, a = 1.0f });  // bright cyan at top
-                nvgBeginPath(vg);
-                nvgRoundedRect(vg, bx, barY, barW, fillH, 3f);
-                nvgFillPaint(vg, paint);
-                nvgFill(vg);
+                var paint = renderer.LinearGradient(bx, centerY, bx, Pad,
+                    new UIColor(0.05f, 0.55f, 1.0f, 0.85f),
+                    new UIColor(0.30f, 0.85f, 1.0f, 1.0f));
+                renderer.FillRoundedRectWithPaint(new Rect(bx, barY, barW, fillH), 3f, paint);
             }
             else
             {
                 // Cut: grow downward from center line
                 float fillH = -norm * barAreaH * 0.5f;
                 float barY  = centerY;
-                var paint = nvgLinearGradient(vg, bx, centerY, bx, Pad + barAreaH,
-                    new NVGcolor { r = 1.0f, g = 0.55f, b = 0.05f, a = 0.85f },  // orange at center
-                    new NVGcolor { r = 1.0f, g = 0.15f, b = 0.0f,  a = 1.0f });  // red at bottom
-                nvgBeginPath(vg);
-                nvgRoundedRect(vg, bx, barY, barW, fillH, 3f);
-                nvgFillPaint(vg, paint);
-                nvgFill(vg);
+                var paint = renderer.LinearGradient(bx, centerY, bx, Pad + barAreaH,
+                    new UIColor(1.0f, 0.55f, 0.05f, 0.85f),
+                    new UIColor(1.0f, 0.15f, 0.0f,  1.0f));
+                renderer.FillRoundedRectWithPaint(new Rect(bx, barY, barW, fillH), 3f, paint);
             }
 
             // Frequency label
@@ -2458,56 +2441,28 @@ sealed class SpatializationCanvasWidget : Widget
         renderer.Save();
         renderer.ClipRect(b);
 
-        var vg = renderer.VGContext;
-
         // Cross-hair axes
-        nvgBeginPath(vg);
-        nvgMoveTo(vg, cx, cy - pixelRadius); nvgLineTo(vg, cx, cy + pixelRadius);
-        nvgMoveTo(vg, cx - pixelRadius, cy); nvgLineTo(vg, cx + pixelRadius, cy);
-        nvgStrokeColor(vg, new NVGcolor { r = 0.2f, g = 0.3f, b = 0.4f, a = 0.3f });
-        nvgStrokeWidth(vg, 1f);
-        nvgStroke(vg);
+        renderer.DrawCrossHair(cx, cy, pixelRadius, 1f, new UIColor(0.2f, 0.3f, 0.4f, 0.3f));
 
         // Max distance ring (blue) — grows when MaxDist slider increases
         float maxPR = MathF.Min(MaxDist * scale, pixelRadius);
-        nvgBeginPath(vg);
-        nvgCircle(vg, cx, cy, maxPR);
-        nvgStrokeColor(vg, new NVGcolor { r = 0.3f, g = 0.5f, b = 1f, a = 0.8f });
-        nvgStrokeWidth(vg, 2f);
-        nvgStroke(vg);
+        renderer.StrokeCircle(cx, cy, maxPR, 2f, new UIColor(0.3f, 0.5f, 1f, 0.8f));
 
         // Min distance ring (green) — grows when MinDist slider increases
         float minPR = MathF.Min(MinDist * scale, pixelRadius);
-        nvgBeginPath(vg);
-        nvgCircle(vg, cx, cy, minPR);
-        nvgStrokeColor(vg, new NVGcolor { r = 0.3f, g = 0.8f, b = 0.3f, a = 0.7f });
-        nvgStrokeWidth(vg, 1.5f);
-        nvgStroke(vg);
+        renderer.StrokeCircle(cx, cy, minPR, 1.5f, new UIColor(0.3f, 0.8f, 0.3f, 0.7f));
 
         // Listener (cyan filled circle)
-        nvgBeginPath(vg);
-        nvgCircle(vg, cx, cy, 8f);
-        nvgFillColor(vg, new NVGcolor { r = 0.2f, g = 0.9f, b = 1f, a = 1f });
-        nvgFill(vg);
+        renderer.FillCircle(cx, cy, 8f, new UIColor(0.2f, 0.9f, 1f, 1f));
 
         // Sound source (orange filled circle)
         float sx = cx + SourceX * scale;
         float sz = cy + SourceZ * scale;
-        nvgBeginPath(vg);
-        nvgCircle(vg, sx, sz, 10f);
-        nvgFillColor(vg, new NVGcolor { r = 1f, g = 0.55f, b = 0.1f, a = 1f });
-        nvgFill(vg);
-        nvgStrokeColor(vg, new NVGcolor { r = 1f, g = 0.8f, b = 0.5f, a = 1f });
-        nvgStrokeWidth(vg, 2f);
-        nvgStroke(vg);
+        renderer.FillCircle(sx, sz, 10f, new UIColor(1f, 0.55f, 0.1f, 1f));
+        renderer.StrokeCircle(sx, sz, 10f, 2f, new UIColor(1f, 0.8f, 0.5f, 1f));
 
         // Distance line from listener to source
-        nvgBeginPath(vg);
-        nvgMoveTo(vg, cx, cy);
-        nvgLineTo(vg, sx, sz);
-        nvgStrokeColor(vg, new NVGcolor { r = 0.7f, g = 0.5f, b = 0.2f, a = 0.5f });
-        nvgStrokeWidth(vg, 1f);
-        nvgStroke(vg);
+        renderer.DrawLine(cx, cy, sx, sz, 1f, new UIColor(0.7f, 0.5f, 0.2f, 0.5f));
 
         renderer.Restore();
 
@@ -2675,8 +2630,6 @@ sealed class SpectrumWidget : Widget
 
         if (!_hasData || barAreaH < 10f) { renderer.Restore(); return; }
 
-        var vg = renderer.VGContext;
-
         // Frequency axis: map bar index → log frequency
         // Display range 20 Hz – 20 kHz (assume 44100 Hz sample rate → BinCount = 1024 bins)
         const float SampleRate = 44100f;
@@ -2708,31 +2661,21 @@ sealed class SpectrumWidget : Widget
             float barY  = Pad + barAreaH - barH2;
 
             // Color by frequency band
-            NVGcolor col;
-            if (t < 0.25f)      col = new NVGcolor { r = 1.0f, g = 0.45f + t, b = 0.1f, a = 0.9f }; // bass: warm orange
-            else if (t < 0.65f) col = new NVGcolor { r = 0.15f, g = 0.85f, b = 0.25f, a = 0.9f };   // mid: green
-            else                col = new NVGcolor { r = 0.2f, g = 0.85f, b = 1.0f, a = 0.9f };      // treble: cyan
+            UIColor col;
+            if (t < 0.25f)      col = new UIColor(1.0f, 0.45f + t, 0.1f, 0.9f); // bass: warm orange
+            else if (t < 0.65f) col = new UIColor(0.15f, 0.85f, 0.25f, 0.9f);   // mid: green
+            else                col = new UIColor(0.2f, 0.85f, 1.0f, 0.9f);      // treble: cyan
 
             if (barH2 >= 1f)
-            {
-                nvgBeginPath(vg);
-                nvgRect(vg, barX, barY, barW, barH2);
-                nvgFillColor(vg, col);
-                nvgFill(vg);
-            }
+                renderer.FillRect(new Rect(barX, barY, barW, barH2), col);
         }
 
         // dB guide lines
-        renderer.SetStrokeWidth(1f);
         foreach (float db in new[] { -20f, -40f, -60f })
         {
             float frac2 = (db + 80f) / 80f;
             float lineY = Pad + barAreaH * (1f - frac2);
-            nvgBeginPath(vg);
-            nvgMoveTo(vg, Pad, lineY); nvgLineTo(vg, w - Pad, lineY);
-            nvgStrokeColor(vg, new NVGcolor { r = 0.25f, g = 0.35f, b = 0.45f, a = 0.5f });
-            nvgStrokeWidth(vg, 1f);
-            nvgStroke(vg);
+            renderer.DrawLine(Pad, lineY, w - Pad, lineY, 1f, new UIColor(0.25f, 0.35f, 0.45f, 0.5f));
             renderer.SetFillColor(UIColor.FromHex("#556677"));
             renderer.SetFont("sans"); renderer.SetFontSize(10f);
             renderer.SetTextAlign(NVGalign.NVG_ALIGN_LEFT | NVGalign.NVG_ALIGN_BOTTOM);
@@ -2793,15 +2736,8 @@ sealed class GoniometerWidget : Widget
         float cx = w * 0.5f, cy = h * 0.5f;
         float scale = MathF.Min(w, h) * 0.45f;
 
-        var vg = renderer.VGContext;
-
         // Axis lines
-        nvgBeginPath(vg);
-        nvgMoveTo(vg, cx, cy - scale); nvgLineTo(vg, cx, cy + scale);
-        nvgMoveTo(vg, cx - scale, cy); nvgLineTo(vg, cx + scale, cy);
-        nvgStrokeColor(vg, new NVGcolor { r = 0.2f, g = 0.3f, b = 0.4f, a = 0.5f });
-        nvgStrokeWidth(vg, 1f);
-        nvgStroke(vg);
+        renderer.DrawCrossHair(cx, cy, scale, 1f, new UIColor(0.2f, 0.3f, 0.4f, 0.5f));
 
         // L/R axis labels
         renderer.SetFillColor(UIColor.FromHex("#445566"));
@@ -2823,16 +2759,16 @@ sealed class GoniometerWidget : Widget
             int start = _count * band / Bands;
             int end   = _count * (band + 1) / Bands;
             float alpha = (band + 0.5f) / Bands * 0.85f;
-            nvgBeginPath(vg);
+            renderer.BeginPath();
             for (int i = start; i < end; i++)
             {
                 int idx = (_head - _count + i + TrailLen) % TrailLen;
                 float px = cx + _mid[idx]  * scale;
                 float py = cy - _side[idx] * scale;
-                nvgRect(vg, px - DotHalf, py - DotHalf, DotHalf * 2f, DotHalf * 2f);
+                renderer.AddRect(px - DotHalf, py - DotHalf, DotHalf * 2f, DotHalf * 2f);
             }
-            nvgFillColor(vg, new NVGcolor { r = 0.1f, g = 0.85f, b = 1f, a = alpha });
-            nvgFill(vg);
+            renderer.SetFillColor(new UIColor(0.1f, 0.85f, 1f, alpha));
+            renderer.Fill();
         }
 
         // Label
@@ -2944,31 +2880,22 @@ sealed class SpectrogramWidget : Widget
         float w = Bounds.Width, h = Bounds.Height;
         renderer.FillRoundedRect(new Rect(0, 0, w, h), 4f, UIColor.FromHex("#090912"));
 
-        var vg = renderer.VGContext;
-
         if (_imgHandle < 0)
         {
-            // Pass Unsafe.NullRef so sokol_nvg creates a stream_update (mutable) image.
-            // Passing actual pixel data would create an immutable image that cannot be updated.
-            _imgHandle = nvgCreateImageRGBA(vg, ImgW, ImgH, 0, in Unsafe.NullRef<byte>());
+            // CreateImageRGBA with null pixels creates a stream_update (mutable) image.
+            _imgHandle = renderer.CreateImageRGBA(ImgW, ImgH, 0);
             // Populate the image immediately with current (cleared) pixels
             if (_imgHandle >= 0)
-                nvgUpdateImage(vg, _imgHandle, in _pixels[0]);
+                renderer.UpdateImage(_imgHandle, in _pixels[0]);
         }
         else if (_dirty)
         {
-            nvgUpdateImage(vg, _imgHandle, in _pixels[0]);
+            renderer.UpdateImage(_imgHandle, in _pixels[0]);
             _dirty = false;
         }
 
         if (_imgHandle >= 0)
-        {
-            var paint = nvgImagePattern(vg, 0, 0, w, h, 0f, _imgHandle, 1f);
-            nvgBeginPath(vg);
-            nvgRect(vg, 0, 0, w, h);
-            nvgFillPaint(vg, paint);
-            nvgFill(vg);
-        }
+            renderer.DrawImage(_imgHandle, new Rect(0, 0, w, h));
     }
 }
 
@@ -3053,8 +2980,6 @@ sealed class PianoKeyboardWidget : Widget
         if (!Visible) return;
         float w = Bounds.Width, h = Bounds.Height;
         var (wkW, wkH, bkW, bkH, _) = CalcLayout(w, h);
-        var vg = renderer.VGContext;
-
         renderer.FillRect(new Rect(0, 0, w, h), UIColor.FromHex("#0A0A12"));
 
         // White keys
@@ -3067,50 +2992,49 @@ sealed class PianoKeyboardWidget : Widget
             float r = MathF.Max(3f, wkW * 0.06f);
 
             // Key body with rounded bottom corners
-            nvgBeginPath(vg);
-            nvgMoveTo(vg, kx + r, 0f);
-            nvgLineTo(vg, kx + wkW - r, 0f);
-            nvgLineTo(vg, kx + wkW - r, wkH - r);
-            nvgArcTo(vg, kx + wkW, wkH, kx + wkW, wkH - r, r);
-            nvgLineTo(vg, kx + wkW, wkH - r);
-            nvgArcTo(vg, kx + wkW, wkH, kx + wkW - r, wkH, r);
-            nvgLineTo(vg, kx + r, wkH);
-            nvgArcTo(vg, kx, wkH, kx, wkH - r, r);
-            nvgLineTo(vg, kx, r);
-            nvgArcTo(vg, kx, 0f, kx + r, 0f, r);
-            nvgClosePath(vg);
+            renderer.BeginPath();
+            renderer.MoveTo(kx + r, 0f);
+            renderer.LineTo(kx + wkW - r, 0f);
+            renderer.LineTo(kx + wkW - r, wkH - r);
+            renderer.ArcTo(kx + wkW, wkH, kx + wkW, wkH - r, r);
+            renderer.LineTo(kx + wkW, wkH - r);
+            renderer.ArcTo(kx + wkW, wkH, kx + wkW - r, wkH, r);
+            renderer.LineTo(kx + r, wkH);
+            renderer.ArcTo(kx, wkH, kx, wkH - r, r);
+            renderer.LineTo(kx, r);
+            renderer.ArcTo(kx, 0f, kx + r, 0f, r);
+            renderer.ClosePath();
 
             if (pressed)
             {
-                nvgFillColor(vg, new NVGcolor { r = 0.40f, g = 0.78f, b = 1.00f, a = 1f });
+                renderer.SetFillColor(new UIColor(0.40f, 0.78f, 1.00f, 1f));
             }
             else
             {
                 // Gradient: warm ivory top → slightly darker at bottom
-                var paint = nvgLinearGradient(vg, kx, 0f, kx, wkH,
-                    new NVGcolor { r = 0.97f, g = 0.96f, b = 0.92f, a = 1f },
-                    new NVGcolor { r = 0.82f, g = 0.80f, b = 0.76f, a = 1f });
-                nvgFillPaint(vg, paint);
+                renderer.SetFillPaint(renderer.LinearGradient(kx, 0f, kx, wkH,
+                    new UIColor(0.97f, 0.96f, 0.92f, 1f),
+                    new UIColor(0.82f, 0.80f, 0.76f, 1f)));
             }
-            nvgFill(vg);
+            renderer.Fill();
 
             // Border
-            nvgStrokeColor(vg, new NVGcolor { r = 0.18f, g = 0.18f, b = 0.22f, a = 1f });
-            nvgStrokeWidth(vg, 1.2f);
-            nvgStroke(vg);
+            renderer.SetStrokeColor(new UIColor(0.18f, 0.18f, 0.22f, 1f));
+            renderer.SetStrokeWidth(1.2f);
+            renderer.Stroke();
 
             // Note label at bottom of key
             int noteInOct = Keys[i].semi % 12;
             if (noteInOct == 0) // C notes only
             {
-                nvgFontSize(vg, MathF.Max(9f, wkW * 0.28f));
-                nvgFontFace(vg, "sans");
-                nvgTextAlign(vg, (int)(NVGalign.NVG_ALIGN_CENTER | NVGalign.NVG_ALIGN_BOTTOM));
-                nvgFillColor(vg, pressed
-                    ? new NVGcolor { r = 0.05f, g = 0.15f, b = 0.25f, a = 0.9f }
-                    : new NVGcolor { r = 0.35f, g = 0.25f, b = 0.15f, a = 0.7f });
+                renderer.SetFontSize(MathF.Max(9f, wkW * 0.28f));
+                renderer.SetFont("sans");
+                renderer.SetTextAlign(TextHAlign.Center, TextVAlign.Bottom);
+                renderer.SetFillColor(pressed
+                    ? new UIColor(0.05f, 0.15f, 0.25f, 0.9f)
+                    : new UIColor(0.35f, 0.25f, 0.15f, 0.7f));
                 int octave = 3 + Keys[i].semi / 12;
-                nvgText(vg, kx + wkW * 0.5f, wkH - 6f, $"C{octave}", null);
+                renderer.DrawTextRaw(kx + wkW * 0.5f, wkH - 6f, $"C{octave}");
             }
 
             wkIdx++;
@@ -3125,29 +3049,28 @@ sealed class PianoKeyboardWidget : Widget
             bool pressed = _pressed.ContainsKey(Keys[i].semi);
             float r = MathF.Max(2f, bkW * 0.10f);
 
-            nvgBeginPath(vg);
-            nvgRoundedRectVarying(vg, kx, 0f, bkW, bkH, 0f, 0f, r, r);
+            renderer.BeginPath();
+            renderer.AddRoundedRectVarying(kx, 0f, bkW, bkH, 0f, 0f, r, r);
 
             if (pressed)
             {
-                nvgFillColor(vg, new NVGcolor { r = 0.15f, g = 0.50f, b = 0.80f, a = 1f });
+                renderer.SetFillColor(new UIColor(0.15f, 0.50f, 0.80f, 1f));
             }
             else
             {
-                var paint = nvgLinearGradient(vg, kx, 0f, kx, bkH,
-                    new NVGcolor { r = 0.20f, g = 0.20f, b = 0.24f, a = 1f },
-                    new NVGcolor { r = 0.06f, g = 0.06f, b = 0.08f, a = 1f });
-                nvgFillPaint(vg, paint);
+                renderer.SetFillPaint(renderer.LinearGradient(kx, 0f, kx, bkH,
+                    new UIColor(0.20f, 0.20f, 0.24f, 1f),
+                    new UIColor(0.06f, 0.06f, 0.08f, 1f)));
             }
-            nvgFill(vg);
+            renderer.Fill();
 
             // Sheen highlight on top edge
             if (!pressed)
             {
-                nvgBeginPath(vg);
-                nvgRoundedRect(vg, kx + bkW * 0.15f, 2f, bkW * 0.70f, bkH * 0.18f, r * 0.5f);
-                nvgFillColor(vg, new NVGcolor { r = 1f, g = 1f, b = 1f, a = 0.10f });
-                nvgFill(vg);
+                renderer.BeginPath();
+                renderer.AddRoundedRect(kx + bkW * 0.15f, 2f, bkW * 0.70f, bkH * 0.18f, r * 0.5f);
+                renderer.SetFillColor(new UIColor(1f, 1f, 1f, 0.10f));
+                renderer.Fill();
             }
         }
     }

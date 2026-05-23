@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.CompilerServices;
 using static Sokol.NanoVG;
 
 namespace Sokol.GUI;
@@ -157,11 +158,36 @@ public sealed class Renderer
     }
 
     // -------------------------------------------------------------------------
+    // Low-level path API
+    // -------------------------------------------------------------------------
+
+    public void BeginPath()  => nvgBeginPath(_vg);
+    public void MoveTo(float x, float y)  => nvgMoveTo(_vg, x, y);
+    public void LineTo(float x, float y)  => nvgLineTo(_vg, x, y);
+    public void ArcTo(float x1, float y1, float x2, float y2, float radius)
+        => nvgArcTo(_vg, x1, y1, x2, y2, radius);
+    public void ClosePath()  => nvgClosePath(_vg);
+    public void AddRect(float x, float y, float w, float h)  => nvgRect(_vg, x, y, w, h);
+    public void AddRect(Rect r)  => nvgRect(_vg, r.X, r.Y, r.Width, r.Height);
+    public void AddRoundedRect(float x, float y, float w, float h, float cr)
+        => nvgRoundedRect(_vg, x, y, w, h, cr);
+    public void AddRoundedRectVarying(float x, float y, float w, float h,
+        float tlr, float trr, float brr, float blr)
+        => nvgRoundedRectVarying(_vg, x, y, w, h, tlr, trr, brr, blr);
+    public void AddCircle(float cx, float cy, float radius)  => nvgCircle(_vg, cx, cy, radius);
+    public void Fill()   => nvgFill(_vg);
+    public void Stroke() => nvgStroke(_vg);
+    public void SetFillPaint(NVGpaint paint) => nvgFillPaint(_vg, paint);
+
+    // -------------------------------------------------------------------------
     // Gradients
     // -------------------------------------------------------------------------
 
     public NVGpaint LinearGradient(Vector2 start, Vector2 end, UIColor inner, UIColor outer) =>
         nvgLinearGradient(_vg, start.X, start.Y, end.X, end.Y, inner.ToNVGcolor(), outer.ToNVGcolor());
+
+    public NVGpaint LinearGradient(float x0, float y0, float x1, float y1, UIColor inner, UIColor outer) =>
+        nvgLinearGradient(_vg, x0, y0, x1, y1, inner.ToNVGcolor(), outer.ToNVGcolor());
 
     public NVGpaint RadialGradient(Vector2 center, float innerR, float outerR, UIColor inner, UIColor outer) =>
         nvgRadialGradient(_vg, center.X, center.Y, innerR, outerR, inner.ToNVGcolor(), outer.ToNVGcolor());
@@ -211,6 +237,17 @@ public sealed class Renderer
     // Images
     // -------------------------------------------------------------------------
 
+    /// <summary>Draw a crosshair (two perpendicular lines) centered at (cx, cy) with the given radius.</summary>
+    public void DrawCrossHair(float cx, float cy, float radius, float strokeWidth, UIColor color)
+    {
+        SetStrokeColor(color);
+        SetStrokeWidth(strokeWidth);
+        nvgBeginPath(_vg);
+        nvgMoveTo(_vg, cx, cy - radius); nvgLineTo(_vg, cx, cy + radius);
+        nvgMoveTo(_vg, cx - radius, cy); nvgLineTo(_vg, cx + radius, cy);
+        nvgStroke(_vg);
+    }
+
     public void DrawImage(UIImage image, Rect dest, float alpha = 1f) =>
         DrawImage(image.Id, dest, alpha);
 
@@ -222,6 +259,14 @@ public sealed class Renderer
         nvgFillPaint(_vg, paint);
         nvgFill(_vg);
     }
+
+    /// <summary>Create a mutable (stream-update) image. Pass the handle to UpdateImage each frame.</summary>
+    public int CreateImageRGBA(int w, int h, int flags)
+        => nvgCreateImageRGBA(_vg, w, h, flags, in Unsafe.NullRef<byte>());
+
+    /// <summary>Upload new pixel data to a mutable image created with CreateImageRGBA.</summary>
+    public void UpdateImage(int imageId, in byte pixels)
+        => nvgUpdateImage(_vg, imageId, in pixels);
 
     // -------------------------------------------------------------------------
     // Text
@@ -366,6 +411,14 @@ public sealed class Renderer
     }
 
     /// <summary>Fill a rounded rect with only the top two corners rounded.</summary>
+    public void FillRectWithPaint(Rect r, NVGpaint paint)
+    {
+        nvgBeginPath(_vg);
+        nvgRect(_vg, r.X, r.Y, r.Width, r.Height);
+        nvgFillPaint(_vg, paint);
+        nvgFill(_vg);
+    }
+
     public void FillRoundedRectTop(Rect r, float cr, UIColor c)
     {
         SetFillColor(c);
