@@ -55,3 +55,6 @@
 	path = ext/TinySoundFont
 	url = https://github.com/elix22/TinySoundFont.git
 	branch = sokol-dev
+[submodule "ext/ImGuizmo"]
+	path = ext/ImGuizmo
+	url = https://github.com/elix22/ImGuizmo.git
