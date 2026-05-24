@@ -148,7 +148,7 @@ namespace GameEditor.Framework.Renderer
                 if (mesh.NumElements == 0 || mesh.VertexBuffer.id == 0 || mesh.IndexBuffer.id == 0)
                     continue;
 
-                Matrix4x4 model = transform.LocalMatrix;
+                Matrix4x4 model = Transform.GetWorldMatrix(world, transform);
                 Matrix4x4 mvp = model * viewProj;
                 var vsParams = new phong_vs_params_t { mvp = mvp, model = model };
                 sg_apply_uniforms(UB_phong_vs_params, SG_RANGE(ref vsParams));

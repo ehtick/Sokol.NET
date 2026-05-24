@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Numerics;
 using Frent;
+using GameEditor.Framework.ECS;
 
 namespace GameEditor.Framework.ECS.Components
 {
@@ -26,6 +27,38 @@ namespace GameEditor.Framework.ECS.Components
                 EulerAngles.X * MathF.PI / 180f,
                 EulerAngles.Z * MathF.PI / 180f) *
             Matrix4x4.CreateTranslation(Position);
+
+        // Walks the parent chain to compute the world-space matrix.
+        public static Matrix4x4 GetWorldMatrix(ECSWorld world, in Transform transform, int depth = 0)
+        {
+            Matrix4x4 local = transform.LocalMatrix;
+            if (!transform.Parent.HasValue || depth > 32) return local;
+            Entity parent = transform.Parent.Value;
+            if (!parent.IsAlive || !world.TryGetComponent<Transform>(parent, out var parentTransform))
+                return local;
+            return local * GetWorldMatrix(world, parentTransform, depth + 1);
+        }
+
+        // Converts a quaternion to Euler angles (degrees) matching CreateFromYawPitchRoll(Y,X,Z).
+        public static Vector3 QuaternionToEuler(Quaternion q)
+        {
+            // Extract rotation matrix entries for M = Ry * Rx * Rz (row-vector convention)
+            Matrix4x4 m = Matrix4x4.CreateFromQuaternion(q);
+            float pitch = MathF.Asin(Math.Clamp(-m.M32, -1f, 1f));
+            float yaw, roll;
+            if (MathF.Abs(m.M32) < 0.9999f)
+            {
+                yaw  = MathF.Atan2(m.M31, m.M33);
+                roll = MathF.Atan2(m.M12, m.M22);
+            }
+            else
+            {
+                yaw  = MathF.Atan2(-m.M13, m.M11);
+                roll = 0f;
+            }
+            const float Rad2Deg = 180f / MathF.PI;
+            return new Vector3(pitch * Rad2Deg, yaw * Rad2Deg, roll * Rad2Deg);
+        }
 
         public Vector3 Forward
         {
