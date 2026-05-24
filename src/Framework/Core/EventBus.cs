@@ -1,4 +1,5 @@
 using System;
+using Frent;
 
 namespace GameEditor.Framework.Core
 {
@@ -6,20 +7,20 @@ namespace GameEditor.Framework.Core
 
     public static class EventBus
     {
-        public static event Action<int>? EntitySelected;
-        public static event Action<int>? EntityCreated;
-        public static event Action<int>? EntityDestroyed;
-        public static event Action<int, string>? ComponentChanged;
+        public static event Action<Entity>? EntitySelected;
+        public static event Action<Entity>? EntityCreated;
+        public static event Action<Entity>? EntityDestroyed;
+        public static event Action<Entity, string>? ComponentChanged;
         public static event Action<PlayModeState>? PlayModeChanged;
         public static event Action? SceneLoaded;
         public static event Action? SceneUnloaded;
 
-        public static void RaiseEntitySelected(int id)             => EntitySelected?.Invoke(id);
-        public static void RaiseEntityCreated(int id)              => EntityCreated?.Invoke(id);
-        public static void RaiseEntityDestroyed(int id)            => EntityDestroyed?.Invoke(id);
-        public static void RaiseComponentChanged(int id, string c) => ComponentChanged?.Invoke(id, c);
-        public static void RaisePlayModeChanged(PlayModeState s)   => PlayModeChanged?.Invoke(s);
-        public static void RaiseSceneLoaded()                      => SceneLoaded?.Invoke();
-        public static void RaiseSceneUnloaded()                    => SceneUnloaded?.Invoke();
+        public static void RaiseEntitySelected(Entity e)             => EntitySelected?.Invoke(e);
+        public static void RaiseEntityCreated(Entity e)              => EntityCreated?.Invoke(e);
+        public static void RaiseEntityDestroyed(Entity e)            => EntityDestroyed?.Invoke(e);
+        public static void RaiseComponentChanged(Entity e, string c) => ComponentChanged?.Invoke(e, c);
+        public static void RaisePlayModeChanged(PlayModeState s)     => PlayModeChanged?.Invoke(s);
+        public static void RaiseSceneLoaded()                        => SceneLoaded?.Invoke();
+        public static void RaiseSceneUnloaded()                      => SceneUnloaded?.Invoke();
     }
 }

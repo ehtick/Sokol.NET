@@ -2,6 +2,7 @@
 using System.Globalization;
 using System.Numerics;
 using System.Reflection;
+using Frent;
 using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
 using static Sokol.SLog;
@@ -18,7 +19,7 @@ namespace GameEditor.Framework.Scripting
     public abstract class GameBehaviour
     {
         /// <summary>The ECS entity this behaviour is attached to.</summary>
-        public int EntityId { get; internal set; }
+        public Entity EntityId { get; internal set; }
 
         // ── ECS convenience ─────────────────────────────────────────────────
 

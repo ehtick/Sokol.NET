@@ -58,3 +58,6 @@
 [submodule "ext/ImGuizmo"]
 	path = ext/ImGuizmo
 	url = https://github.com/elix22/ImGuizmo.git
+[submodule "ext/Frent"]
+	path = ext/Frent
+	url = https://github.com/elix22/Frent.git

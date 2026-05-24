@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Numerics;
+using Frent;
 
 namespace GameEditor.Framework.ECS.Components
 {
@@ -8,7 +9,7 @@ namespace GameEditor.Framework.ECS.Components
         public Vector3 Position;
         public Vector3 EulerAngles;
         public Vector3 Scale;
-        public int? Parent;
+        public Entity? Parent;
 
         public static Transform Default => new Transform
         {

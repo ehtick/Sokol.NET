@@ -1,3 +1,4 @@
+using Frent;
 using GameEditor.Framework.Core;
 using GameEditor.Framework.ECS;
 
@@ -20,13 +21,13 @@ namespace GameEditor.Framework.Scene
             IsDirty = false;
         }
 
-        public int CreateEntity(string name = "Entity")
+        public Entity CreateEntity(string name = "Entity")
         {
             IsDirty = true;
             return ECSWorld.Instance.CreateEntity(name);
         }
 
-        public void DestroyEntity(int id)
+        public void DestroyEntity(Entity id)
         {
             IsDirty = true;
             ECSWorld.Instance.DestroyEntity(id);

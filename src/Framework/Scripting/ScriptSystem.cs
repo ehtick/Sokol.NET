@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Frent;
 using GameEditor.Framework.Core;
 using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
@@ -28,7 +29,7 @@ namespace GameEditor.Framework.Scripting
         private static readonly Dictionary<string, Func<GameBehaviour>> _factories = new();
 
         // Active behaviour instances for the running scene
-        private static readonly List<(int EntityId, GameBehaviour Behaviour)> _running = new();
+        private static readonly List<(Entity EntityId, GameBehaviour Behaviour)> _running = new();
 
         private static bool _started = false;
 
@@ -67,7 +68,7 @@ namespace GameEditor.Framework.Scripting
         public static void PopulateFromScene(ECSWorld world)
         {
             _running.Clear();
-            foreach (int id in world.Entities)
+            foreach (Entity id in world.Entities)
             {
                 if (world.TryGetComponent<ScriptComponent>(id, out var sc))
                     TryCreateBehaviour(id, sc);
@@ -82,7 +83,7 @@ namespace GameEditor.Framework.Scripting
             Logger.Info($"[ScriptSystem] Populated {_running.Count} behaviour(s) from scene.");
         }
 
-        private static void TryCreateBehaviour(int id, ScriptComponent sc)
+        private static void TryCreateBehaviour(Entity id, ScriptComponent sc)
         {
             if (string.IsNullOrEmpty(sc.TypeName)) return;
 
@@ -107,7 +108,7 @@ namespace GameEditor.Framework.Scripting
         }
 
         /// <summary>Manually register a pre-created behaviour for an entity.</summary>
-        public static void Register(int entityId, GameBehaviour behaviour)
+        public static void Register(Entity entityId, GameBehaviour behaviour)
         {
             behaviour.EntityId = entityId;
             _running.Add((entityId, behaviour));
@@ -156,7 +157,7 @@ namespace GameEditor.Framework.Scripting
         /// Updates a property on a running script instance.
         /// Used for live editing during play mode.
         /// </summary>
-        public static void UpdateScriptProperty(int entityId, string typeName, string propertyName, string propertyValue)
+        public static void UpdateScriptProperty(Entity entityId, string typeName, string propertyName, string propertyValue)
         {
             // Find the running behaviour for this entity and type
             // Note: In editor mode, scripts are wrapped in DynamicBehaviourProxy, so we need to match against the wrapped type

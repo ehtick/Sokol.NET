@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Numerics;
 using System.Text;
 using System.Text.Json;
+using Frent;
 using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
 
@@ -22,12 +23,12 @@ namespace GameEditor.Framework.Scene
             sb.Append("{\"name\":\"").Append(Esc(scene.Name)).Append("\",\"entities\":[");
 
             bool firstEntity = true;
-            foreach (int id in world.Entities)
+            foreach (Entity id in world.Entities)
             {
                 if (!firstEntity) sb.Append(',');
                 firstEntity = false;
 
-                sb.Append("{\"id\":").Append(id).Append(",\"c\":{");
+                sb.Append("{\"id\":").Append(id.GetHashCode()).Append(",\"c\":{");
                 bool fc = true;
 
                 if (world.TryGetComponent<NameTag>(id, out var nt))
@@ -48,7 +49,7 @@ namespace GameEditor.Framework.Scene
                     sb.Append("\"Transform\":{\"P\":").Append(V3(tr.Position))
                       .Append(",\"E\":").Append(V3(tr.EulerAngles))
                       .Append(",\"S\":").Append(V3(tr.Scale));
-                    if (tr.Parent.HasValue) sb.Append(",\"Par\":").Append(tr.Parent.Value);
+                    if (tr.Parent.HasValue) sb.Append(",\"Par\":").Append(tr.Parent.Value.GetHashCode());
                     sb.Append('}');
                 }
 
@@ -159,14 +160,16 @@ namespace GameEditor.Framework.Scene
                 return;
 
             var world = ECSWorld.Instance;
-            // Map from saved-ID → new runtime ID (for parent fixup)
-            var idMap = new Dictionary<int, int>();
+            // Map from saved-ID (int) → new runtime Entity (for parent fixup)
+            var idMap = new Dictionary<int, Entity>();
+            // Entities that have a saved parent int needing fixup
+            var parentFixups = new Dictionary<Entity, int>();
 
             // First pass — create entities and load all components
             foreach (var eEl in entitiesEl.EnumerateArray())
             {
                 int savedId = eEl.TryGetProperty("id", out var idEl) ? idEl.GetInt32() : 0;
-                int newId = world.CreateEntity(); // auto-adds NameTag/ActiveFlag/Transform
+                Entity newId = world.CreateEntity(); // auto-adds NameTag/ActiveFlag/Transform
                 idMap[savedId] = newId;
 
                 if (!eEl.TryGetProperty("c", out var c)) continue;
@@ -179,13 +182,14 @@ namespace GameEditor.Framework.Scene
 
                 if (c.TryGetProperty("Transform", out var tEl))
                 {
-                    int? savedParent = tEl.TryGetProperty("Par", out var pEl) ? pEl.GetInt32() : null;
+                    if (tEl.TryGetProperty("Par", out var pEl))
+                        parentFixups[newId] = pEl.GetInt32();
                     world.AddComponent(newId, new Transform
                     {
                         Position    = RV3(tEl, "P"),
                         EulerAngles = RV3(tEl, "E"),
                         Scale       = RV3(tEl, "S"),
-                        Parent      = savedParent  // fixed up in second pass
+                        Parent      = null  // fixed up in second pass
                     });
                 }
 
@@ -263,14 +267,14 @@ namespace GameEditor.Framework.Scene
                 }
             }
 
-            // Second pass — remap parent IDs
-            foreach (int newId in world.Entities)
+            // Second pass — remap parent IDs from saved ints to live Entities
+            foreach (var (entity, savedParentId) in parentFixups)
             {
-                if (!world.TryGetComponent<Transform>(newId, out var tr) || !tr.Parent.HasValue) continue;
-                if (idMap.TryGetValue(tr.Parent.Value, out int remapped) && remapped != tr.Parent.Value)
+                if (!idMap.TryGetValue(savedParentId, out Entity parentEntity)) continue;
+                if (world.TryGetComponent<Transform>(entity, out var tr))
                 {
-                    tr.Parent = remapped;
-                    world.AddComponent(newId, tr);
+                    tr.Parent = parentEntity;
+                    world.AddComponent(entity, tr);
                 }
             }
         }

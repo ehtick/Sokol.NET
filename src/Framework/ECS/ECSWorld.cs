@@ -1,112 +1,92 @@
-using System;
 using System.Collections.Generic;
-using System.Runtime.InteropServices;
+using Frent;
+using Frent.Systems;
 using GameEditor.Framework.Core;
 using GameEditor.Framework.ECS.Components;
 
 namespace GameEditor.Framework.ECS
 {
-    public sealed class ECSWorld
+    public sealed class ECSWorld : IDisposable
     {
-        private int _nextId = 1;
-        private readonly List<int> _entities = new();
-        private readonly Dictionary<Type, object> _stores = new();
+        private World _world;
+        private readonly List<Entity> _entities = new();
 
         public static ECSWorld Instance { get; private set; } = new ECSWorld();
 
-        /// <summary>
-        /// Replaces the global singleton. Called by the GameEditor's GameAssemblyRunner
-        /// to ensure the dynamically-loaded game assembly shares the editor's ECS world
-        /// instead of its own statically-initialised copy.
-        /// </summary>
-        public static void SetInstance(ECSWorld world)
+        private ECSWorld() { _world = new World(); }
+
+        public Entity CreateEntity(string name = "Entity")
         {
-            Instance = world;
+            var e = _world.Create(
+                new NameTag { Name = name },
+                new ActiveFlag { Active = true },
+                Transform.Default);
+            _entities.Add(e);
+            EventBus.RaiseEntityCreated(e);
+            return e;
         }
 
-        private ECSWorld() { }
-
-        public int CreateEntity(string name = "Entity")
+        public void DestroyEntity(Entity e)
         {
-            int id = _nextId++;
-            _entities.Add(id);
-            AddComponent(id, new NameTag { Name = name });
-            AddComponent(id, new ActiveFlag { Active = true });
-            AddComponent(id, Transform.Default);
-            EventBus.RaiseEntityCreated(id);
-            return id;
+            _entities.Remove(e);
+            EventBus.RaiseEntityDestroyed(e);
+            if (e.IsAlive) e.Delete();
         }
 
-        public void DestroyEntity(int id)
+        public IReadOnlyList<Entity> Entities => _entities;
+
+        public void AddComponent<T>(Entity e, T component) where T : struct
         {
-            _entities.Remove(id);
-            foreach (var store in _stores.Values)
+            if (e.Has<T>())
+                e.Get<T>() = component;
+            else
+                e.Add(component);
+        }
+
+        public bool HasComponent<T>(Entity e) where T : struct
+            => e.Has<T>();
+
+        public ref T GetComponent<T>(Entity e) where T : struct
+            => ref e.Get<T>();
+
+        public bool TryGetComponent<T>(Entity e, out T component) where T : struct
+        {
+            if (e.TryGet<T>(out var r))
             {
-                if (store is Dictionary<int, object> dict)
-                    dict.Remove(id);
+                component = r.Value;
+                return true;
             }
-            EventBus.RaiseEntityDestroyed(id);
+            component = default;
+            return false;
         }
 
-        public IReadOnlyList<int> Entities => _entities;
-
-        public void AddComponent<T>(int id, T component) where T : struct
+        public void RemoveComponent<T>(Entity e) where T : struct
         {
-            GetOrCreateStore<T>()[id] = component;
+            if (e.Has<T>()) e.Remove<T>();
         }
 
-        public bool HasComponent<T>(int id) where T : struct
+        public IEnumerable<T> GetAllComponents<T>() where T : struct
         {
-            return GetOrCreateStore<T>().ContainsKey(id);
-        }
-
-        public ref T GetComponent<T>(int id) where T : struct
-        {
-            var store = GetOrCreateStore<T>();
-            ref var val = ref CollectionsMarshal.GetValueRefOrNullRef(store, id);
-            if (System.Runtime.CompilerServices.Unsafe.IsNullRef(ref val))
-                throw new KeyNotFoundException($"Entity {id} has no component {typeof(T).Name}");
-            return ref val;
-        }
-
-        public bool TryGetComponent<T>(int id, out T component) where T : struct
-        {
-            var store = GetOrCreateStore<T>();
-            ref var val = ref CollectionsMarshal.GetValueRefOrNullRef(store, id);
-            if (System.Runtime.CompilerServices.Unsafe.IsNullRef(ref val))
-            {
-                component = default;
-                return false;
-            }
-            component = val;
-            return true;
-        }
-
-        public void RemoveComponent<T>(int id) where T : struct
-        {
-            GetOrCreateStore<T>().Remove(id);
-        }
-
-        public Dictionary<int, T> GetAllComponents<T>() where T : struct
-            => GetOrCreateStore<T>();
-
-        private Dictionary<int, T> GetOrCreateStore<T>() where T : struct
-        {
-            if (!_stores.TryGetValue(typeof(T), out var raw))
-            {
-                raw = new Dictionary<int, T>();
-                _stores[typeof(T)] = raw;
-            }
-            return (Dictionary<int, T>)raw;
+            var result = new List<T>();
+            foreach (var chunk in _world.Query<T>().EnumerateChunks<T>())
+                foreach (ref var c in chunk.Span)
+                    result.Add(c);
+            return result;
         }
 
         public void Clear()
         {
-            var ids = new List<int>(_entities);
-            foreach (var id in ids)
-                DestroyEntity(id);
-            _stores.Clear();
-            _nextId = 1;
+            var copy = new List<Entity>(_entities);
+            foreach (var e in copy)
+            {
+                EventBus.RaiseEntityDestroyed(e);
+                if (e.IsAlive) e.Delete();
+            }
+            _entities.Clear();
+            _world.Dispose();
+            _world = new World();
         }
+
+        public void Dispose() => _world.Dispose();
     }
 }

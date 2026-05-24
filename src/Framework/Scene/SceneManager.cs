@@ -1,5 +1,6 @@
 using System.IO;
 using System.Numerics;
+using Frent;
 using GameEditor.Framework.Core;
 using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
@@ -162,7 +163,7 @@ namespace GameEditor.Framework.Scene
             if (width <= 0 || height <= 0) return false;
 
             var world = ECSWorld.Instance;
-            foreach (int id in world.Entities)
+            foreach (Entity id in world.Entities)
             {
                 if (!world.TryGetComponent<CameraComponent>(id, out var cam) || !cam.IsMain) continue;
                 if (cam.NearZ <= 0f || cam.FarZ <= cam.NearZ) continue; // skip degenerate projection

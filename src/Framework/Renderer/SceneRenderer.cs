@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Numerics;
+using Frent;
 using static Sokol.SG;
 using static Sokol.SG.sg_compare_func;
 using static Sokol.SG.sg_pixel_format;
@@ -88,7 +89,7 @@ namespace GameEditor.Framework.Renderer
             var fsParams = new phong_fs_params_t();
             int lightCount = 0;
 
-            foreach (int lid in world.Entities)
+            foreach (Entity lid in world.Entities)
             {
                 if (lightCount >= MaxLights) break;
                 if (!world.TryGetComponent<ActiveFlag>(lid, out var la) || !la.Active) continue;
@@ -130,7 +131,7 @@ namespace GameEditor.Framework.Renderer
             fsParams.ambient_and_count = new Vector4(AmbientColor, (float)lightCount);
             sg_apply_uniforms(UB_phong_fs_params, SG_RANGE(ref fsParams));
 
-            foreach (int id in world.Entities)
+            foreach (Entity id in world.Entities)
             {
                 if (!world.TryGetComponent<ActiveFlag>(id, out var active) || !active.Active)
                     continue;
@@ -168,7 +169,7 @@ namespace GameEditor.Framework.Renderer
                 return;
 
             var liveKeys = new HashSet<string>();
-            foreach (int id in world.Entities)
+            foreach (Entity id in world.Entities)
             {
                 if (!world.TryGetComponent<MeshRenderer>(id, out var mr))
                     continue;
