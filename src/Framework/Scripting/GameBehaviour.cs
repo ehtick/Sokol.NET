@@ -69,35 +69,114 @@ namespace GameEditor.Framework.Scripting
         }
 
 
-        private static object? ParseFieldValue(Type t, string s)
+        public static object? ParseFieldValue(Type t, string s)
         {
+            // Scalar numerics
             if (t == typeof(float))
-                return float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out float f) ? f : (object?)null;
+                return float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out float f) ? f : null;
+            if (t == typeof(double))
+                return double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) ? d : null;
             if (t == typeof(int))
-                return int.TryParse(s, out int i) ? i : (object?)null;
+                return int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out int i) ? i : null;
+            if (t == typeof(uint))
+                return uint.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out uint ui) ? ui : null;
+            if (t == typeof(long))
+                return long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out long l) ? l : null;
+            if (t == typeof(ulong))
+                return ulong.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out ulong ul) ? ul : null;
+            if (t == typeof(short))
+                return short.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out short sh) ? sh : null;
+            if (t == typeof(byte))
+                return byte.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out byte b) ? b : null;
+
+            // Other primitives
             if (t == typeof(bool))
                 return s is "true" or "True" or "1";
             if (t == typeof(string))
                 return s;
-            if (t == typeof(double))
-                return double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) ? d : (object?)null;
-            if (t == typeof(Vector3))
-            {
-                var p = s.Trim('[', ']').Split(',');
-                if (p.Length == 3 &&
-                    float.TryParse(p[0], NumberStyles.Float, CultureInfo.InvariantCulture, out float x) &&
-                    float.TryParse(p[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float y) &&
-                    float.TryParse(p[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float z))
-                    return new Vector3(x, y, z);
-            }
+            if (t == typeof(char))
+                return s.Length > 0 ? s[0] : null;
+
+            // Numeric vectors (format: [x, y, ...])
             if (t == typeof(Vector2))
             {
                 var p = s.Trim('[', ']').Split(',');
                 if (p.Length == 2 &&
-                    float.TryParse(p[0], NumberStyles.Float, CultureInfo.InvariantCulture, out float x) &&
-                    float.TryParse(p[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float y))
+                    float.TryParse(p[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float x) &&
+                    float.TryParse(p[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float y))
                     return new Vector2(x, y);
             }
+            if (t == typeof(Vector3))
+            {
+                var p = s.Trim('[', ']').Split(',');
+                if (p.Length == 3 &&
+                    float.TryParse(p[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float x) &&
+                    float.TryParse(p[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float y) &&
+                    float.TryParse(p[2].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float z))
+                    return new Vector3(x, y, z);
+            }
+            if (t == typeof(Vector4))
+            {
+                var p = s.Trim('[', ']').Split(',');
+                if (p.Length == 4 &&
+                    float.TryParse(p[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float x) &&
+                    float.TryParse(p[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float y) &&
+                    float.TryParse(p[2].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float z) &&
+                    float.TryParse(p[3].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float w))
+                    return new Vector4(x, y, z, w);
+            }
+            if (t == typeof(Quaternion))
+            {
+                var p = s.Trim('[', ']').Split(',');
+                if (p.Length == 4 &&
+                    float.TryParse(p[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float x) &&
+                    float.TryParse(p[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float y) &&
+                    float.TryParse(p[2].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float z) &&
+                    float.TryParse(p[3].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float w))
+                    return new Quaternion(x, y, z, w);
+            }
+
+            // Matrix types — row-major, elements listed left-to-right, top-to-bottom
+            if (t == typeof(Matrix3x2))
+            {
+                var p = s.Trim('[', ']').Split(',');
+                if (p.Length == 6 &&
+                    float.TryParse(p[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m11) &&
+                    float.TryParse(p[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m12) &&
+                    float.TryParse(p[2].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m21) &&
+                    float.TryParse(p[3].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m22) &&
+                    float.TryParse(p[4].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m31) &&
+                    float.TryParse(p[5].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m32))
+                    return new Matrix3x2(m11, m12, m21, m22, m31, m32);
+            }
+            if (t == typeof(Matrix4x4))
+            {
+                var p = s.Trim('[', ']').Split(',');
+                if (p.Length == 16 &&
+                    float.TryParse(p[ 0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m11) &&
+                    float.TryParse(p[ 1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m12) &&
+                    float.TryParse(p[ 2].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m13) &&
+                    float.TryParse(p[ 3].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m14) &&
+                    float.TryParse(p[ 4].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m21) &&
+                    float.TryParse(p[ 5].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m22) &&
+                    float.TryParse(p[ 6].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m23) &&
+                    float.TryParse(p[ 7].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m24) &&
+                    float.TryParse(p[ 8].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m31) &&
+                    float.TryParse(p[ 9].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m32) &&
+                    float.TryParse(p[10].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m33) &&
+                    float.TryParse(p[11].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m34) &&
+                    float.TryParse(p[12].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m41) &&
+                    float.TryParse(p[13].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m42) &&
+                    float.TryParse(p[14].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m43) &&
+                    float.TryParse(p[15].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float m44))
+                    return new Matrix4x4(m11, m12, m13, m14, m21, m22, m23, m24,
+                                        m31, m32, m33, m34, m41, m42, m43, m44);
+            }
+
+            // Enum
+            if (t.IsEnum)
+                return Enum.TryParse(t, s, ignoreCase: true, out object? ev) ? ev : null;
+
             return null;
         }
         
