@@ -101,6 +101,9 @@ namespace SokolApplicationBuilder
         [Option("destination", Required = false, HelpText = "Destination path for create project task")]
         public string Destination { get; set; } = "";
 
+        [Option("template", Required = false, HelpText = "Override template path for create project task")]
+        public string TemplatePath { get; set; } = "";
+
         // Image processing options
         [Option("source", Required = false, HelpText = "Source image path for image processing task")]
         public string SourceImage { get; set; } = "";

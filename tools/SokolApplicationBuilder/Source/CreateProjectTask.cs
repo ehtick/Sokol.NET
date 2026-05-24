@@ -97,7 +97,9 @@ namespace SokolApplicationBuilder
                     return false;
                 }
 
-                string templatePath = Path.Combine(sokolNetHome, "templates", "template_app");
+                string templatePath = !string.IsNullOrWhiteSpace(options.TemplatePath)
+                    ? Path.GetFullPath(options.TemplatePath)
+                    : Path.Combine(sokolNetHome, "templates", "template_app");
                 string targetPath = Path.Combine(destination, projectName);
 
                 // Validate template exists
