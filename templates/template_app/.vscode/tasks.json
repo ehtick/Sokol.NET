@@ -63,13 +63,13 @@
 			"label": "macOS: Build App Bundle",
 			"type": "shell",
 			"windows": {
-				"command": "$sokolHome = Get-Content $env:USERPROFILE\\.sokolnet_config\\sokolnet_home; dotnet run --project \"$sokolHome\\tools\\SokolApplicationBuilder\\SokolApplicationBuilder.csproj\" -- --task build --type release --architecture desktop --rid ${input:macOSArchitecture} --path ${input:examplePath}"
+				"command": "$sokolHome = Get-Content $env:USERPROFILE\\.sokolnet_config\\sokolnet_home; dotnet run --project \"$sokolHome\\tools\\SokolApplicationBuilder\\SokolApplicationBuilder.csproj\" -- --task build --type release --architecture desktop --rid ${input:macOSArchitecture} --path \"${workspaceFolder}\""
 			},
 			"linux": {
-				"command": "dotnet run --project \"$(cat ~/.sokolnet_config/sokolnet_home)/tools/SokolApplicationBuilder\" -- --task build --type release --architecture desktop --rid ${input:macOSArchitecture} --path ${input:examplePath}"
+				"command": "dotnet run --project \"$(cat ~/.sokolnet_config/sokolnet_home)/tools/SokolApplicationBuilder\" -- --task build --type release --architecture desktop --rid ${input:macOSArchitecture} --path \"${workspaceFolder}\""
 			},
 			"osx": {
-				"command": "dotnet run --project \"$(cat ~/.sokolnet_config/sokolnet_home)/tools/SokolApplicationBuilder\" -- --task build --type release --architecture desktop --rid ${input:macOSArchitecture} --path ${input:examplePath}"
+				"command": "dotnet run --project \"$(cat ~/.sokolnet_config/sokolnet_home)/tools/SokolApplicationBuilder\" -- --task build --type release --architecture desktop --rid ${input:macOSArchitecture} --path \"${workspaceFolder}\""
 			},
 			"group": "build"
 		},
