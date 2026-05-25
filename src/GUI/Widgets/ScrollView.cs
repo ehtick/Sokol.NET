@@ -76,8 +76,11 @@ public class ScrollView : Panel
 
         if (Content != null)
         {
-            // Content width should be at least the viewport width so children fill the visible area.
-            float cw = MathF.Max(ContentWidth, viewport.Width);
+            // When horizontal scroll is disabled, content must be exactly viewport width so
+            // Expand children distribute the actual available space, not their preferred size.
+            float cw = CanScrollHorizontal
+                ? MathF.Max(ContentWidth, viewport.Width)
+                : viewport.Width;
             Content.Bounds = new Rect(0, 0, cw, ContentHeight);
             Content.PerformLayout(renderer, force: true);
             renderer.Save();

@@ -53,6 +53,13 @@ public class VirtualList : ScrollableList
         ItemHeight = 28f;   // override base default of 24f
     }
 
+    /// <summary>Scrolls to the last item in the list.</summary>
+    public void ScrollToBottom()
+    {
+        float maxScroll = MathF.Max(0f, ItemCount * ItemHeight - Bounds.Height);
+        _scrollY = maxScroll;
+    }
+
     // ─── Pool ─────────────────────────────────────────────────────────────────
     private readonly Dictionary<int, Widget> _pool = new();
 

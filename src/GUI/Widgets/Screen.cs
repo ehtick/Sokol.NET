@@ -20,6 +20,21 @@ public sealed class Screen : Widget
     public FocusManager  Focus         { get; } = new();
     public InputRouter   Input         { get; private set; } = null!;
 
+    // ─── Frame overlays ──────────────────────────────────────────────────────
+    // Widgets registered here are drawn during Draw() at an explicit position,
+    // outside the Screen child hierarchy. Used to embed Sokol.GUI panels inside
+    // ImGui docked windows until Wave 8 (DockManager) replaces docking entirely.
+    private readonly System.Collections.Generic.List<(Widget Widget, Rect Bounds)> _frameOverlays = new();
+    // Persisted snapshot used for hit-testing between frames (events arrive before the next Draw).
+    private (Widget Widget, Rect Bounds)[] _hitTestOverlays = System.Array.Empty<(Widget, Rect)>();
+
+    public void AddFrameOverlay(Widget widget, Rect bounds)
+    {
+        // Set bounds with screen-space position so ScreenPosition (used by HitTestDeep) is correct.
+        widget.Bounds = new Rect(bounds.X, bounds.Y, bounds.Width, bounds.Height);
+        _frameOverlays.Add((widget, bounds));
+    }
+
     /// <summary>
     /// Lazily-constructed docking manager. The first access wires a root
     /// <see cref="DockSpace"/> and a <see cref="FloatingPanelHost"/> into the
@@ -224,6 +239,24 @@ public sealed class Screen : Widget
 
         Renderer.BeginFrame(width, height, dpiScale);
         DrawChildren(Renderer);
+
+        // Draw widgets registered via AddFrameOverlay (e.g. console/inspector inside ImGui dock).
+        foreach (var (w, r) in _frameOverlays)
+        {
+            // Include screen position in Bounds so ScreenPosition (used by HitTestDeep) is correct.
+            w.Bounds = new Rect(r.X, r.Y, r.Width, r.Height);
+            // force=true: re-layout every frame so dock resize is reflected immediately.
+            w.PerformLayout(Renderer, true);
+            Renderer.Save();
+            Renderer.Translate(r.X, r.Y);
+            Renderer.ClipRect(new Rect(0, 0, r.Width, r.Height));
+            w.Draw(Renderer);
+            Renderer.Restore();
+        }
+        // Snapshot overlays for hit-testing between frames before clearing.
+        _hitTestOverlays = _frameOverlays.ToArray();
+        _frameOverlays.Clear();
+
         // Draw any active popup on top of everything else.
         if (_activePopup != null)
         {
@@ -303,6 +336,7 @@ public sealed class Screen : Widget
 
     public override Widget? HitTestDeep(Vector2 screenPoint)
     {
+        // Popup has highest priority (may extend beyond widget bounds).
         if (_activePopup != null)
         {
             // Ask the popup to test the point using its own local coordinate space.
@@ -314,8 +348,18 @@ public sealed class Screen : Widget
             }
             // Mouse is outside the popup — do NOT dismiss here (dismissal
             // happens only on click via DismissActivePopupIfNeeded).
-            // Fall through to normal tree walk so other widgets can be hovered.
+            // Fall through so overlays and other widgets can be hovered.
         }
+
+        // Frame overlays draw on top of screen children — check them before normal tree walk.
+        // w.Bounds includes the screen-space position, so w.HitTestDeep uses correct coords.
+        for (int i = _hitTestOverlays.Length - 1; i >= 0; i--)
+        {
+            var (w, _) = _hitTestOverlays[i];
+            var hit = w.HitTestDeep(screenPoint);
+            if (hit != null) return hit;
+        }
+
         return base.HitTestDeep(screenPoint);
     }
 

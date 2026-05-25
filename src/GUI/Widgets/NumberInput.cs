@@ -23,6 +23,7 @@ public class NumberInput : TextBox
     public float Min           { get; set; } = float.NegativeInfinity;
     public float Max           { get; set; } = float.PositiveInfinity;
     public int   DecimalPlaces { get; set; } = 2;
+    public float Step          { get; set; } = 0.1f;
 
     public event Action<float>? ValueChanged;
     public event Action<float>? ValueCommitted; // fired on Enter / focus loss
@@ -85,9 +86,9 @@ public class NumberInput : TextBox
                 base.OnKeyDown(e);  // fires Submitted (→ overlay Hide) and desktop MoveFocusNext
                 return true;
             case KEY_UP:
-                Step(+1); return true;
+                StepBy(+1); return true;
             case KEY_DOWN:
-                Step(-1); return true;
+                StepBy(-1); return true;
             case KEY_ESCAPE:
                 Text = FormatValue(Value); Validate(); return true;
         }
@@ -136,10 +137,9 @@ public class NumberInput : TextBox
         }
     }
 
-    private void Step(float direction)
+    private void StepBy(float direction)
     {
-        float step = MathF.Pow(10f, -DecimalPlaces);
-        float next = Math.Clamp(Value + direction * step, Min, Max);
+        float next = Math.Clamp(Value + direction * Step, Min, Max);
         Text = FormatValue(next);
         Validate();
         ValueChanged?.Invoke(next);
