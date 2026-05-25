@@ -19,6 +19,8 @@ public class ComboBox : Widget
     private float _sbDragStartY;
     private float _sbDragStartScroll;
     private bool  _sbHovered;
+    private bool  _hasPopupAnchor;
+    private Vector2 _popupAnchorScreenPos;
 
     public IReadOnlyList<string> Items => _items;
 
@@ -183,15 +185,29 @@ public class ComboBox : Widget
         }
     }
 
+    private Vector2 PopupOffsetFromCurrentScreenPosition()
+    {
+        if (!_hasPopupAnchor) return Vector2.Zero;
+        var sp = ScreenPosition;
+        return new Vector2(_popupAnchorScreenPos.X - sp.X, _popupAnchorScreenPos.Y - sp.Y);
+    }
+
+    private Vector2 PopupLocalFromTargetLocal(Vector2 targetLocal)
+    {
+        var off = PopupOffsetFromCurrentScreenPosition();
+        return new Vector2(targetLocal.X - off.X, targetLocal.Y - off.Y);
+    }
+
     // When the dropdown is open it renders below Bounds (via Screen overlay) — extend HitTest.
     public override bool HitTest(Vector2 localPoint)
     {
         if (_open)
         {
+            var popupLocal = PopupLocalFromTargetLocal(localPoint);
             var (visibleH, _) = ComputeDropdownMetrics();
             float totalH = Bounds.Height + visibleH;
-            return localPoint.X >= 0 && localPoint.Y >= 0 &&
-                   localPoint.X < Bounds.Width && localPoint.Y < totalH;
+            return popupLocal.X >= 0 && popupLocal.Y >= 0 &&
+                   popupLocal.X < Bounds.Width && popupLocal.Y < totalH;
         }
         return base.HitTest(localPoint);
     }
@@ -201,7 +217,11 @@ public class ComboBox : Widget
     {
         var theme  = ThemeManager.Current;
         var bounds = new Rect(0, 0, Bounds.Width, Bounds.Height);
+        var off = PopupOffsetFromCurrentScreenPosition();
+        renderer.Save();
+        renderer.Translate(off.X, off.Y);
         DrawDropdown(renderer, theme, bounds);
+        renderer.Restore();
     }
 
     /// <summary>Called when a click outside dismisses the popup.</summary>
@@ -209,13 +229,14 @@ public class ComboBox : Widget
     {
         _open = false;
         _hoveredIndex = -1;
+        _hasPopupAnchor = false;
         Sokol.SLog.Info($"ComboBox: dismissed", "Sokol.GUI");
     }
 
     // ─── Input ───────────────────────────────────────────────────────────────
     public override bool OnMouseDown(MouseEvent e)
     {
-        var   local   = e.LocalPosition;
+        var   local   = _open ? PopupLocalFromTargetLocal(e.LocalPosition) : e.LocalPosition;
         float itemH   = ThemeManager.Current.InputHeight;
         float sbW     = ThemeManager.Current.ScrollBarWidth;
 
@@ -252,6 +273,8 @@ public class ComboBox : Widget
 
         if (e.Button == MouseButton.Left && Enabled)
         {
+            _popupAnchorScreenPos = new Vector2(e.Position.X - e.LocalPosition.X, e.Position.Y - e.LocalPosition.Y);
+            _hasPopupAnchor = true;
             _open         = true;
             _hoveredIndex = -1;
             _scrollOffset = 0f;     // reset scroll each time we open
@@ -273,7 +296,7 @@ public class ComboBox : Widget
     public override bool OnMouseMove(MouseEvent e)
     {
         if (!_open) return false;
-        var   local   = e.LocalPosition;
+        var   local   = PopupLocalFromTargetLocal(e.LocalPosition);
         float itemH   = ThemeManager.Current.InputHeight;
         float sbW     = ThemeManager.Current.ScrollBarWidth;
         var (visibleH, needsScroll) = ComputeDropdownMetrics();
