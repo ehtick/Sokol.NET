@@ -379,12 +379,15 @@ public class TreeView : Widget
                 Modifiers     = e.Modifiers,
                 Clicks        = isDoubleClick ? 2 : 1,
             };
-            _contentClickTarget = node.Content;
-            Screen.Instance?.Focus.SetFocus(node.Content);
-            node.Content.OnMouseDown(widgetEvent);
-            // Content widgets (e.g. inline rename TextBox) own this click.
-            // Do not run TreeView row selection logic afterward.
-            return true;
+            bool handledByContent = node.Content.OnMouseDown(widgetEvent);
+            if (handledByContent)
+            {
+                _contentClickTarget = node.Content;
+                Screen.Instance?.Focus.SetFocus(node.Content);
+                // Content widgets (e.g. inline rename TextBox) own this click.
+                // Do not run TreeView row selection logic afterward.
+                return true;
+            }
         }
 
         // ── Double-click on row → toggle expand ──
@@ -513,7 +516,7 @@ public class TreeView : Widget
         if (rowIdx >= 0 && rowIdx < _flatRows.Count)
         {
             var (node, rowY, depth) = _flatRows[rowIdx];
-            if (node.Content != null)
+            if (node.Content != null && node.Content.AcceptsFocus)
             {
                 bool rtl = ResolvedFlowDirection == FlowDirection.RightToLeft;
                 float sb = ThemeManager.Current.ScrollBarWidth;
