@@ -118,6 +118,18 @@ public sealed class Screen : Widget
         _activePopup = popup;
     }
 
+    /// <summary>
+    /// Close and dismiss the active popup, if any.
+    /// Returns true when a popup was closed.
+    /// </summary>
+    internal static bool CloseActivePopup()
+    {
+        if (_activePopup == null) return false;
+        _activePopup.OnPopupDismiss();
+        _activePopup = null;
+        return true;
+    }
+
     // ─── Init / Shutdown ─────────────────────────────────────────────────────
     public static Screen Initialize(IntPtr vg)
     {
@@ -329,8 +341,7 @@ public sealed class Screen : Widget
     {
         if (_activePopup != null && clickTarget != _activePopup)
         {
-            _activePopup.OnPopupDismiss();
-            _activePopup = null;
+            CloseActivePopup();
         }
     }
 

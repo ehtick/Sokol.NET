@@ -35,6 +35,30 @@ namespace GameEditor.Framework.ECS
 
         public IReadOnlyList<Entity> Entities => _entities;
 
+        /// <summary>
+        /// Replaces the internal entity ordering with <paramref name="orderedEntities"/>.
+        /// Entities not present in the input are appended in their existing relative order.
+        /// </summary>
+        public void SetEntityOrder(IEnumerable<Entity> orderedEntities)
+        {
+            var seen = new HashSet<Entity>();
+            var next = new List<Entity>(_entities.Count);
+
+            foreach (var e in orderedEntities)
+            {
+                if (!e.IsAlive) continue;
+                if (!_entities.Contains(e)) continue;
+                if (seen.Add(e)) next.Add(e);
+            }
+
+            // Keep any entities we didn't receive (defensive fallback).
+            foreach (var e in _entities)
+                if (seen.Add(e)) next.Add(e);
+
+            _entities.Clear();
+            _entities.AddRange(next);
+        }
+
         public void AddComponent<T>(Entity e, T component) where T : struct
         {
             if (e.Has<T>())

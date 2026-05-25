@@ -37,6 +37,12 @@ public sealed class InputRouter
         _focus  = focus;
     }
 
+    /// <summary>True while a widget is actively capturing mouse down/move/up.</summary>
+    public bool HasMouseCapture => _captured != null;
+
+    /// <summary>The widget currently holding mouse capture, if any.</summary>
+    public Widget? CapturedWidget => _captured;
+
     public unsafe void Dispatch(sapp_event* ev)
     {
 
@@ -115,6 +121,12 @@ public sealed class InputRouter
             }
             case sapp_event_type.SAPP_EVENTTYPE_KEY_DOWN:
             {
+                if (ev->key_code == sapp_keycode.SAPP_KEYCODE_ESCAPE)
+                {
+                    if (Screen.CloseActivePopup())
+                        break;
+                }
+
                 var ke = new KeyEvent { KeyCode = (int)ev->key_code, Repeat = ev->key_repeat, Modifiers = Mods(ev) };
                 _focus.Focused?.OnKeyDown(ke);
                 break;

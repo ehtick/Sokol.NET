@@ -6,7 +6,7 @@ namespace Sokol.GUI;
 /// <summary>
 /// Type of a toolbar item.
 /// </summary>
-public enum ToolBarItemType { Button, Separator, Toggle }
+public enum ToolBarItemType { Button, Separator, Toggle, Filler }
 
 /// <summary>
 /// An item in a <see cref="ToolBar"/>.
@@ -19,6 +19,12 @@ public sealed class ToolBarItem
     public bool            Pressed { get; set; } = false;  // for Toggle type
     public bool            Enabled { get; set; } = true;
     public Action?         OnClick { get; set; }
+    /// <summary>Override the toolbar font for this item (e.g. "icons" for FA5 glyphs).</summary>
+    public string?         FontName { get; set; }
+    /// <summary>Override font size for this item. 0 = inherit from toolbar.</summary>
+    public float           ItemFontSize { get; set; } = 0f;
+    /// <summary>Separator width for Separator items. 0 = toolbar default.</summary>
+    public float           SeparatorSize { get; set; } = 0f;
 }
 
 /// <summary>
@@ -56,16 +62,27 @@ public class ToolBar : Widget
         return item;
     }
 
-    public void AddSeparator()
-        => _items.Add(new ToolBarItem { Type = ToolBarItemType.Separator });
+    public ToolBarItem AddSeparator(float size = 0f)
+    {
+        var item = new ToolBarItem { Type = ToolBarItemType.Separator, SeparatorSize = size };
+        _items.Add(item);
+        return item;
+    }
+
+    public void AddFiller()
+        => _items.Add(new ToolBarItem { Type = ToolBarItemType.Filler });
 
     // ─── Layout ──────────────────────────────────────────────────────────────
     public override Vector2 PreferredSize(Renderer renderer)
     {
         if (FixedSize.HasValue) return FixedSize.Value;
+        var theme = ThemeManager.Current;
         float total = 0;
         foreach (var it in _items)
-            total += it.Type == ToolBarItemType.Separator ? SepSize() : ItemWidth(it, renderer);
+        {
+            if (it.Type == ToolBarItemType.Filler) continue;
+            total += it.Type == ToolBarItemType.Separator ? SepSize(it) : ItemWidth(it, renderer, theme);
+        }
         float thickness = ItemSize + 4f;
         return Orientation == SliderOrientation.Horizontal
             ? new Vector2(total, thickness)
@@ -96,7 +113,24 @@ public class ToolBar : Widget
         float totalItemW = 0;
         if (rtl)
             foreach (var it in _items)
-                totalItemW += it.Type == ToolBarItemType.Separator ? SepSize() : ItemWidth(it, renderer);
+                if (it.Type != ToolBarItemType.Filler)
+                    totalItemW += it.Type == ToolBarItemType.Separator ? SepSize(it) : ItemWidth(it, renderer, theme);
+
+        // Compute filler width: divide remaining space equally among all Filler items.
+        int fillerCount = 0;
+        float fillerW   = 0f;
+        foreach (var it in _items)
+            if (it.Type == ToolBarItemType.Filler) fillerCount++;
+        if (fillerCount > 0)
+        {
+            float usedW = 0f;
+            foreach (var it in _items)
+            {
+                if (it.Type == ToolBarItemType.Filler) continue;
+                usedW += it.Type == ToolBarItemType.Separator ? SepSize(it) : ItemWidth(it, renderer, theme) + 2f;
+            }
+            fillerW = MathF.Max(0f, (w - 4f - usedW) / fillerCount);
+        }
 
         float pos = rtl ? (w - 2f - totalItemW) : 2f;
         for (int i = 0; i < _items.Count; i++)
@@ -104,7 +138,7 @@ public class ToolBar : Widget
             var item = _items[i];
             if (item.Type == ToolBarItemType.Separator)
             {
-                float sep = SepSize();
+                float sep = SepSize(item);
                 if (Orientation == SliderOrientation.Horizontal)
                     renderer.DrawLine(pos + sep * 0.5f, 4f, pos + sep * 0.5f, h - 4f, 1f, theme.BorderColor);
                 else
@@ -114,7 +148,14 @@ public class ToolBar : Widget
                 continue;
             }
 
-            float iw  = ItemWidth(item, renderer);
+            if (item.Type == ToolBarItemType.Filler)
+            {
+                _itemRects[i] = default;
+                pos += fillerW;
+                continue;
+            }
+
+            float iw  = ItemWidth(item, renderer, theme);
             var   itemR = Orientation == SliderOrientation.Horizontal
                 ? new Rect(pos, 2f, iw, h - 4f)
                 : new Rect(2f, pos, w - 4f, iw);
@@ -172,7 +213,14 @@ public class ToolBar : Widget
             float cx = itemR.X + itemR.Width  * 0.5f;
             float cy = itemR.Y + itemR.Height * 0.5f;
             renderer.SetTextAlign(TextHAlign.Center);
+            if (item.FontName != null)
+            {
+                renderer.SetFont(item.FontName);
+                renderer.SetFontSize(item.ItemFontSize > 0f ? item.ItemFontSize : (FontSize > 0f ? FontSize : theme.SmallFontSize));
+            }
             renderer.DrawText(cx, cy, item.Label, labelColor);
+            if (item.FontName != null)
+                ApplyFont(renderer, theme); // restore toolbar font
 
             pos += iw + 2f;
         }
@@ -224,11 +272,27 @@ public class ToolBar : Widget
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
-    private float SepSize() => Orientation == SliderOrientation.Horizontal ? 10f : 10f;
+    private float SepSize(ToolBarItem item)
+    {
+        if (item.SeparatorSize > 0f) return item.SeparatorSize;
+        return Orientation == SliderOrientation.Horizontal ? 10f : 10f;
+    }
 
-    private float ItemWidth(ToolBarItem item, Renderer? renderer)
+    private float ItemWidth(ToolBarItem item, Renderer? renderer, Theme? theme = null)
     {
         if (renderer == null) return ItemSize;
+
+        if (item.FontName != null)
+        {
+            renderer.SetFont(item.FontName);
+            float fallback = theme != null ? theme.SmallFontSize : 12f;
+            renderer.SetFontSize(item.ItemFontSize > 0f ? item.ItemFontSize : (FontSize > 0f ? FontSize : fallback));
+            float iconW = renderer.MeasureText(item.Label);
+            if (theme != null)
+                ApplyFont(renderer, theme);
+            return MathF.Max(ItemSize, iconW + 14f);
+        }
+
         float tw = renderer.MeasureText(item.Label);
         return MathF.Max(ItemSize, tw + 12f);
     }
@@ -238,6 +302,7 @@ public class ToolBar : Widget
         for (int i = 0; i < _itemRects.Length; i++)
         {
             if (_items[i].Type == ToolBarItemType.Separator) continue;
+            if (_items[i].Type == ToolBarItemType.Filler)    continue;
             if (_itemRects[i].Contains(pos)) return i;
         }
         return -1;

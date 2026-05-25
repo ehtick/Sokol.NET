@@ -64,6 +64,22 @@ public sealed class DockManager
             _panels.Add(panel);
     }
 
+    /// <summary>Find a panel by its stable string id, or null if not found.</summary>
+    public DockPanel? FindPanel(string id)
+    {
+        foreach (var p in _panels)
+            if (p.Id == id) return p;
+        return null;
+    }
+
+    /// <summary>Make a panel the active (visible) tab in its leaf node.</summary>
+    public void ActivatePanel(DockPanel panel)
+    {
+        if (panel.Owner == null) return;
+        int idx = panel.Owner.Panels.IndexOf(panel);
+        if (idx >= 0) panel.Owner.ActivePanelIndex = idx;
+    }
+
     /// <summary>Detach a panel from its docking tree leaf and put it into the floating overlay.</summary>
     public void Float(DockPanel panel, Rect floatingScreenBounds)
     {

@@ -17,6 +17,12 @@ public sealed class DockSpace : Widget
     /// <summary>Root of the docking tree. Always non-null; an empty tree is a leaf with no panels.</summary>
     public DockNode Root { get; private set; } = new();
 
+    /// <summary>
+    /// Pixels reserved at the top of the DockSpace for a toolbar or menu bar.
+    /// ArrangeTree() offsets all leaves so they start below this inset.
+    /// </summary>
+    public float TopInset { get; set; } = 0f;
+
     private DockNode? _draggingDivider;
     private float     _dragStartPos;
     private float     _dragStartRatio;
@@ -39,7 +45,6 @@ public sealed class DockSpace : Widget
     {
         target ??= Root;
         if (!target.IsLeaf) target = target.EnumerateLeaves().GetEnumerator() is var e && e.MoveNext() ? e.Current : Root;
-        Sokol.SLog.Info($"[Dock] AddPanel '{panel.Title}' zone={zone} target={target.Id[..8]} targetPanels=[{string.Join(",", target.Panels.ConvertAll(p => p.Title))}]", "Dock");
 
         if (zone == DockDropZone.Center || target.Panels.Count == 0)
         {
@@ -57,8 +62,6 @@ public sealed class DockSpace : Widget
             };
             target.SplitLeaf(split, panel, newFirst);
         }
-        var leavesAfter = string.Join(" | ", System.Linq.Enumerable.Select(Root.EnumerateLeaves(), l => $"{l.Id[..8]}:[{string.Join(",", l.Panels.ConvertAll(p => p.Title))}]"));
-        Sokol.SLog.Info($"[Dock] AddPanel done. Tree leaves: {leavesAfter}", "Dock");
         InvalidateLayout();
         RaiseTreeChanged();
         return target;
@@ -67,25 +70,14 @@ public sealed class DockSpace : Widget
     public void RemovePanel(DockPanel panel)
     {
         var owner = panel.Owner;
-        if (owner == null)
-        {
-            Sokol.SLog.Info($"[Dock] RemovePanel \'{panel.Title}\' owner=null — skipping", "Dock");
-            return;
-        }
+        if (owner == null) return;
         var parent = owner.Parent;
-        Sokol.SLog.Info($"[Dock] RemovePanel \'{panel.Title}\' from leaf {owner.Id[..8]} (panels=[{string.Join(",", owner.Panels.ConvertAll(p => p.Title))}]) parent={parent?.Id[..8] ?? "null(root)"}", "Dock");
         owner.RemovePanel(panel);
-        Sokol.SLog.Info($"[Dock] RemovePanel after remove: leaf panels=[{string.Join(",", owner.Panels.ConvertAll(p => p.Title))}]", "Dock");
         // CollapseIfDegenerate must be called on a split node (the parent) to detect
         // an empty leaf child. Calling it on the leaf itself is a no-op.
         var root = Root;
         if (parent != null)
-        {
-            Sokol.SLog.Info($"[Dock] CollapseIfDegenerate on parent {parent.Id[..8]} type={parent.Type}", "Dock");
             parent.CollapseIfDegenerate(ref root);
-        }
-        var leavesAfter = string.Join(" | ", System.Linq.Enumerable.Select(Root.EnumerateLeaves(), l => $"{l.Id[..8]}:[{string.Join(",", l.Panels.ConvertAll(p => p.Title))}]"));
-        Sokol.SLog.Info($"[Dock] RemovePanel done. Tree leaves: {leavesAfter}", "Dock");
         InvalidateLayout();
         RaiseTreeChanged();
     }
@@ -100,7 +92,7 @@ public sealed class DockSpace : Widget
 
     private void ArrangeTree()
     {
-        Root.Arrange(new Rect(0, 0, Bounds.Width, Bounds.Height), DividerSize);
+        Root.Arrange(new Rect(0, TopInset, Bounds.Width, MathF.Max(0, Bounds.Height - TopInset)), DividerSize);
         // Size each panel's content widget to fill the leaf minus tab bar.
         foreach (var leaf in Root.EnumerateLeaves())
         {
@@ -289,6 +281,7 @@ public sealed class DockSpace : Widget
             _tabDragBegun        = false;
             return true;
         }
+
         return false;
     }
 

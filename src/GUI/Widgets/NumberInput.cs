@@ -120,6 +120,22 @@ public class NumberInput : TextBox
     /// </summary>
     internal void NotifyValueChanged() => TryFireValueChanged();
 
+    /// <summary>
+    /// Set value during interactive scrub/drag and fire live ValueChanged.
+    /// </summary>
+    public void SetValueFromDrag(float value)
+    {
+        value = Math.Clamp(value, Min, Max);
+        Text = FormatValue(value);
+        Validate();
+        ValueChanged?.Invoke(value);
+    }
+
+    /// <summary>
+    /// Commit current value and fire ValueCommitted.
+    /// </summary>
+    public void CommitDraggedValue() => Commit();
+
     private void Commit()
     {
         string t = Text;

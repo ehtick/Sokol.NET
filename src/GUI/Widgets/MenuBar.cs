@@ -7,6 +7,8 @@ namespace Sokol.GUI;
 public sealed class MenuItem
 {
     public string        Label     { get; set; } = string.Empty;
+    /// <summary>Optional icon identifier for custom-rendered menu glyphs (e.g. "cube").</summary>
+    public string?       IconId    { get; set; }
     public string?       Shortcut  { get; set; }
     public bool          IsSep     { get; set; }
     public bool          Enabled   { get; set; } = true;

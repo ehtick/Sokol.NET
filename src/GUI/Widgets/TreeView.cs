@@ -59,6 +59,10 @@ public class TreeView : Widget
     private TreeNode? _lastClickNode;
     // Widget content click forwarding
     private Widget?   _contentClickTarget;
+    // Unity-like behavior: keep group selected while holding mouse down on a selected row,
+    // then collapse to that single row when the button is released.
+    private bool      _collapseSelectionOnMouseUp;
+    private TreeNode? _collapseSelectionTarget;
 
     public  float ItemHeight   { get; set; } = 22f;
     public  const float IndentWidth  = 16f;
@@ -72,7 +76,24 @@ public class TreeView : Widget
     }
 
     public TreeNode?              SelectedNode  => _selected;
-    public IReadOnlySet<TreeNode> SelectedNodes => _selectedNodes;
+    public IReadOnlySet<TreeNode> SelectedNodes
+    {
+        get
+        {
+            RebuildSelectedNodesFromFlags();
+            return _selectedNodes;
+        }
+    }
+
+    /// <summary>Clears current selection without firing SelectionChanged.</summary>
+    public void ClearSelection()
+    {
+        foreach (var n in _selectedNodes) n.IsSelected = false;
+        _selectedNodes.Clear();
+        if (_selected != null) _selected.IsSelected = false;
+        _selected = null;
+        _anchorRowIdx = -1;
+    }
 
     /// <summary>When true, Ctrl/Cmd+Click adds to selection instead of replacing it.</summary>
     public bool MultiSelect { get; set; } = false;
@@ -81,9 +102,11 @@ public class TreeView : Widget
     public float  FontSize { get; set; } = 0f;
     public bool   ShowRoot { get; set; } = false;
 
-    public event Action<TreeNode>?  SelectionChanged;
-    public event Action<TreeNode>?  NodeExpanded;
-    public event Action<TreeNode>?  NodeDoubleClicked;
+    public event Action<TreeNode>?           SelectionChanged;
+    public event Action<TreeNode>?           NodeExpanded;
+    public event Action<TreeNode>?           NodeDoubleClicked;
+    /// <summary>Fired on right-click. <paramref name="screenPos"/> is screen-space mouse position.</summary>
+    public event Action<TreeNode, Vector2>?  NodeRightClicked;
 
     // ─── Layout ──────────────────────────────────────────────────────────────
     public override Vector2 PreferredSize(Renderer renderer)
@@ -98,6 +121,11 @@ public class TreeView : Widget
     public override void Draw(Renderer renderer)
     {
         if (!Visible) return;
+
+        // External selection sync (e.g. Scene picking) updates node flags.
+        // Refresh the cached selected-node set before painting so the highlight
+        // always reflects the current EditorState, not stale row clicks.
+        RebuildSelectedNodesFromFlags();
 
         var theme = ThemeManager.Current;
         float w   = Bounds.Width, h = Bounds.Height;
@@ -195,6 +223,8 @@ public class TreeView : Widget
                 // Render widget content
                 float contentW = contentRight - contentX;
                 node.Content.Bounds = new Rect(contentX, rowY, contentW, ItemHeight);
+                if (node.Content.Parent != this)
+                    node.Content.Parent = this;
                 renderer.Save();
                 renderer.Translate(contentX, rowY);
                 node.Content.Draw(renderer);
@@ -286,6 +316,13 @@ public class TreeView : Widget
 
     public override bool OnMouseDown(MouseEvent e)
     {
+        if (e.Button == MouseButton.Right)
+        {
+            _mousePos = e.LocalPosition;
+            var rightHit = HoveredRow();
+            if (rightHit != null) NodeRightClicked?.Invoke(rightHit.Value.node, e.Position);
+            return true;
+        }
         if (e.Button != MouseButton.Left) return false;
         _mousePos = e.LocalPosition;
 
@@ -343,7 +380,11 @@ public class TreeView : Widget
                 Clicks        = isDoubleClick ? 2 : 1,
             };
             _contentClickTarget = node.Content;
+            Screen.Instance?.Focus.SetFocus(node.Content);
             node.Content.OnMouseDown(widgetEvent);
+            // Content widgets (e.g. inline rename TextBox) own this click.
+            // Do not run TreeView row selection logic afterward.
+            return true;
         }
 
         // ── Double-click on row → toggle expand ──
@@ -396,7 +437,23 @@ public class TreeView : Widget
         {
             int curIdx = _flatRows.FindIndex(r => r.node == node);
             _anchorRowIdx = curIdx;
-            Select(node, addToSelection: false);
+
+            // Keep current multi-selection when pressing an already-selected row.
+            // This allows drag-begin to carry the full selection set instead of
+            // collapsing to a single row on mouse-down.
+            bool preserveSelectionForDrag = MultiSelect && node.IsSelected && SelectedRowCountFromFlags() > 1;
+            if (!preserveSelectionForDrag)
+            {
+                _collapseSelectionOnMouseUp = false;
+                _collapseSelectionTarget = null;
+                Select(node, addToSelection: false);
+            }
+            else
+            {
+                _selected = node;
+                _collapseSelectionOnMouseUp = true;
+                _collapseSelectionTarget = node;
+            }
         }
 
         return true;
@@ -404,6 +461,28 @@ public class TreeView : Widget
 
     public override bool OnMouseUp(MouseEvent e)
     {
+        if (e.Button == MouseButton.Left && _collapseSelectionOnMouseUp)
+        {
+            // InputRouter calls widget OnMouseUp before DragManager.OnMouseUp.
+            // If we collapse now while dragging, the drop handler only sees one selected item.
+            if (Screen.Instance.Drag.IsDragging)
+            {
+                _collapseSelectionOnMouseUp = false;
+                _collapseSelectionTarget = null;
+            }
+            else
+            {
+            var target = _collapseSelectionTarget;
+            _collapseSelectionOnMouseUp = false;
+            _collapseSelectionTarget = null;
+            if (target != null)
+            {
+                Select(target, addToSelection: false);
+                return true;
+            }
+            }
+        }
+
         if (_sbDragging) { _sbDragging = false; return true; }
         if (_contentClickTarget != null)
         {
@@ -419,6 +498,41 @@ public class TreeView : Widget
             return true;
         }
         return false;
+    }
+
+    public override Widget? HitTestDeep(Vector2 screenPoint)
+    {
+        if (!Visible || !Enabled) return null;
+
+        var local = ToLocal(screenPoint);
+        if (!HitTest(local)) return null;
+
+        // Inline row content (e.g. rename TextBox) must get first chance so
+        // InputRouter focuses it directly instead of focusing the TreeView.
+        int rowIdx = (int)((local.Y + _scrollY) / ItemHeight);
+        if (rowIdx >= 0 && rowIdx < _flatRows.Count)
+        {
+            var (node, rowY, depth) = _flatRows[rowIdx];
+            if (node.Content != null)
+            {
+                bool rtl = ResolvedFlowDirection == FlowDirection.RightToLeft;
+                float sb = ThemeManager.Current.ScrollBarWidth;
+                bool needSB = _flatRows.Count * ItemHeight > Bounds.Height;
+                float sbLeft = needSB && rtl ? sb : 0f;
+                float sbRight = needSB && !rtl ? sb : 0f;
+                float viewW = Bounds.Width - sbLeft - sbRight;
+                float indentX = depth * IndentWidth;
+                float contentX = rtl ? 2f : indentX + ArrowWidth + 2f;
+                float contentRight = rtl ? viewW - indentX - ArrowWidth - 2f : viewW - 2f;
+                float contentW = contentRight - contentX;
+
+                var contentRect = new Rect(contentX, rowY - _scrollY, contentW, ItemHeight);
+                if (contentRect.Contains(local))
+                    return node.Content;
+            }
+        }
+
+        return this;
     }
 
     public override bool OnMouseScroll(MouseEvent e)
@@ -516,14 +630,85 @@ public class TreeView : Widget
         return _flatRows[idx];
     }
 
+    private int SelectedRowCountFromFlags()
+    {
+        int count = 0;
+        foreach (var (node, _, _) in _flatRows)
+            if (node.IsSelected) count++;
+        return count;
+    }
+
+    private void RebuildSelectedNodesFromFlags()
+    {
+        _selectedNodes.Clear();
+        if (_root == null) return;
+
+        TreeNode? firstSelected = null;
+        var stack = new Stack<TreeNode>();
+        stack.Push(_root);
+
+        while (stack.Count > 0)
+        {
+            var cur = stack.Pop();
+            if (cur.IsSelected)
+            {
+                _selectedNodes.Add(cur);
+                firstSelected ??= cur;
+            }
+
+            for (int i = cur.Children.Count - 1; i >= 0; i--)
+                stack.Push(cur.Children[i]);
+        }
+
+        if (_selected == null || !_selected.IsSelected)
+            _selected = firstSelected;
+    }
+
+    /// <summary>Returns true when local Y intersects a valid row.</summary>
+    protected bool HasRowAtLocalY(float localY)
+    {
+        int idx = (int)((localY + _scrollY) / ItemHeight);
+        return idx >= 0 && idx < _flatRows.Count;
+    }
+
+    /// <summary>
+    /// Selects a node programmatically without firing SelectionChanged.
+    /// Pass addToSelection=true to extend a multi-selection.
+    /// </summary>
+    public void SelectProgrammatically(TreeNode node, bool addToSelection = false)
+    {
+        if (!addToSelection)
+        {
+            foreach (var n in _selectedNodes) n.IsSelected = false;
+            _selectedNodes.Clear();
+            if (_selected != null) _selected.IsSelected = false;
+        }
+        if (node != null)
+        {
+            _selectedNodes.Add(node);
+            if (_selected != null && !addToSelection) _selected.IsSelected = false;
+            _selected = node;
+            node.IsSelected = true;
+        }
+    }
+
     private void Select(TreeNode node, bool addToSelection = false)
     {
         if (MultiSelect && addToSelection)
         {
             if (_selectedNodes.Contains(node))
+            {
                 _selectedNodes.Remove(node);
+                node.IsSelected = false;
+                if (_selected == node)
+                    _selected = _selectedNodes.Count > 0 ? FirstSelectedNode() : null;
+            }
             else
+            {
                 _selectedNodes.Add(node);
+                node.IsSelected = true;
+                _selected = node;
+            }
         }
         else
         {
@@ -531,10 +716,11 @@ public class TreeView : Widget
             _selectedNodes.Clear();
             if (_selected != null) _selected.IsSelected = false;
             _selectedNodes.Add(node);
+            node.IsSelected = true;
+            _selected = node;
         }
-        if (_selected != null) _selected.IsSelected = false;
-        _selected = node;
-        if (node != null) node.IsSelected = true;
+        if (_selected != null && !_selectedNodes.Contains(_selected))
+            _selected = _selectedNodes.Count > 0 ? FirstSelectedNode() : null;
         SelectionChanged?.Invoke(node!);
 
         if (node != null)
@@ -550,6 +736,13 @@ public class TreeView : Widget
                 _scrollY = Math.Clamp(_scrollY, 0f, maxScr);
             }
         }
+    }
+
+    private TreeNode? FirstSelectedNode()
+    {
+        foreach (var n in _selectedNodes)
+            return n;
+        return null;
     }
 
     private void ExpandRecursive(TreeNode node)
@@ -606,6 +799,9 @@ public class TreeView : Widget
     private enum DropZone { Before, Into, After }
     // lineY < 0 means no indicator
     private (float lineY, int indentDepth, DropZone zone, TreeNode? highlightNode) _dropInd = (-1f, 0, DropZone.Into, null);
+    // Sticky drop resolution captured from the latest OnDragOver.
+    private TreeNode? _dropTargetNode;
+    private DropZone  _dropTargetZone = DropZone.Into;
 
     /// <summary>
     /// Called to decide whether <paramref name="source"/> may be dropped onto
@@ -692,7 +888,15 @@ public class TreeView : Widget
         if (src != this) return;
 
         var (target, rowIdx, zone) = ComputeDropZone(e.LocalPosition.Y, moving);
-        if (target == null) { _dropInd = (-1f, 0, DropZone.Into, null); return; }
+        if (target == null)
+        {
+            _dropInd = (-1f, 0, DropZone.Into, null);
+            _dropTargetNode = null;
+            return;
+        }
+
+        _dropTargetNode = target;
+        _dropTargetZone = zone;
 
         int   depth = (rowIdx >= 0 && rowIdx < _flatRows.Count) ? _flatRows[rowIdx].depth : 0;
         float lineY = zone switch
@@ -708,6 +912,7 @@ public class TreeView : Widget
     public override void OnDragLeave()
     {
         _dropInd = (-1f, 0, DropZone.Into, null);
+        _dropTargetNode = null;
     }
 
     public override void OnDrop(DragDropEventArgs e)
@@ -716,7 +921,16 @@ public class TreeView : Widget
         if (e.Data.Payload is not (TreeView src, TreeNode moving)) return;
         if (src != this) return;
 
-        var (target, _, zone) = ComputeDropZone(e.LocalPosition.Y, moving);
+        TreeNode? target = _dropTargetNode;
+        DropZone  zone   = _dropTargetZone;
+        if (target == null)
+        {
+            // Fallback when no drag-over target was captured.
+            var recomputed = ComputeDropZone(e.LocalPosition.Y, moving);
+            target = recomputed.target;
+            zone   = recomputed.zone;
+        }
+
         if (target == null) return;
 
         var oldParent = FindParent(moving);
@@ -741,6 +955,7 @@ public class TreeView : Widget
         }
 
         _dropInd = (-1f, 0, DropZone.Into, null);
+        _dropTargetNode = null;
         InvalidateLayout();
         e.Handled = true;
         e.Effect  = DragDropEffect.Move;
