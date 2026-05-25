@@ -27,7 +27,7 @@ namespace GameEditor.Framework.Core
         public static ProjectConfig? Load(string projectFolder)
         {
             string path = Path.Combine(projectFolder, ConfigFileName);
-            if (!File.Exists(path))
+            if (!SokolFile.Exists(path))
             {
                 Logger.Error($"config.json not found in: {projectFolder}");
                 return null;
@@ -35,7 +35,7 @@ namespace GameEditor.Framework.Core
 
             try
             {
-                string json = File.ReadAllText(path);
+                string json = SokolFile.ReadAllText(path);
                 using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
 
@@ -124,7 +124,7 @@ namespace GameEditor.Framework.Core
                 sb.Append("  }\n");
                 sb.Append('}');
 
-                File.WriteAllText(path, sb.ToString());
+                SokolFile.WriteAllText(path, sb.ToString());
                 Logger.Info("Project config saved.");
             }
             catch (Exception ex)
@@ -145,8 +145,8 @@ namespace GameEditor.Framework.Core
                 homeDir = Environment.GetEnvironmentVariable("HOME") ?? string.Empty;
 
             string sokolNetHomeFile = Path.Combine(homeDir, ".sokolnet_config", "sokolnet_home");
-            return File.Exists(sokolNetHomeFile)
-                ? File.ReadAllText(sokolNetHomeFile).Trim()
+            return SokolFile.Exists(sokolNetHomeFile)
+                ? SokolFile.ReadAllText(sokolNetHomeFile).Trim()
                 : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", ".."));
         }
 

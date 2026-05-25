@@ -1,4 +1,3 @@
-using System.IO;
 using System.Numerics;
 using Frent;
 using GameEditor.Framework.Core;
@@ -29,7 +28,7 @@ namespace GameEditor.Framework.Scene
         {
             if (ActiveScene == null) return;
             string json = SceneSerializer.Serialize(ActiveScene);
-            File.WriteAllText(path, json);
+            SokolFile.WriteAllText(path, json);
             ActiveScene.FilePath = path;
             ActiveScene.IsDirty = false;
             Logger.Info($"Scene saved to {path}");
@@ -37,14 +36,14 @@ namespace GameEditor.Framework.Scene
 
         public static void LoadScene(string path)
         {
-            if (!File.Exists(path))
+            if (!SokolFile.Exists(path))
             {
                 Logger.Warning($"Scene file not found: {path}");
                 return;
             }
             EventBus.RaiseSceneUnloaded();
             ActiveScene ??= new Scene("Untitled");
-            string json = File.ReadAllText(path);
+            string json = SokolFile.ReadAllText(path);
             SceneSerializer.Deserialize(json, ActiveScene);
             ActiveScene.FilePath = path;
             ActiveScene.IsDirty = false;
