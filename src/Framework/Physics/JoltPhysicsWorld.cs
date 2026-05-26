@@ -227,6 +227,14 @@ namespace GameEditor.Framework.Physics
             _bodyInterface?.SetRotation(bodyId, rot, JPH.EActivation.Activate);
         }
 
+        public void MoveKinematic(PhysicsBodyHandle handle, Vector3 targetPosition, Quaternion targetRotation, float deltaTime)
+        {
+            if (!_handleToBodyId.TryGetValue(handle.Value, out var bodyId)) return;
+            using var pos = new JPH.Vec3(targetPosition.X, targetPosition.Y, targetPosition.Z);
+            using var rot = new JPH.Quat(targetRotation.X, targetRotation.Y, targetRotation.Z, targetRotation.W);
+            _bodyInterface?.MoveKinematic(bodyId, pos, rot, deltaTime);
+        }
+
         public Vector3 GetPosition(PhysicsBodyHandle handle)
         {
             if (!_handleToBodyId.TryGetValue(handle.Value, out var bodyId)) return Vector3.Zero;

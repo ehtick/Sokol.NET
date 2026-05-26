@@ -97,6 +97,9 @@ namespace GameEditor.Framework.Physics
 
         void SetPosition(PhysicsBodyHandle handle, Vector3 position);
         void SetRotation(PhysicsBodyHandle handle, Quaternion rotation);
+        /// <summary>Move a kinematic body to a target pose. Computes implicit velocity so
+        /// the body correctly pushes dynamic bodies it collides with.</summary>
+        void MoveKinematic(PhysicsBodyHandle handle, Vector3 targetPosition, Quaternion targetRotation, float deltaTime);
         Vector3    GetPosition(PhysicsBodyHandle handle);
         Quaternion GetRotation(PhysicsBodyHandle handle);
 

@@ -257,21 +257,37 @@ namespace GameEditor.Framework.Scene
         {
             if (_physics == null || PlayMode != PlayModeState.Playing) return;
 
-            _physics.Step(deltaTime);
-
-            // Sync physics positions/rotations back to Transform components for dynamic bodies.
             var world = ECSWorld.Instance;
+
+            // Pre-step: push Transform → Jolt for kinematic bodies so scripts can drive them.
             foreach (var (entity, handle) in _entityToHandle)
             {
                 if (!world.TryGetComponent<RigidbodyComponent>(entity, out var rb)) continue;
-                if (rb.IsStatic) continue;
+                if (rb.MotionType != RigidbodyMotionType.Kinematic) continue;
+                if (!world.TryGetComponent<Transform>(entity, out var tr)) continue;
+
+                var rot = Quaternion.CreateFromYawPitchRoll(
+                    tr.EulerAngles.Y * MathF.PI / 180f,
+                    tr.EulerAngles.X * MathF.PI / 180f,
+                    tr.EulerAngles.Z * MathF.PI / 180f);
+                // MoveKinematic computes implicit velocity so the body correctly pushes dynamic bodies.
+                _physics.MoveKinematic(handle, tr.Position, rot, deltaTime);
+            }
+
+            _physics.Step(deltaTime);
+
+            // Post-step: sync physics positions/rotations back to Transform for dynamic bodies only.
+            // Kinematic bodies are script-authoritative — skip them to avoid Quaternion→Euler round-trip drift.
+            foreach (var (entity, handle) in _entityToHandle)
+            {
+                if (!world.TryGetComponent<RigidbodyComponent>(entity, out var rb)) continue;
+                if (rb.IsStatic || rb.MotionType == RigidbodyMotionType.Kinematic) continue;
                 if (!world.TryGetComponent<Transform>(entity, out var tr)) continue;
 
                 var pos = _physics.GetPosition(handle);
                 var rot = _physics.GetRotation(handle);
 
                 tr.Position = pos;
-                // Convert quaternion to euler (YXZ order to match Transform convention)
                 tr.EulerAngles = QuaternionToEuler(rot);
                 world.AddComponent(entity, tr);
             }
