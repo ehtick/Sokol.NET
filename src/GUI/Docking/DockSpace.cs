@@ -30,6 +30,15 @@ public sealed class DockSpace : Widget
     private DockPanel? _draggingTabPanel;
     private Vector2    _tabDragStartScreen;
     private bool       _tabDragBegun;
+    private DockNode?  _draggingTabLeaf;     // leaf where the tab drag originated
+    private bool       _tabDragIsReorder;    // true = reorder within leaf, false = detach
+    private float      _tabReorderInsertX;   // local-x of the insertion caret (-1 = none)
+    private int        _tabReorderInsertIdx; // insert-before index
+
+    // Cached per-leaf tab widths, populated each frame in DrawLeaf (font is set there).
+    private readonly Dictionary<DockNode, float[]> _tabWidthCache = new();
+
+    private Vector2 _tabReorderMouseLocal; // current mouse position (local) during reorder
 
     /// <summary>The DockManager that owns this DockSpace (set by the DockManager constructor).</summary>
     internal DockManager? Manager { get; set; }
@@ -137,6 +146,26 @@ public sealed class DockSpace : Widget
             renderer.FillRect(zoneRect, theme.Primary.WithAlpha(0.25f));
             renderer.StrokeRect(zoneRect, 2f, theme.Primary);
         }
+
+        // Ghost label during tab reorder.
+        if (_tabDragIsReorder && _draggingTabPanel != null && _tabReorderInsertX >= 0f)
+        {
+            string label = _draggingTabPanel.Title;
+            float  pad   = 6f;
+            renderer.SetFont(theme.DefaultFont);
+            renderer.SetFontSize(theme.FontSize);
+            float textW = renderer.MeasureText(label);
+            float gw = textW + pad * 2f;
+            float gh = theme.FontSize + pad;
+            var   gp = _tabReorderMouseLocal + new Vector2(12f, 8f);
+            renderer.Save();
+            renderer.Translate(gp.X, gp.Y);
+            renderer.FillRect(new Rect(0, 0, gw, gh), theme.Surface.WithAlpha(0.92f));
+            renderer.StrokeRect(new Rect(0, 0, gw, gh), 1f, theme.Primary);
+            renderer.SetTextAlign(TextHAlign.Left);
+            renderer.DrawText(pad, gh * 0.5f, label, theme.TextColor);
+            renderer.Restore();
+        }
     }
 
     private bool IsAncestorOf(DockNode node)
@@ -166,13 +195,17 @@ public sealed class DockSpace : Widget
         renderer.SetFont(theme.DefaultFont);
         renderer.SetFontSize(theme.FontSize);
         renderer.SetTextAlign(TextHAlign.Left);
+        // Cache tab widths now that the font is properly set.
+        var cachedWidths = new float[leaf.Panels.Count];
+        for (int i = 0; i < leaf.Panels.Count; i++)
+            cachedWidths[i] = renderer.MeasureText(leaf.Panels[i].Title) + TabPaddingH * 2f;
+        _tabWidthCache[leaf] = cachedWidths;
         float x = b.X + 4f;
         float cr = 4f;
         for (int i = 0; i < leaf.Panels.Count; i++)
         {
             var p = leaf.Panels[i];
-            float textW = renderer.MeasureText(p.Title);
-            float tabW = textW + TabPaddingH * 2f;
+            float tabW = cachedWidths[i];
             var isActive = i == leaf.ActivePanelIndex;
             float tabH = isActive ? (TabBarHeight - 2f) : (TabBarHeight - 4f);
             var tabRect = new Rect(x, b.Y + 2f, tabW, tabH);
@@ -203,6 +236,10 @@ public sealed class DockSpace : Widget
             renderer.DrawText(tabRect.X + TabPaddingH, tabRect.Y + tabRect.Height * 0.5f, p.Title, labelColor);
             x += tabW + 2f;
         }
+
+        // Tab-reorder insertion caret.
+        if (_tabDragIsReorder && _draggingTabLeaf == leaf && _tabReorderInsertX >= 0f)
+            renderer.DrawLine(_tabReorderInsertX, b.Y + 2f, _tabReorderInsertX, b.Y + TabBarHeight - 2f, 2f, theme.Primary);
 
         // Active content — draw into body rect (translate so content draws at 0,0).
         var active = leaf.ActivePanel;
@@ -279,6 +316,10 @@ public sealed class DockSpace : Widget
             _draggingTabPanel    = leaf.Panels[tabIdx];
             _tabDragStartScreen  = e.Position;
             _tabDragBegun        = false;
+            _draggingTabLeaf     = leaf;
+            _tabDragIsReorder    = false;
+            _tabReorderInsertX   = -1f;
+            _tabReorderInsertIdx = -1;
             return true;
         }
 
@@ -305,10 +346,51 @@ public sealed class DockSpace : Widget
             if (!_tabDragBegun && (MathF.Abs(delta.X) > 5f || MathF.Abs(delta.Y) > 5f))
             {
                 _tabDragBegun = true;
-                Manager?.BeginDragPanel(_draggingTabPanel, e.Position);
+                // If the mouse is still inside the originating tab bar, treat as a
+                // within-leaf reorder; otherwise escalate to a full panel detach.
+                var localPos = ToLocal(e.Position);
+                var lb = _draggingTabLeaf!.ComputedBounds;
+                _tabDragIsReorder = new Rect(lb.X, lb.Y, lb.Width, TabBarHeight).Contains(localPos)
+                                    && _draggingTabLeaf.Panels.Count > 1;
+                if (!_tabDragIsReorder)
+                    Manager?.BeginDragPanel(_draggingTabPanel, e.Position);
             }
             if (_tabDragBegun)
-                Manager?.UpdateDrag(e.Position);
+            {
+                if (_tabDragIsReorder)
+                {
+                    var lp = ToLocal(e.Position);
+                    var lb2 = _draggingTabLeaf!.ComputedBounds;
+                    if (!new Rect(lb2.X, lb2.Y, lb2.Width, TabBarHeight).Contains(lp))
+                    {
+                        // Mouse left the tab bar — switch to full detach.
+                        _tabDragIsReorder    = false;
+                        _tabReorderInsertX   = -1f;
+                        _tabReorderInsertIdx = -1;
+                        Manager?.BeginDragPanel(_draggingTabPanel, e.Position);
+                        Manager?.UpdateDrag(e.Position);
+                    }
+                    else
+                    {
+                        UpdateTabReorderIndicator(lp);
+                    }
+                }
+                else
+                {
+                    // Detach mode — but if the mouse returned to the originating tab bar, revert to reorder.
+                    var lp2 = ToLocal(e.Position);
+                    var lb3 = _draggingTabLeaf!.ComputedBounds;
+                    if (new Rect(lb3.X, lb3.Y, lb3.Width, TabBarHeight).Contains(lp2)
+                        && _draggingTabLeaf.Panels.Count > 1)
+                    {
+                        Manager?.CancelDrag();
+                        _tabDragIsReorder = true;
+                        UpdateTabReorderIndicator(lp2);
+                    }
+                    else
+                        Manager?.UpdateDrag(e.Position);
+                }
+            }
             return true;
         }
         return false;
@@ -318,14 +400,77 @@ public sealed class DockSpace : Widget
     {
         bool handled = _draggingDivider != null || _draggingTabPanel != null;
         if (_tabDragBegun && _draggingTabPanel != null)
-            Manager?.EndDrag(e.Position);
-        _draggingDivider   = null;
-        _draggingTabPanel  = null;
-        _tabDragBegun      = false;
+        {
+            if (_tabDragIsReorder)
+                CommitTabReorder(ToLocal(e.Position));
+            else
+                Manager?.EndDrag(e.Position);
+        }
+        _draggingDivider     = null;
+        _draggingTabPanel    = null;
+        _tabDragBegun        = false;
+        _draggingTabLeaf     = null;
+        _tabDragIsReorder    = false;
+        _tabReorderInsertX   = -1f;
+        _tabReorderInsertIdx = -1;
         return handled;
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
+
+    // ─── Tab reorder helpers ──────────────────────────────────────────────────
+
+    private void UpdateTabReorderIndicator(Vector2 local)
+    {
+        if (_draggingTabLeaf == null) return;
+        _tabReorderMouseLocal = local;
+        (_tabReorderInsertIdx, _tabReorderInsertX) = GetTabInsertPoint(_draggingTabLeaf, local.X);
+    }
+
+    private void CommitTabReorder(Vector2 local)
+    {
+        if (_draggingTabLeaf == null || _draggingTabPanel == null) return;
+        var (dstIdx, _) = GetTabInsertPoint(_draggingTabLeaf, local.X);
+        int srcIdx = _draggingTabLeaf.Panels.IndexOf(_draggingTabPanel);
+        if (srcIdx < 0 || dstIdx == srcIdx || dstIdx == srcIdx + 1)
+        {
+            _tabReorderInsertX = -1f; _tabReorderInsertIdx = -1;
+            return;
+        }
+        _draggingTabLeaf.Panels.RemoveAt(srcIdx);
+        int insertAt = dstIdx > srcIdx ? dstIdx - 1 : dstIdx;
+        _draggingTabLeaf.Panels.Insert(insertAt, _draggingTabPanel);
+        _draggingTabLeaf.ActivePanelIndex = insertAt;
+        _tabReorderInsertX = -1f; _tabReorderInsertIdx = -1;
+        RaiseTreeChanged();
+    }
+
+    /// <summary>
+    /// Returns the insertion index and its x position (local space) for a given
+    /// horizontal cursor position within a leaf's tab bar.
+    /// </summary>
+    private (int InsertIdx, float InsertX) GetTabInsertPoint(DockNode leaf, float localX)
+    {
+        var b = leaf.ComputedBounds;
+        // Use widths cached during the last DrawLeaf call (font was set correctly there).
+        _tabWidthCache.TryGetValue(leaf, out var widths);
+        float x = b.X + 4f;
+        int count = leaf.Panels.Count;
+        for (int i = 0; i < count; i++)
+        {
+            float tabW = (widths != null && i < widths.Length)
+                ? widths[i]
+                : (leaf.Panels[i].Title.Length * 7f + TabPaddingH * 2f);
+            if (localX < x + tabW * 0.5f)
+            {
+                // Left edge of this tab — sits right on the border with the previous tab.
+                return (i, x);
+            }
+            x += tabW + 2f;
+        }
+        // Right edge of the last tab.
+        return (count, x - 2f);
+    }
 
     private DockNode? FindDividerAt(DockNode node, Vector2 local)
     {

@@ -202,4 +202,24 @@ public sealed class DockManager
         HoveredDropZone = DockDropZone.None;
         LayoutChanged?.Invoke();
     }
+
+    /// <summary>
+    /// Returns the screen-space rect for the currently hovered drop zone, or
+    /// <see cref="Rect.Empty"/> when no drag is active or no zone is highlighted.
+    /// </summary>
+    public Rect GetHoveredDropZoneRect()
+    {
+        if (ActiveDragPanel == null || HoveredDropNode == null || HoveredDropZone == DockDropZone.None)
+            return Rect.Empty;
+        var b = HoveredDropNode.ComputedBounds;
+        return HoveredDropZone switch
+        {
+            DockDropZone.Left   => new Rect(b.X, b.Y, b.Width * 0.5f, b.Height),
+            DockDropZone.Right  => new Rect(b.X + b.Width * 0.5f, b.Y, b.Width * 0.5f, b.Height),
+            DockDropZone.Top    => new Rect(b.X, b.Y, b.Width, b.Height * 0.5f),
+            DockDropZone.Bottom => new Rect(b.X, b.Y + b.Height * 0.5f, b.Width, b.Height * 0.5f),
+            DockDropZone.Center => b,
+            _                   => Rect.Empty,
+        };
+    }
 }
