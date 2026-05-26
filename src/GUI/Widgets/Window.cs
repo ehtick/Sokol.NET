@@ -74,7 +74,7 @@ public class Window : Panel
             float btnCX = w - tbH * 0.5f;
             float btnCY = tbH * 0.5f;
             renderer.FillCircle(btnCX, btnCY, btnR,
-                _hoverClose ? UIColor.FromHex("#FF5555") : theme.WindowCloseButtonColor);
+                _hoverClose ? theme.WindowCloseButtonHoverColor : theme.WindowCloseButtonColor);
             renderer.DrawLine(btnCX - btnR * 0.5f, btnCY - btnR * 0.5f,
                               btnCX + btnR * 0.5f, btnCY + btnR * 0.5f, 1.5f, theme.TextColor);
             renderer.DrawLine(btnCX + btnR * 0.5f, btnCY - btnR * 0.5f,

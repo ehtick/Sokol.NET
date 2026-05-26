@@ -199,7 +199,8 @@ public class Theme
     public virtual UIColor ProgressBarTrackColor => SurfaceVariant;
     public virtual UIColor WindowTitleBarColor   => WindowHeader;
     public virtual float   WindowTitleBarHeight  => WindowHeaderHeight;
-    public virtual UIColor WindowCloseButtonColor => SurfaceVariant;
+    public virtual UIColor WindowCloseButtonColor      => SurfaceVariant;
+    public virtual UIColor WindowCloseButtonHoverColor => UIColor.FromHex("#FF5555");
     public virtual float   ScrollSpeed            => 30f;
 
     // ─── Layout direction ─────────────────────────────────────────────────────
