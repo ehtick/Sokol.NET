@@ -5,6 +5,8 @@ using System.Reflection;
 using Frent;
 using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
+using GameEditor.Framework.Physics;
+using GameEditor.Framework.Scene;
 using static Sokol.SLog;
 
 namespace GameEditor.Framework.Scripting
@@ -190,6 +192,56 @@ namespace GameEditor.Framework.Scripting
 
         /// <summary>Called when play mode stops or the entity is destroyed.</summary>
         public virtual void OnDestroy() { }
+
+        /// <summary>Called when this entity begins overlapping a non-trigger body.</summary>
+        public virtual void OnCollisionEnter(Entity other) { }
+
+        /// <summary>Called when this entity stops overlapping a non-trigger body.</summary>
+        public virtual void OnCollisionExit(Entity other) { }
+
+        /// <summary>Called every fixed step while this entity is overlapping a non-trigger body.</summary>
+        public virtual void OnCollisionStay(Entity other) { }
+
+        /// <summary>Called when this entity enters a trigger volume.</summary>
+        public virtual void OnTriggerEnter(Entity other) { }
+
+        /// <summary>Called when this entity exits a trigger volume.</summary>
+        public virtual void OnTriggerExit(Entity other) { }
+
+        // ── Physics helpers (Unity/Godot-style convenience) ────────────────
+
+        protected bool TryGetLinearVelocity(out Vector3 velocity)
+            => SceneManager.TryGetLinearVelocity(EntityId, out velocity);
+
+        protected bool SetLinearVelocity(Vector3 velocity)
+            => SceneManager.SetLinearVelocity(EntityId, velocity);
+
+        protected bool TryGetAngularVelocity(out Vector3 velocity)
+            => SceneManager.TryGetAngularVelocity(EntityId, out velocity);
+
+        protected bool SetAngularVelocity(Vector3 velocity)
+            => SceneManager.SetAngularVelocity(EntityId, velocity);
+
+        protected bool AddForce(Vector3 force)
+            => SceneManager.AddForce(EntityId, force);
+
+        protected bool AddImpulse(Vector3 impulse)
+            => SceneManager.AddImpulse(EntityId, impulse);
+
+        protected bool AddTorque(Vector3 torque)
+            => SceneManager.AddTorque(EntityId, torque);
+
+        protected bool TeleportTo(Vector3 position, Quaternion rotation)
+            => SceneManager.TeleportBody(EntityId, position, rotation);
+
+        protected bool Raycast(Vector3 origin, Vector3 direction, float maxDistance, out Entity hitEntity, out RaycastHit hit)
+            => SceneManager.Raycast(origin, direction, maxDistance, out hitEntity, out hit);
+
+        protected int OverlapSphere(Vector3 center, float radius, List<Entity> results, int maxResults = 64)
+            => SceneManager.OverlapSphere(center, radius, results, maxResults);
+
+        protected int OverlapBox(Vector3 center, Vector3 halfExtents, Quaternion rotation, List<Entity> results, int maxResults = 64)
+            => SceneManager.OverlapBox(center, halfExtents, rotation, results, maxResults);
     }
 }
 

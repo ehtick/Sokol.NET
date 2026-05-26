@@ -251,5 +251,52 @@ namespace GameEditor.Framework.Scripting
                 Logger.Error($"[ScriptSystem] {b.GetType().Name}.{name}: {ex.Message}");
             }
         }
+
+        // ── Physics event dispatch ────────────────────────────────────────────
+
+        internal static void DispatchCollisionEnter(Entity entity, Entity other)
+        {
+            foreach (var entry in _running)
+            {
+                if (entry.EntityId != entity) continue;
+                SafeCall(entry.Behaviour, b => b.OnCollisionEnter(other), nameof(GameBehaviour.OnCollisionEnter));
+            }
+        }
+
+        internal static void DispatchCollisionExit(Entity entity, Entity other)
+        {
+            foreach (var entry in _running)
+            {
+                if (entry.EntityId != entity) continue;
+                SafeCall(entry.Behaviour, b => b.OnCollisionExit(other), nameof(GameBehaviour.OnCollisionExit));
+            }
+        }
+
+        internal static void DispatchCollisionStay(Entity entity, Entity other)
+        {
+            foreach (var entry in _running)
+            {
+                if (entry.EntityId != entity) continue;
+                SafeCall(entry.Behaviour, b => b.OnCollisionStay(other), nameof(GameBehaviour.OnCollisionStay));
+            }
+        }
+
+        internal static void DispatchTriggerEnter(Entity entity, Entity other)
+        {
+            foreach (var entry in _running)
+            {
+                if (entry.EntityId != entity) continue;
+                SafeCall(entry.Behaviour, b => b.OnTriggerEnter(other), nameof(GameBehaviour.OnTriggerEnter));
+            }
+        }
+
+        internal static void DispatchTriggerExit(Entity entity, Entity other)
+        {
+            foreach (var entry in _running)
+            {
+                if (entry.EntityId != entity) continue;
+                SafeCall(entry.Behaviour, b => b.OnTriggerExit(other), nameof(GameBehaviour.OnTriggerExit));
+            }
+        }
     }
 }

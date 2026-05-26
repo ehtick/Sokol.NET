@@ -182,7 +182,10 @@ namespace GameEditor.Framework.Core
         public static void Update(float deltaTime)
         {
             if (SceneManager.PlayMode == PlayModeState.Playing)
+            {
+                SceneManager.UpdatePhysics(deltaTime);
                 ScriptSystem.UpdateAll(deltaTime);
+            }
         }
 
         // ── Cleanup ───────────────────────────────────────────────────────────

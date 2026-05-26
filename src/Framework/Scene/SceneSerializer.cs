@@ -85,9 +85,19 @@ namespace GameEditor.Framework.Scene
                 if (world.TryGetComponent<RigidbodyComponent>(id, out var rb))
                 {
                     Comma(sb, ref fc);
-                    sb.Append("\"Rigidbody\":{\"Static\":").Append(rb.IsStatic ? "true" : "false")
+                                        sb.Append("\"Rigidbody\":{\"MotionType\":\"").Append(rb.MotionType.ToString())
+                                            .Append("\",\"Static\":").Append(rb.IsStatic ? "true" : "false")
                       .Append(",\"Mass\":").Append(F(rb.Mass))
-                      .Append(",\"Gravity\":").Append(rb.UseGravity ? "true" : "false").Append('}');
+                        .Append(",\"Gravity\":").Append(rb.UseGravity ? "true" : "false")
+                                                .Append(",\"Friction\":").Append(F(rb.Friction))
+                                                .Append(",\"Restitution\":").Append(F(rb.Restitution))
+                                                .Append(",\"LinearDamping\":").Append(F(rb.LinearDamping))
+                                                .Append(",\"AngularDamping\":").Append(F(rb.AngularDamping))
+                        .Append(",\"Shape\":\"").Append(rb.Shape.ToString())
+                        .Append("\",\"Trigger\":").Append(rb.IsTrigger ? "true" : "false")
+                        .Append(",\"Layer\":").Append(rb.Layer)
+                        .Append(",\"LayerMask\":").Append(rb.LayerMask)
+                        .Append('}');
                 }
 
                 if (world.TryGetComponent<ScriptComponent>(id, out var sc))
@@ -225,9 +235,19 @@ namespace GameEditor.Framework.Scene
                 if (c.TryGetProperty("Rigidbody", out var rbEl))
                     world.AddComponent(newId, new RigidbodyComponent
                     {
-                        IsStatic   = rbEl.GetProperty("Static").GetBoolean(),
+                        MotionType = ReadMotionType(rbEl),
                         Mass       = rbEl.GetProperty("Mass").GetSingle(),
-                        UseGravity = rbEl.GetProperty("Gravity").GetBoolean()
+                        UseGravity = rbEl.GetProperty("Gravity").GetBoolean(),
+                        Friction   = rbEl.TryGetProperty("Friction", out var frictionEl) ? frictionEl.GetSingle() : 0.5f,
+                        Restitution = rbEl.TryGetProperty("Restitution", out var restitutionEl) ? restitutionEl.GetSingle() : 0f,
+                        LinearDamping = rbEl.TryGetProperty("LinearDamping", out var linearDampingEl) ? linearDampingEl.GetSingle() : 0f,
+                        AngularDamping = rbEl.TryGetProperty("AngularDamping", out var angularDampingEl) ? angularDampingEl.GetSingle() : 0.05f,
+                        Shape      = rbEl.TryGetProperty("Shape", out var shapeEl)
+                            ? Enum.Parse<GameEditor.Framework.Physics.ColliderShape>(shapeEl.GetString() ?? nameof(GameEditor.Framework.Physics.ColliderShape.Box))
+                            : GameEditor.Framework.Physics.ColliderShape.Box,
+                        IsTrigger  = rbEl.TryGetProperty("Trigger", out var triggerEl) && triggerEl.GetBoolean(),
+                        Layer      = rbEl.TryGetProperty("Layer", out var layerEl) ? (ushort)layerEl.GetInt32() : (ushort)1,
+                        LayerMask  = rbEl.TryGetProperty("LayerMask", out var maskEl) ? (ushort)maskEl.GetInt32() : (ushort)0xFFFF
                     });
 
                 if (c.TryGetProperty("Script", out var sEl))
@@ -308,5 +328,20 @@ namespace GameEditor.Framework.Scene
 
         private static string Esc(string s) =>
             s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
+
+        private static GameEditor.Framework.Physics.RigidbodyMotionType ReadMotionType(JsonElement rbEl)
+        {
+            if (rbEl.TryGetProperty("MotionType", out var mtEl))
+            {
+                string? mt = mtEl.GetString();
+                if (!string.IsNullOrEmpty(mt) && Enum.TryParse(mt, true, out GameEditor.Framework.Physics.RigidbodyMotionType parsed))
+                    return parsed;
+            }
+
+            if (rbEl.TryGetProperty("Static", out var staticEl) && staticEl.ValueKind == JsonValueKind.True)
+                return GameEditor.Framework.Physics.RigidbodyMotionType.Static;
+
+            return GameEditor.Framework.Physics.RigidbodyMotionType.Dynamic;
+        }
     }
 }

@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using Frent;
 using GameEditor.Framework.ECS;
+using GameEditor.Framework.Physics;
 
 namespace GameEditor.Framework.ECS.Components
 {
@@ -113,9 +114,29 @@ namespace GameEditor.Framework.ECS.Components
 
     public struct RigidbodyComponent
     {
-        public bool IsStatic;
+        public RigidbodyMotionType MotionType;
         public float Mass;
         public bool UseGravity;
+        public float Friction;
+        public float Restitution;
+        public float LinearDamping;
+        public float AngularDamping;
+        public ColliderShape Shape;
+        public bool IsTrigger;
+        public ushort Layer;
+        public ushort LayerMask;
+
+        public bool IsStatic
+        {
+            readonly get => MotionType == RigidbodyMotionType.Static;
+            set => MotionType = value ? RigidbodyMotionType.Static : RigidbodyMotionType.Dynamic;
+        }
+
+        public bool IsKinematic
+        {
+            readonly get => MotionType == RigidbodyMotionType.Kinematic;
+            set => MotionType = value ? RigidbodyMotionType.Kinematic : RigidbodyMotionType.Dynamic;
+        }
     }
 
     public struct ScriptComponent

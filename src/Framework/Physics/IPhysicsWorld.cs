@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Collections.Generic;
 
 namespace GameEditor.Framework.Physics
 {
@@ -14,28 +15,54 @@ namespace GameEditor.Framework.Physics
 
     public enum ColliderShape { Box, Sphere, Capsule }
 
+    public enum RigidbodyMotionType { Dynamic, Static, Kinematic }
+
     public readonly struct BodyDesc
     {
         public readonly Vector3    Position;
         public readonly Quaternion Rotation;
         public readonly Vector3    Scale;
-        public readonly bool       IsStatic;
+        public readonly RigidbodyMotionType MotionType;
         public readonly float      Mass;
         public readonly bool       UseGravity;
+        public readonly float      Friction;
+        public readonly float      Restitution;
+        public readonly float      LinearDamping;
+        public readonly float      AngularDamping;
         public readonly ColliderShape Shape;
+        public readonly bool       IsTrigger;
+        public readonly ushort     Layer;
+        public readonly ushort     LayerMask;
+
+        public bool IsStatic => MotionType == RigidbodyMotionType.Static;
+        public bool IsKinematic => MotionType == RigidbodyMotionType.Kinematic;
 
         public BodyDesc(
             Vector3 position, Quaternion rotation, Vector3 scale,
-            bool isStatic, float mass, bool useGravity,
-            ColliderShape shape = ColliderShape.Box)
+            RigidbodyMotionType motionType, float mass, bool useGravity,
+            float friction = 0.5f,
+            float restitution = 0.0f,
+            float linearDamping = 0.0f,
+            float angularDamping = 0.05f,
+            ColliderShape shape = ColliderShape.Box,
+            bool isTrigger = false,
+            ushort layer = 1,
+            ushort layerMask = 0xFFFF)
         {
             Position   = position;
             Rotation   = rotation;
             Scale      = scale;
-            IsStatic   = isStatic;
+            MotionType = motionType;
             Mass       = mass;
             UseGravity = useGravity;
+            Friction = friction;
+            Restitution = restitution;
+            LinearDamping = linearDamping;
+            AngularDamping = angularDamping;
             Shape      = shape;
+            IsTrigger  = isTrigger;
+            Layer      = layer;
+            LayerMask  = layerMask;
         }
     }
 
@@ -75,9 +102,16 @@ namespace GameEditor.Framework.Physics
 
         void SetLinearVelocity(PhysicsBodyHandle handle, Vector3 velocity);
         Vector3 GetLinearVelocity(PhysicsBodyHandle handle);
+        void SetAngularVelocity(PhysicsBodyHandle handle, Vector3 velocity);
+        Vector3 GetAngularVelocity(PhysicsBodyHandle handle);
         void AddForce(PhysicsBodyHandle handle, Vector3 force);
         void AddImpulse(PhysicsBodyHandle handle, Vector3 impulse);
+        void AddTorque(PhysicsBodyHandle handle, Vector3 torque);
 
         bool Raycast(Vector3 origin, Vector3 direction, float maxDistance, out RaycastHit hit);
+        int OverlapSphere(Vector3 center, float radius, List<PhysicsBodyHandle> results, int maxResults = 64);
+        int OverlapBox(Vector3 center, Vector3 halfExtents, Quaternion rotation, List<PhysicsBodyHandle> results, int maxResults = 64);
+
+        void SetCollisionListener(ICollisionListener? listener);
     }
 }
