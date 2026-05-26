@@ -1189,7 +1189,11 @@ namespace SokolApplicationBuilder
                         : libraryNamePart.ToLowerInvariant();
                     
                     string libraryBasePath = property.Value;
-                    
+
+                    // Expand MSBuild variables that the XML reader leaves unexpanded
+                    libraryBasePath = libraryBasePath.Replace("$(SokolNetHome)", GetSokolNetHome(), StringComparison.OrdinalIgnoreCase);
+                    libraryBasePath = libraryBasePath.Replace("$(HomeDir)", Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), StringComparison.OrdinalIgnoreCase);
+
                     // Make path relative to project if needed
                     if (!Path.IsPathRooted(libraryBasePath))
                     {
