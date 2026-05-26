@@ -84,6 +84,22 @@ namespace SokolApplicationBuilder
         {
             return System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile);
         }
+
+        public static string GetSokolNetHome()
+        {
+            string homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (string.IsNullOrEmpty(homeDir) || !Directory.Exists(homeDir))
+            {
+                homeDir = Environment.GetEnvironmentVariable("HOME") ?? "";
+            }
+            string configFile = Path.Combine(homeDir, ".sokolnet_config", "sokolnet_home");
+            if (File.Exists(configFile))
+            {
+                return File.ReadAllText(configFile).Trim();
+            }
+            // Fallback to relative path
+            return Path.GetFullPath(Path.Combine(opts?.ProjectPath ?? "", "..", "..", ".."));
+        }
         public static string FixPathString(this string path)
         {
             path = path.Replace("\\", "/");

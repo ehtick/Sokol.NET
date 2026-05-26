@@ -68,27 +68,11 @@ namespace SokolApplicationBuilder
             return RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "gradlew.bat" : "gradlew";
         }
 
-        private string GetSokolNetHome()
-        {
-            string homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            if (string.IsNullOrEmpty(homeDir) || !Directory.Exists(homeDir))
-            {
-                homeDir = Environment.GetEnvironmentVariable("HOME") ?? "";
-            }
-            string configFile = Path.Combine(homeDir, ".sokolnet_config", "sokolnet_home");
-            if (File.Exists(configFile))
-            {
-                return File.ReadAllText(configFile).Trim();
-            }
-            // Fallback to relative path
-            return Path.GetFullPath(Path.Combine(opts.ProjectPath, "..", "..", ".."));
-        }
-
         // Returns platform/android/ paths for plugins this project uses,
         // detected by AndroidNativeLibrary_*Path props pointing into the plugin's directory.
         private IEnumerable<string> GetActivePluginAndroidPlatformPaths()
         {
-            string pluginsDir = Path.Combine(GetSokolNetHome(), "plugins");
+            string pluginsDir = Path.Combine(Utils.GetSokolNetHome(), "plugins");
             if (!Directory.Exists(pluginsDir))
                 yield break;
 
@@ -1053,7 +1037,7 @@ namespace SokolApplicationBuilder
             string configuration = buildType == "release" ? "Release" : "Debug";
 
             // Add scripts directory to PATH for android_fake_clang.cmd access on Windows
-            string sokolNetHome = GetSokolNetHome();
+            string sokolNetHome = Utils.GetSokolNetHome();
             string scriptsDir = Path.Combine(sokolNetHome, "scripts");
             string currentPath = Environment.GetEnvironmentVariable("PATH") ?? "";
             string newPath = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) 
@@ -1191,7 +1175,7 @@ namespace SokolApplicationBuilder
                     string libraryBasePath = property.Value;
 
                     // Expand MSBuild variables that the XML reader leaves unexpanded
-                    libraryBasePath = libraryBasePath.Replace("$(SokolNetHome)", GetSokolNetHome(), StringComparison.OrdinalIgnoreCase);
+                    libraryBasePath = libraryBasePath.Replace("$(SokolNetHome)", Utils.GetSokolNetHome(), StringComparison.OrdinalIgnoreCase);
                     libraryBasePath = libraryBasePath.Replace("$(HomeDir)", Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), StringComparison.OrdinalIgnoreCase);
 
                     // Make path relative to project if needed
@@ -3014,7 +2998,7 @@ KeyAlias={keystoreInfo.KeyAlias}
         string FindBundletool()
         {
             // First check local tools folder using SokolNet home
-            string sokolNetHome = GetSokolNetHome();
+            string sokolNetHome = Utils.GetSokolNetHome();
             string localBundletool = Path.Combine(sokolNetHome, "tools", "bundletool.jar");
             if (File.Exists(localBundletool))
                 return Path.GetFullPath(localBundletool);

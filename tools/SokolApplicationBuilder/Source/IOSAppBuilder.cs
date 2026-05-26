@@ -1076,22 +1076,6 @@ namespace SokolApplicationBuilder
             return fallbackProject;
         }
 
-        private string GetSokolNetHome()
-        {
-            string homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            if (string.IsNullOrEmpty(homeDir) || !Directory.Exists(homeDir))
-            {
-                homeDir = Environment.GetEnvironmentVariable("HOME") ?? "";
-            }
-            string configFile = Path.Combine(homeDir, ".sokolnet_config", "sokolnet_home");
-            if (File.Exists(configFile))
-            {
-                return File.ReadAllText(configFile).Trim();
-            }
-            // Fallback to relative path
-            return Path.GetFullPath(Path.Combine(opts.ProjectPath, "..", "..", ".."));
-        }
-
         private void ReadIOSPropertiesFromDirectoryBuildProps(string projectPath)
         {
             try
@@ -1189,7 +1173,7 @@ namespace SokolApplicationBuilder
                                 string libraryBasePath = element.Value;
 
                                 // Expand MSBuild variables that the XML reader leaves unexpanded
-                                libraryBasePath = libraryBasePath.Replace("$(SokolNetHome)", GetSokolNetHome(), StringComparison.OrdinalIgnoreCase);
+                                libraryBasePath = libraryBasePath.Replace("$(SokolNetHome)", Utils.GetSokolNetHome(), StringComparison.OrdinalIgnoreCase);
                                 libraryBasePath = libraryBasePath.Replace("$(HomeDir)", Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), StringComparison.OrdinalIgnoreCase);
 
                                 string absolutePath = Path.IsPathRooted(libraryBasePath)
