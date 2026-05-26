@@ -17,11 +17,16 @@ public class VirtualList : ScrollableList
     private Func<object, Widget>?  _itemTemplate;
     private int                    _selectedIndex = -1;
 
+    // ─── Inline rename ───────────────────────────────────────────────────────
+    private CommittableTextBox? _inlineBox;
+    private int                 _inlineIndex = -1;
+    private Widget?             _inlineOrig;
+
     /// <summary>The data source. Setting this clears selection and scroll position.</summary>
     public IReadOnlyList<object>? ItemsSource
     {
         get => _itemsSource;
-        set { _itemsSource = value; _selectedIndex = -1; _scrollY = 0f; _pool.Clear(); }
+        set { CancelInlineRename(); _itemsSource = value; _selectedIndex = -1; _scrollY = 0f; _pool.Clear(); }
     }
 
     /// <summary>
@@ -52,6 +57,9 @@ public class VirtualList : ScrollableList
     {
         ItemHeight = 28f;   // override base default of 24f
     }
+
+    /// <summary>Clears selection without the clamp guard (allows -1 when items exist).</summary>
+    public void Deselect() { _selectedIndex = -1; RaiseSelectionChanged(-1); }
 
     /// <summary>Scrolls to the last item in the list.</summary>
     public void ScrollToBottom()
@@ -111,11 +119,60 @@ public class VirtualList : ScrollableList
         return true;
     }
 
+    // ─── Inline rename ────────────────────────────────────────────────────────
+    public void BeginInlineRename(int index)
+    {
+        if (index < 0 || index >= ItemCount) return;
+        var orig = GetOrCreate(index);
+        if (!orig.IsRenamable) return;
+        CancelInlineRename();
+        _inlineIndex = index;
+        _inlineOrig  = orig;
+        var box = new CommittableTextBox { Expand = true, Text = orig.RenameText, SkipKeyboardManagement = true };
+        box.CommitRequested = () =>
+        {
+            if (_inlineBox == null) return;
+            string name = box.Text.Trim();
+            var w = _inlineOrig;
+            CancelInlineRename();
+            if (!string.IsNullOrEmpty(name)) w?.Renamed?.Invoke(name);
+        };
+        box.CancelRequested = () =>
+        {
+            if (_inlineBox == null) return;
+            var w = _inlineOrig;
+            CancelInlineRename();
+            w?.RenameCanceled?.Invoke();
+        };
+        _pool[index] = box;
+        _inlineBox   = box;
+        Screen.Instance?.Focus.SetFocus(box);
+    }
+
+    public void CancelInlineRename()
+    {
+        if (_inlineIndex < 0) return;
+        if (_inlineBox != null) { _inlineBox.CommitRequested = null; _inlineBox.CancelRequested = null; }
+        if (_inlineOrig != null) _pool[_inlineIndex] = _inlineOrig;
+        _inlineIndex = -1;
+        _inlineOrig  = null;
+        _inlineBox   = null;
+        Screen.Instance?.Focus.SetFocus(this);
+    }
+
     // ─── Keyboard ─────────────────────────────────────────────────────────────
     public override bool OnKeyDown(KeyEvent e)
     {
         int count = _itemsSource?.Count ?? 0;
         if (count == 0) return false;
+
+        const int KEY_ENTER    = 257;
+        const int KEY_KP_ENTER = 335;
+        if ((e.KeyCode == KEY_ENTER || e.KeyCode == KEY_KP_ENTER) && _selectedIndex >= 0)
+        {
+            var w = GetOrCreate(_selectedIndex);
+            if (w.IsRenamable) { BeginInlineRename(_selectedIndex); return true; }
+        }
 
         int next = _selectedIndex < 0 ? 0 : _selectedIndex;
         switch (e.KeyCode)

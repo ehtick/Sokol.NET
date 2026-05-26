@@ -57,6 +57,11 @@ public class TreeView : Widget
     // Double-click tracking
     private long      _lastClickMs;
     private TreeNode? _lastClickNode;
+
+    // ─── Inline rename ──────────────────────────────────────────────────────
+    private CommittableTextBox? _inlineBox;
+    private TreeNode?           _inlineNode;
+    private Widget?             _inlineOrig;
     // Widget content click forwarding
     private Widget?   _contentClickTarget;
     // Unity-like behavior: keep group selected while holding mouse down on a selected row,
@@ -72,7 +77,7 @@ public class TreeView : Widget
     public TreeNode? Root
     {
         get => _root;
-        set { _root = value; _selected = null; _selectedNodes.Clear(); _anchorRowIdx = -1; _scrollY = 0f; InvalidateLayout(); }
+        set { CancelInlineRename(); _root = value; _selected = null; _selectedNodes.Clear(); _anchorRowIdx = -1; _scrollY = 0f; InvalidateLayout(); }
     }
 
     public TreeNode?              SelectedNode  => _selected;
@@ -601,8 +606,58 @@ public class TreeView : Widget
                     }
                 }
                 return true;
+
+            case 257: // Enter
+            case 335: // KP_Enter
+                if (_selected?.Content?.IsRenamable == true)
+                {
+                    BeginInlineRename(_selected);
+                    return true;
+                }
+                return false;
         }
         return false;
+    }
+
+    // ─── Inline rename ────────────────────────────────────────────────────────────
+    public void BeginInlineRename(TreeNode node)
+    {
+        if (node.Content == null || !node.Content.IsRenamable) return;
+        CancelInlineRename();
+        _inlineNode = node;
+        _inlineOrig = node.Content;
+        var box = new CommittableTextBox { Expand = true, Text = node.Content.RenameText, SkipKeyboardManagement = true };
+        box.CommitRequested = () =>
+        {
+            if (_inlineBox == null) return;
+            string name = box.Text.Trim();
+            var w = _inlineOrig;
+            CancelInlineRename();
+            if (!string.IsNullOrEmpty(name)) w?.Renamed?.Invoke(name);
+        };
+        box.CancelRequested = () =>
+        {
+            if (_inlineBox == null) return;
+            var w = _inlineOrig;
+            CancelInlineRename();
+            w?.RenameCanceled?.Invoke();
+        };
+        node.Content = box;
+        _inlineBox   = box;
+        Screen.Instance?.Focus.SetFocus(box);
+    }
+
+    public void CancelInlineRename()
+    {
+        if (_inlineBox == null) return;
+        _inlineBox.CommitRequested = null;
+        _inlineBox.CancelRequested = null;
+        if (_inlineNode != null && _inlineOrig != null)
+            _inlineNode.Content = _inlineOrig;
+        _inlineNode = null;
+        _inlineOrig = null;
+        _inlineBox  = null;
+        Screen.Instance?.Focus.SetFocus(this);
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────

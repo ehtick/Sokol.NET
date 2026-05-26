@@ -299,6 +299,16 @@ public abstract class Widget
     /// <summary>True if this widget can receive drops.</summary>
     public bool IsDropTarget { get; set; }
 
+    // ─── Inline rename ─────────────────────────────────────────────────────────
+    /// <summary>When true, the parent container can activate inline rename on Enter.</summary>
+    public bool            IsRenamable    { get; set; }
+    /// <summary>Text to pre-fill the inline rename box with.</summary>
+    public string          RenameText     { get; set; } = "";
+    /// <summary>Fired by the container after a successful rename commit.</summary>
+    public Action<string>? Renamed;
+    /// <summary>Fired by the container when rename is cancelled (Escape).</summary>
+    public Action?         RenameCanceled;
+
     /// <summary>
     /// Build and return the data payload to drag. Return null to cancel the
     /// drag operation. Called by <see cref="DragManager"/> once the cursor has
