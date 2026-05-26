@@ -215,6 +215,7 @@ namespace GameEditor.Framework.Renderer
             {
                 PrimitiveKind.Box => BuildBox(spec),
                 PrimitiveKind.Sphere => BuildSphere(spec),
+                PrimitiveKind.Capsule => BuildCapsule(spec),
                 PrimitiveKind.Plane => BuildPlane(spec),
                 PrimitiveKind.Cylinder => BuildCylinder(spec),
                 PrimitiveKind.Ring => BuildRing(spec),
@@ -283,6 +284,86 @@ namespace GameEditor.Framework.Renderer
                 tiles = (ushort)spec.Tiles
             });
             return CreateGpuMesh(in buf, "prim-plane");
+        }
+
+        private static MeshResource BuildCapsule(in PrimitiveMeshSpec spec)
+        {
+            float r      = MathF.Max(0.01f, spec.Radius);
+            float hh     = MathF.Max(0f, spec.Height * 0.5f - r);
+            int   slices = Math.Max(3, spec.Slices);
+            int   stacks = Math.Max(1, spec.Stacks);
+
+            var vertices = new List<sshape_vertex_t>();
+            var indices  = new List<ushort>();
+            uint color   = 0xFFFFFFFFu;
+
+            ushort AddV(float x, float y, float z, float nx, float ny, float nz)
+            {
+                vertices.Add(new sshape_vertex_t
+                {
+                    x = x, y = y, z = z,
+                    normal = PackNormalByte4N(new Vector3(nx, ny, nz)),
+                    u = 0, v = 0,
+                    color = color
+                });
+                return (ushort)(vertices.Count - 1);
+            }
+
+            int totalRings = 2 * stacks + 2;
+            ushort[][] rings = new ushort[totalRings][];
+
+            // Top hemisphere: rings[0..stacks], theta from 0 (north pole) to PI/2 (top equator)
+            for (int i = 0; i <= stacks; i++)
+            {
+                float theta  = (i / (float)stacks) * (MathF.PI / 2f);
+                float sinT   = MathF.Sin(theta);
+                float cosT   = MathF.Cos(theta);
+                float y      = hh + r * cosT;
+                float ring_r = r * sinT;
+
+                rings[i] = new ushort[slices];
+                for (int j = 0; j < slices; j++)
+                {
+                    float az = j * MathF.Tau / slices;
+                    float cosA = MathF.Cos(az), sinA = MathF.Sin(az);
+                    rings[i][j] = AddV(ring_r * cosA, y, ring_r * sinA,
+                                       sinT * cosA, cosT, sinT * sinA);
+                }
+            }
+
+            // Bottom hemisphere: rings[stacks+1..2*stacks+1], theta from PI/2 (bottom equator) to PI (south pole)
+            for (int i = 0; i <= stacks; i++)
+            {
+                float theta  = (MathF.PI / 2f) + (i / (float)stacks) * (MathF.PI / 2f);
+                float sinT   = MathF.Sin(theta);
+                float cosT   = MathF.Cos(theta);
+                float y      = -hh + r * cosT;
+                float ring_r = r * sinT;
+
+                rings[stacks + 1 + i] = new ushort[slices];
+                for (int j = 0; j < slices; j++)
+                {
+                    float az = j * MathF.Tau / slices;
+                    float cosA = MathF.Cos(az), sinA = MathF.Sin(az);
+                    rings[stacks + 1 + i][j] = AddV(ring_r * cosA, y, ring_r * sinA,
+                                                    sinT * cosA, cosT, sinT * sinA);
+                }
+            }
+
+            // Generate quads between adjacent rings (CCW winding = front face)
+            for (int ri = 0; ri < totalRings - 1; ri++)
+            {
+                ushort[] r0 = rings[ri];
+                ushort[] r1 = rings[ri + 1];
+                for (int j = 0; j < slices; j++)
+                {
+                    int nj = (j + 1) % slices;
+                    indices.Add(r0[j]);  indices.Add(r1[j]);  indices.Add(r1[nj]);
+                    indices.Add(r0[j]);  indices.Add(r1[nj]); indices.Add(r0[nj]);
+                }
+            }
+
+            return CreateGpuMesh(vertices.ToArray(), indices.ToArray(), "prim-capsule");
         }
 
         private static MeshResource BuildCylinder(in PrimitiveMeshSpec spec)
@@ -505,6 +586,122 @@ namespace GameEditor.Framework.Renderer
 
             if (_pip.id != 0) { sg_destroy_pipeline(_pip); _pip = default; }
             _initialized = false;
+        }
+
+        /// <summary>
+        /// Returns a point cloud in local mesh space suitable as input for a ConvexHull physics shape.
+        /// Points embed the primitive's geometric parameters (radius, height, etc.) so the caller
+        /// only needs to multiply by the entity's Scale to get world-sized hull input.
+        /// </summary>
+        public static Vector3[] GetHullPoints(in PrimitiveMeshSpec spec)
+        {
+            const int CirclePts = 16;
+            var pts = new System.Collections.Generic.List<Vector3>(64);
+
+            switch (spec.Kind)
+            {
+                case PrimitiveKind.Box:
+                {
+                    float hx = spec.Width * 0.5f, hy = spec.Height * 0.5f, hz = spec.Depth * 0.5f;
+                    foreach (float sx in new[] { -hx, hx })
+                    foreach (float sy in new[] { -hy, hy })
+                    foreach (float sz in new[] { -hz, hz })
+                        pts.Add(new Vector3(sx, sy, sz));
+                    break;
+                }
+                case PrimitiveKind.Sphere:
+                {
+                    int sl = Math.Max(8, spec.Slices / 2), st = Math.Max(4, spec.Stacks / 2);
+                    float R = spec.Radius;
+                    for (int i = 0; i <= st; i++)
+                    {
+                        float v  = MathF.PI * i / st;
+                        float sv = MathF.Sin(v), cv = MathF.Cos(v);
+                        for (int j = 0; j < sl; j++)
+                        {
+                            float u  = MathF.Tau * j / sl;
+                            pts.Add(new Vector3(R * sv * MathF.Cos(u), R * cv, R * sv * MathF.Sin(u)));
+                        }
+                    }
+                    break;
+                }
+                case PrimitiveKind.Capsule:
+                {
+                    float r = spec.Radius, hh = MathF.Max(0f, spec.Height * 0.5f - r);
+                    for (int j = 0; j < CirclePts; j++)
+                    {
+                        float a = MathF.Tau * j / CirclePts;
+                        float ca = MathF.Cos(a), sa = MathF.Sin(a);
+                        for (int i = 0; i <= 4; i++)
+                        {
+                            float t  = MathF.PI * 0.5f * i / 4;
+                            float st = MathF.Sin(t), ct = MathF.Cos(t);
+                            pts.Add(new Vector3(r * st * ca,  hh + r * ct, r * st * sa));
+                            pts.Add(new Vector3(r * st * ca, -hh - r * ct, r * st * sa));
+                        }
+                    }
+                    break;
+                }
+                case PrimitiveKind.Cylinder:
+                {
+                    float r = spec.Radius, hy = spec.Height * 0.5f;
+                    for (int j = 0; j < CirclePts; j++)
+                    {
+                        float a = MathF.Tau * j / CirclePts;
+                        pts.Add(new Vector3(r * MathF.Cos(a),  hy, r * MathF.Sin(a)));
+                        pts.Add(new Vector3(r * MathF.Cos(a), -hy, r * MathF.Sin(a)));
+                    }
+                    break;
+                }
+                case PrimitiveKind.Ring:
+                {
+                    float R = spec.Radius, r = spec.RingRadius;
+                    int nU = Math.Max(16, spec.Rings / 2), nV = Math.Max(8, spec.Sides / 2);
+                    for (int i = 0; i < nU; i++)
+                    {
+                        float u = MathF.Tau * i / nU;
+                        float cu = MathF.Cos(u), su = MathF.Sin(u);
+                        for (int j = 0; j < nV; j++)
+                        {
+                            float v  = MathF.Tau * j / nV;
+                            float d  = R + r * MathF.Cos(v);
+                            pts.Add(new Vector3(d * cu, r * MathF.Sin(v), d * su));
+                        }
+                    }
+                    break;
+                }
+                case PrimitiveKind.Cone:
+                case PrimitiveKind.Pyramid:
+                {
+                    int sides = Math.Max(3, spec.Kind == PrimitiveKind.Cone ? spec.Slices : spec.Sides);
+                    float r = spec.Radius, hy = spec.Height * 0.5f;
+                    pts.Add(new Vector3(0f, hy, 0f)); // apex
+                    for (int j = 0; j < sides; j++)
+                    {
+                        float a = MathF.Tau * j / sides;
+                        pts.Add(new Vector3(r * MathF.Cos(a), -hy, r * MathF.Sin(a)));
+                    }
+                    break;
+                }
+                case PrimitiveKind.Plane:
+                {
+                    float hw = spec.Width * 0.5f, hd = spec.Depth * 0.5f;
+                    pts.Add(new Vector3(-hw, 0f, -hd)); pts.Add(new Vector3( hw, 0f, -hd));
+                    pts.Add(new Vector3( hw, 0f,  hd)); pts.Add(new Vector3(-hw, 0f,  hd));
+                    break;
+                }
+                default:
+                {
+                    // Generic fallback: unit AABB corners
+                    foreach (float sx in new[] { -0.5f, 0.5f })
+                    foreach (float sy in new[] { -0.5f, 0.5f })
+                    foreach (float sz in new[] { -0.5f, 0.5f })
+                        pts.Add(new Vector3(sx, sy, sz));
+                    break;
+                }
+            }
+
+            return pts.ToArray();
         }
     }
 }

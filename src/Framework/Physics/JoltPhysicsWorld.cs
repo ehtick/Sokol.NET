@@ -140,10 +140,42 @@ namespace GameEditor.Framework.Physics
                 }
                 case ColliderShape.Capsule:
                 {
-                    float radius    = MathF.Max(desc.Scale.X, desc.Scale.Z) * 0.5f;
-                    float halfHeight = MathF.Max(0f, desc.Scale.Y * 0.5f - radius);
+                    float radius     = MathF.Max(desc.Scale.X, desc.Scale.Z) * 0.5f;
+                    float halfHeight = MathF.Max(0f, desc.Scale.Y - radius);
                     using var ss = new JPH.CapsuleShapeSettings(halfHeight, radius);
                     cs.SetShapeSettings(ss);
+                    break;
+                }
+                case ColliderShape.Cylinder:
+                {
+                    float radius    = MathF.Max(desc.Scale.X, desc.Scale.Z) * 0.5f;
+                    float halfHeight = desc.Scale.Y * 0.5f;
+                    using var ss = new JPH.CylinderShapeSettings(halfHeight, radius);
+                    cs.SetShapeSettings(ss);
+                    break;
+                }
+                case ColliderShape.Plane:
+                {
+                    using var plane = new JPH.Plane(new JPH.Vec4(0f, 1f, 0f, 0f));
+                    using var ss = new JPH.PlaneShapeSettings(plane);
+                    cs.SetShapeSettings(ss);
+                    break;
+                }
+                case ColliderShape.ConvexHull:
+                {
+                    Vector3 s = desc.Scale;
+                    Vector3[] src = desc.MeshVertices ?? new Vector3[]
+                    {
+                        new(-0.5f,-0.5f,-0.5f), new(0.5f,-0.5f,-0.5f),
+                        new( 0.5f, 0.5f,-0.5f), new(-0.5f, 0.5f,-0.5f),
+                        new(-0.5f,-0.5f, 0.5f), new(0.5f,-0.5f, 0.5f),
+                        new( 0.5f, 0.5f, 0.5f), new(-0.5f, 0.5f, 0.5f),
+                    };
+                    var pts = new JPH.Vec3f[src.Length];
+                    for (int i = 0; i < src.Length; i++)
+                        pts[i] = new JPH.Vec3f(src[i].X * s.X, src[i].Y * s.Y, src[i].Z * s.Z);
+                    using var hull = JPH.ConvexHullShapeSettingsFromPoints(pts, 0.05f);
+                    cs.SetShapeSettings(hull);
                     break;
                 }
                 default: // Box

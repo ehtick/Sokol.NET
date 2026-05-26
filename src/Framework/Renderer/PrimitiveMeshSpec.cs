@@ -7,6 +7,7 @@ namespace GameEditor.Framework.Renderer
     {
         Box,
         Sphere,
+        Capsule,
         Plane,
         Cylinder,
         Cone,
@@ -49,6 +50,14 @@ namespace GameEditor.Framework.Renderer
                     Radius = 0.5f,
                     Slices = 36,
                     Stacks = 20
+                },
+                PrimitiveKind.Capsule => new PrimitiveMeshSpec
+                {
+                    Kind = kind,
+                    Radius = 0.5f,
+                    Height = 2f,
+                    Slices = 24,
+                    Stacks = 8
                 },
                 PrimitiveKind.Plane => new PrimitiveMeshSpec
                 {
@@ -103,6 +112,7 @@ namespace GameEditor.Framework.Renderer
             if (meshPath == "prim:box") { spec = Default(PrimitiveKind.Box); return true; }
             if (meshPath == "prim:cube") { spec = Default(PrimitiveKind.Box); return true; }
             if (meshPath == "prim:sphere") { spec = Default(PrimitiveKind.Sphere); return true; }
+            if (meshPath == "prim:capsule") { spec = Default(PrimitiveKind.Capsule); return true; }
             if (meshPath == "prim:plane") { spec = Default(PrimitiveKind.Plane); return true; }
             if (meshPath == "prim:cylinder") { spec = Default(PrimitiveKind.Cylinder); return true; }
             if (meshPath == "prim:cone") { spec = Default(PrimitiveKind.Cone); return true; }
@@ -122,6 +132,7 @@ namespace GameEditor.Framework.Renderer
                 "box" => PrimitiveKind.Box,
                 "cube" => PrimitiveKind.Box,
                 "sphere" => PrimitiveKind.Sphere,
+                "capsule" => PrimitiveKind.Capsule,
                 "plane" => PrimitiveKind.Plane,
                 "cylinder" => PrimitiveKind.Cylinder,
                 "cone" => PrimitiveKind.Cone,
@@ -176,6 +187,7 @@ namespace GameEditor.Framework.Renderer
             {
                 PrimitiveKind.Box => "prim:box",
                 PrimitiveKind.Sphere => "prim:sphere",
+                PrimitiveKind.Capsule => "prim:capsule",
                 PrimitiveKind.Plane => "prim:plane",
                 PrimitiveKind.Cylinder => "prim:cylinder",
                 PrimitiveKind.Cone => "prim:cone",
@@ -188,6 +200,7 @@ namespace GameEditor.Framework.Renderer
             {
                 PrimitiveKind.Box => $"{head};w={F(s.Width)};h={F(s.Height)};d={F(s.Depth)};tiles={s.Tiles}",
                 PrimitiveKind.Sphere => $"{head};r={F(s.Radius)};slices={s.Slices};stacks={s.Stacks}",
+                PrimitiveKind.Capsule => $"{head};r={F(s.Radius)};h={F(s.Height)};slices={s.Slices};stacks={s.Stacks}",
                 PrimitiveKind.Plane => $"{head};w={F(s.Width)};d={F(s.Depth)};tiles={s.Tiles}",
                 PrimitiveKind.Cylinder => $"{head};r={F(s.Radius)};h={F(s.Height)};slices={s.Slices};stacks={s.Stacks}",
                 PrimitiveKind.Cone => $"{head};r={F(s.Radius)};h={F(s.Height)};slices={s.Slices}",

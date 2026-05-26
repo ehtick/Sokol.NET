@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Numerics;
 using Frent;
+using GameEditor.Framework.Renderer;
 using GameEditor.Framework.Core;
 using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
@@ -413,11 +414,19 @@ namespace GameEditor.Framework.Scene
                 if (!world.TryGetComponent<RigidbodyComponent>(entity, out var rb)) continue;
                 if (!world.TryGetComponent<Transform>(entity, out var tr)) continue;
 
+                System.Numerics.Vector3[]? meshVerts = null;
+                if (rb.Shape == ColliderShape.ConvexHull &&
+                    world.TryGetComponent<MeshRenderer>(entity, out var mr) &&
+                    PrimitiveMeshSpec.TryParse(mr.MeshPath, out var spec))
+                {
+                    meshVerts = SceneRenderer.GetHullPoints(spec);
+                }
+
                 var desc = new BodyDesc(
                     tr.Position, tr.Rotation, tr.Scale,
                     rb.MotionType, rb.Mass, rb.UseGravity,
                     rb.Friction, rb.Restitution, rb.LinearDamping, rb.AngularDamping,
-                    rb.Shape, rb.IsTrigger, rb.Layer, rb.LayerMask);
+                    rb.Shape, rb.IsTrigger, rb.Layer, rb.LayerMask, meshVerts);
 
                 var handle = _physics.CreateBody(desc);
                 _entityToHandle[entity] = handle;

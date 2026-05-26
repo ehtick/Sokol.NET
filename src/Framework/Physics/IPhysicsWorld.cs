@@ -13,7 +13,7 @@ namespace GameEditor.Framework.Physics
         public static readonly PhysicsBodyHandle Invalid = new PhysicsBodyHandle(0);
     }
 
-    public enum ColliderShape { Box, Sphere, Capsule }
+    public enum ColliderShape { Box, Sphere, Capsule, Cylinder, Plane, ConvexHull }
 
     public enum RigidbodyMotionType { Dynamic, Static, Kinematic }
 
@@ -33,6 +33,7 @@ namespace GameEditor.Framework.Physics
         public readonly bool       IsTrigger;
         public readonly ushort     Layer;
         public readonly ushort     LayerMask;
+        public readonly Vector3[]? MeshVertices;
 
         public bool IsStatic => MotionType == RigidbodyMotionType.Static;
         public bool IsKinematic => MotionType == RigidbodyMotionType.Kinematic;
@@ -47,7 +48,8 @@ namespace GameEditor.Framework.Physics
             ColliderShape shape = ColliderShape.Box,
             bool isTrigger = false,
             ushort layer = 1,
-            ushort layerMask = 0xFFFF)
+            ushort layerMask = 0xFFFF,
+            Vector3[]? meshVertices = null)
         {
             Position   = position;
             Rotation   = rotation;
@@ -63,6 +65,7 @@ namespace GameEditor.Framework.Physics
             IsTrigger  = isTrigger;
             Layer      = layer;
             LayerMask  = layerMask;
+            MeshVertices = meshVertices;
         }
     }
 
