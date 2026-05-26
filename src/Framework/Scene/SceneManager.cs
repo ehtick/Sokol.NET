@@ -415,18 +415,25 @@ namespace GameEditor.Framework.Scene
                 if (!world.TryGetComponent<Transform>(entity, out var tr)) continue;
 
                 System.Numerics.Vector3[]? meshVerts = null;
+                uint[]? meshIndices = null;
                 if (rb.Shape == ColliderShape.ConvexHull &&
                     world.TryGetComponent<MeshRenderer>(entity, out var mr) &&
                     PrimitiveMeshSpec.TryParse(mr.MeshPath, out var spec))
                 {
                     meshVerts = SceneRenderer.GetHullPoints(spec);
                 }
+                else if (rb.Shape == ColliderShape.Mesh &&
+                    world.TryGetComponent<MeshRenderer>(entity, out var mr2) &&
+                    PrimitiveMeshSpec.TryParse(mr2.MeshPath, out var spec2))
+                {
+                    (meshVerts, meshIndices) = SceneRenderer.GetMeshTriangles(spec2);
+                }
 
                 var desc = new BodyDesc(
                     tr.Position, tr.Rotation, tr.Scale,
                     rb.MotionType, rb.Mass, rb.UseGravity,
                     rb.Friction, rb.Restitution, rb.LinearDamping, rb.AngularDamping,
-                    rb.Shape, rb.IsTrigger, rb.Layer, rb.LayerMask, meshVerts);
+                    rb.Shape, rb.IsTrigger, rb.Layer, rb.LayerMask, meshVerts, meshIndices);
 
                 var handle = _physics.CreateBody(desc);
                 _entityToHandle[entity] = handle;

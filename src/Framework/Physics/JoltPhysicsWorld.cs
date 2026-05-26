@@ -178,6 +178,28 @@ namespace GameEditor.Framework.Physics
                     cs.SetShapeSettings(hull);
                     break;
                 }
+                case ColliderShape.Mesh:
+                {
+                    if (desc.MeshVertices != null && desc.MeshIndices != null)
+                    {
+                        Vector3 s = desc.Scale;
+                        var pts = new JPH.Vec3f[desc.MeshVertices.Length];
+                        for (int i = 0; i < pts.Length; i++)
+                        {
+                            Vector3 v = desc.MeshVertices[i];
+                            pts[i] = new JPH.Vec3f(v.X * s.X, v.Y * s.Y, v.Z * s.Z);
+                        }
+                        using var mesh = JPH.MeshShapeSettingsFromIndexedMesh(pts, desc.MeshIndices);
+                        cs.SetShapeSettings(mesh);
+                    }
+                    else
+                    {
+                        // Fallback to box if geometry is missing
+                        using var ss = new JPH.BoxShapeSettings(new JPH.Vec3(desc.Scale.X * 0.5f, desc.Scale.Y * 0.5f, desc.Scale.Z * 0.5f));
+                        cs.SetShapeSettings(ss);
+                    }
+                    break;
+                }
                 default: // Box
                 {
                     using var ss = new JPH.BoxShapeSettings(new JPH.Vec3(desc.Scale.X * 0.5f, desc.Scale.Y * 0.5f, desc.Scale.Z * 0.5f));
@@ -205,6 +227,13 @@ namespace GameEditor.Framework.Physics
                     cs.mMotionType  = JPH.EMotionType.Dynamic;
                     cs.mObjectLayer = ObjLayerMoving;
                     break;
+            }
+
+            // MeshShape is static-only in Jolt — override regardless of MotionType
+            if (desc.Shape == ColliderShape.Mesh)
+            {
+                cs.mMotionType  = JPH.EMotionType.Static;
+                cs.mObjectLayer = ObjLayerNonMoving;
             }
 
             if (!desc.UseGravity)

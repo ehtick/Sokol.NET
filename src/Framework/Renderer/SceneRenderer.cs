@@ -703,5 +703,207 @@ namespace GameEditor.Framework.Renderer
 
             return pts.ToArray();
         }
+
+        /// <summary>
+        /// Returns (vertices, indices) in local mesh space for a MeshShape collider.
+        /// Indices are packed triples (CCW winding). Scale is NOT applied — multiply
+        /// each vertex by the entity Scale before passing to the physics engine.
+        /// </summary>
+        public static (Vector3[] Vertices, uint[] Indices) GetMeshTriangles(in PrimitiveMeshSpec spec)
+        {
+            var verts = new System.Collections.Generic.List<Vector3>(128);
+            var tris  = new System.Collections.Generic.List<uint>(384);
+
+            void Quad(uint a, uint b, uint c, uint d)
+            {
+                tris.Add(a); tris.Add(b); tris.Add(c);
+                tris.Add(a); tris.Add(c); tris.Add(d);
+            }
+
+            switch (spec.Kind)
+            {
+                case PrimitiveKind.Box:
+                {
+                    float hx = spec.Width * 0.5f, hy = spec.Height * 0.5f, hz = spec.Depth * 0.5f;
+                    verts.Add(new Vector3(-hx, -hy, -hz)); // 0
+                    verts.Add(new Vector3( hx, -hy, -hz)); // 1
+                    verts.Add(new Vector3( hx,  hy, -hz)); // 2
+                    verts.Add(new Vector3(-hx,  hy, -hz)); // 3
+                    verts.Add(new Vector3(-hx, -hy,  hz)); // 4
+                    verts.Add(new Vector3( hx, -hy,  hz)); // 5
+                    verts.Add(new Vector3( hx,  hy,  hz)); // 6
+                    verts.Add(new Vector3(-hx,  hy,  hz)); // 7
+                    Quad(0, 1, 2, 3); // front  (-Z)
+                    Quad(5, 4, 7, 6); // back   (+Z)
+                    Quad(4, 0, 3, 7); // left   (-X)
+                    Quad(1, 5, 6, 2); // right  (+X)
+                    Quad(3, 2, 6, 7); // top    (+Y)
+                    Quad(4, 5, 1, 0); // bottom (-Y)
+                    break;
+                }
+                case PrimitiveKind.Sphere:
+                {
+                    int sl = Math.Max(8, spec.Slices / 2), st = Math.Max(4, spec.Stacks / 2);
+                    float R = spec.Radius;
+                    for (int i = 0; i <= st; i++)
+                    {
+                        float v  = MathF.PI * i / st;
+                        float sv = MathF.Sin(v), cv = MathF.Cos(v);
+                        for (int j = 0; j <= sl; j++)
+                        {
+                            float u = MathF.Tau * j / sl;
+                            verts.Add(new Vector3(R * sv * MathF.Cos(u), R * cv, R * sv * MathF.Sin(u)));
+                        }
+                    }
+                    for (int i = 0; i < st; i++)
+                    for (int j = 0; j < sl; j++)
+                    {
+                        uint a = (uint)(i * (sl + 1) + j);
+                        uint b = a + 1;
+                        uint c = (uint)((i + 1) * (sl + 1) + j);
+                        uint d = c + 1;
+                        Quad(a, b, d, c);
+                    }
+                    break;
+                }
+                case PrimitiveKind.Plane:
+                {
+                    float hw = spec.Width * 0.5f, hd = spec.Depth * 0.5f;
+                    verts.Add(new Vector3(-hw, 0f, -hd)); // 0
+                    verts.Add(new Vector3( hw, 0f, -hd)); // 1
+                    verts.Add(new Vector3( hw, 0f,  hd)); // 2
+                    verts.Add(new Vector3(-hw, 0f,  hd)); // 3
+                    Quad(0, 1, 2, 3);
+                    break;
+                }
+                case PrimitiveKind.Capsule:
+                {
+                    float r = spec.Radius, hh = MathF.Max(0f, spec.Height * 0.5f - r);
+                    int sl = 12, hemi = 6;
+                    // Top hemisphere (pole → equator at y = +hh)
+                    for (int i = 0; i <= hemi; i++)
+                    {
+                        float v  = MathF.PI * 0.5f * i / hemi;
+                        float sv = MathF.Sin(v), cv = MathF.Cos(v);
+                        for (int j = 0; j <= sl; j++)
+                        {
+                            float u = MathF.Tau * j / sl;
+                            verts.Add(new Vector3(r * sv * MathF.Cos(u),  hh + r * cv, r * sv * MathF.Sin(u)));
+                        }
+                    }
+                    // Bottom hemisphere (equator at y = -hh → pole)
+                    for (int i = 0; i <= hemi; i++)
+                    {
+                        float v  = MathF.PI * 0.5f + MathF.PI * 0.5f * i / hemi;
+                        float sv = MathF.Sin(v), cv = MathF.Cos(v);
+                        for (int j = 0; j <= sl; j++)
+                        {
+                            float u = MathF.Tau * j / sl;
+                            verts.Add(new Vector3(r * sv * MathF.Cos(u), -hh + r * cv, r * sv * MathF.Sin(u)));
+                        }
+                    }
+                    int rows = (hemi + 1) * 2;
+                    for (int i = 0; i < rows - 1; i++)
+                    for (int j = 0; j < sl; j++)
+                    {
+                        uint a = (uint)(i * (sl + 1) + j);
+                        uint b = a + 1;
+                        uint c = (uint)((i + 1) * (sl + 1) + j);
+                        uint d = c + 1;
+                        Quad(a, b, d, c);
+                    }
+                    break;
+                }
+                case PrimitiveKind.Cylinder:
+                {
+                    float r = spec.Radius, hy = spec.Height * 0.5f;
+                    int sl = Math.Max(8, spec.Slices);
+                    verts.Add(new Vector3(0f,  hy, 0f)); // 0: top center
+                    verts.Add(new Vector3(0f, -hy, 0f)); // 1: bottom center
+                    for (int j = 0; j <= sl; j++)
+                    {
+                        float u = MathF.Tau * j / sl;
+                        verts.Add(new Vector3(r * MathF.Cos(u),  hy, r * MathF.Sin(u))); // top ring
+                        verts.Add(new Vector3(r * MathF.Cos(u), -hy, r * MathF.Sin(u))); // bottom ring
+                    }
+                    for (int j = 0; j < sl; j++)
+                    {
+                        uint t0 = (uint)(2 + j * 2);
+                        uint b0 = t0 + 1;
+                        uint t1 = (uint)(2 + (j + 1) * 2);
+                        uint b1 = t1 + 1;
+                        Quad(t0, t1, b1, b0); // barrel
+                        tris.Add(0);  tris.Add(t1); tris.Add(t0); // top cap
+                        tris.Add(1);  tris.Add(b0); tris.Add(b1); // bottom cap
+                    }
+                    break;
+                }
+                case PrimitiveKind.Cone:
+                case PrimitiveKind.Pyramid:
+                {
+                    int sides = Math.Max(3, spec.Kind == PrimitiveKind.Cone ? spec.Slices : spec.Sides);
+                    float r = spec.Radius, hy = spec.Height * 0.5f;
+                    verts.Add(new Vector3(0f,  hy, 0f)); // 0: apex
+                    verts.Add(new Vector3(0f, -hy, 0f)); // 1: base center
+                    for (int j = 0; j <= sides; j++)
+                    {
+                        float u = MathF.Tau * j / sides;
+                        verts.Add(new Vector3(r * MathF.Cos(u), -hy, r * MathF.Sin(u)));
+                    }
+                    for (int j = 0; j < sides; j++)
+                    {
+                        uint a = (uint)(2 + j);
+                        uint b = (uint)(2 + j + 1);
+                        tris.Add(0); tris.Add(b); tris.Add(a); // side
+                        tris.Add(1); tris.Add(a); tris.Add(b); // base cap
+                    }
+                    break;
+                }
+                case PrimitiveKind.Ring:
+                {
+                    float R = spec.Radius, r = spec.RingRadius;
+                    int nU = Math.Max(16, spec.Rings / 2), nV = Math.Max(8, spec.Sides / 2);
+                    for (int i = 0; i <= nU; i++)
+                    {
+                        float u  = MathF.Tau * i / nU;
+                        float cu = MathF.Cos(u), su = MathF.Sin(u);
+                        for (int j = 0; j <= nV; j++)
+                        {
+                            float v = MathF.Tau * j / nV;
+                            float d = R + r * MathF.Cos(v);
+                            verts.Add(new Vector3(d * cu, r * MathF.Sin(v), d * su));
+                        }
+                    }
+                    for (int i = 0; i < nU; i++)
+                    for (int j = 0; j < nV; j++)
+                    {
+                        uint a = (uint)(i * (nV + 1) + j);
+                        uint b = a + 1;
+                        uint c = (uint)((i + 1) * (nV + 1) + j);
+                        uint d = c + 1;
+                        Quad(a, b, d, c);
+                    }
+                    break;
+                }
+                default:
+                {
+                    // Fallback: unit box
+                    verts.Add(new Vector3(-0.5f, -0.5f, -0.5f));
+                    verts.Add(new Vector3( 0.5f, -0.5f, -0.5f));
+                    verts.Add(new Vector3( 0.5f,  0.5f, -0.5f));
+                    verts.Add(new Vector3(-0.5f,  0.5f, -0.5f));
+                    verts.Add(new Vector3(-0.5f, -0.5f,  0.5f));
+                    verts.Add(new Vector3( 0.5f, -0.5f,  0.5f));
+                    verts.Add(new Vector3( 0.5f,  0.5f,  0.5f));
+                    verts.Add(new Vector3(-0.5f,  0.5f,  0.5f));
+                    Quad(0, 1, 2, 3); Quad(5, 4, 7, 6);
+                    Quad(4, 0, 3, 7); Quad(1, 5, 6, 2);
+                    Quad(3, 2, 6, 7); Quad(4, 5, 1, 0);
+                    break;
+                }
+            }
+
+            return (verts.ToArray(), tris.ToArray());
+        }
     }
 }
