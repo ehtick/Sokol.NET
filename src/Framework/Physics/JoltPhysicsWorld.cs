@@ -236,6 +236,8 @@ namespace GameEditor.Framework.Physics
                 cs.mObjectLayer = ObjLayerNonMoving;
             }
 
+            var activation = (cs.mMotionType == JPH.EMotionType.Static) ? JPH.EActivation.DontActivate : JPH.EActivation.Activate;
+
             if (!desc.UseGravity)
                 cs.mGravityFactor = 0f;
 
@@ -246,7 +248,6 @@ namespace GameEditor.Framework.Physics
 
             cs.mIsSensor = desc.IsTrigger;
 
-            var activation = desc.IsStatic ? JPH.EActivation.DontActivate : JPH.EActivation.Activate;
             var bodyId = _bodyInterface.CreateAndAddBody(cs, activation);
 
             int handle = _nextHandle++;
@@ -291,6 +292,8 @@ namespace GameEditor.Framework.Physics
         public void MoveKinematic(PhysicsBodyHandle handle, Vector3 targetPosition, Quaternion targetRotation, float deltaTime)
         {
             if (!_handleToBodyId.TryGetValue(handle.Value, out var bodyId)) return;
+            // MeshShape bodies are forced to Static — guard against calling MoveKinematic on them
+            if (_bodyInterface?.GetMotionType(bodyId) != JPH.EMotionType.Kinematic) return;
             using var pos = new JPH.Vec3(targetPosition.X, targetPosition.Y, targetPosition.Z);
             using var rot = new JPH.Quat(targetRotation.X, targetRotation.Y, targetRotation.Z, targetRotation.W);
             _bodyInterface?.MoveKinematic(bodyId, pos, rot, deltaTime);
