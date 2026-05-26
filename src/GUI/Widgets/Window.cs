@@ -82,15 +82,39 @@ public class Window : Panel
         }
     }
 
+    // ─── Hit-testing ─────────────────────────────────────────────────────────
+    // Children are laid out from y=0 and would otherwise swallow clicks in the
+    // title bar area. Claim the title bar strip before descending into children.
+    public override Widget? HitTestDeep(Vector2 screenPoint)
+    {
+        if (!Visible || !Enabled) return null;
+        var local = ToLocal(screenPoint);
+        if (!HitTest(local)) return null;
+        // Title bar belongs to the Window regardless of what children overlap it.
+        if (local.Y < TitleBarHeight) return this;
+        // Content area: let children take priority as normal.
+        for (int i = Children.Count - 1; i >= 0; i--)
+        {
+            var h = Children[i].HitTestDeep(screenPoint);
+            if (h != null) return h;
+        }
+        return this;
+    }
+
     // ─── Input ───────────────────────────────────────────────────────────────
     public override bool OnMouseDown(MouseEvent e)
     {
         var local = e.LocalPosition;
         float tbH = TitleBarHeight;
+        float btnR  = tbH * 0.28f;
+        float btnCX = Bounds.Width - tbH * 0.5f;
+        float btnCY = tbH * 0.5f;
+        float dx    = local.X - btnCX, dy = local.Y - btnCY;
 
         // Close button hit
-        if (IsClosable && local.Y < tbH && local.X > Bounds.Width - tbH)
+        if (IsClosable && dx * dx + dy * dy <= btnR * btnR)
         {
+            _hoverClose = false;
             Visible = false;
             Closed?.Invoke();
             return true;
@@ -111,7 +135,12 @@ public class Window : Panel
     {
         var local  = e.LocalPosition;
         float tbH  = TitleBarHeight;
-        _hoverClose = IsClosable && local.Y < tbH && local.X > Bounds.Width - tbH;
+        float tbH2  = TitleBarHeight;
+        float btnR2 = tbH2 * 0.28f;
+        float btnCX2 = Bounds.Width - tbH2 * 0.5f;
+        float btnCY2 = tbH2 * 0.5f;
+        float dx2 = local.X - btnCX2, dy2 = local.Y - btnCY2;
+        _hoverClose = IsClosable && dx2 * dx2 + dy2 * dy2 <= btnR2 * btnR2;
 
         if (_dragging && Parent != null)
         {
