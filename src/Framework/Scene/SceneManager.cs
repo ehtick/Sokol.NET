@@ -224,10 +224,7 @@ namespace GameEditor.Framework.Scene
                 if (cam.NearZ <= 0f || cam.FarZ <= cam.NearZ) continue; // skip degenerate projection
                 if (!world.TryGetComponent<Transform>(id, out var tr)) continue;
 
-                Matrix4x4 rotMat = Matrix4x4.CreateFromYawPitchRoll(
-                    tr.EulerAngles.Y * MathF.PI / 180f,
-                    tr.EulerAngles.X * MathF.PI / 180f,
-                    tr.EulerAngles.Z * MathF.PI / 180f);
+                Matrix4x4 rotMat = Matrix4x4.CreateFromQuaternion(tr.Rotation);
 
                 // Use the rotation matrix's +Z column as forward (matches gizmo convention)
                 Vector3 forward = new Vector3(rotMat.M31, rotMat.M32, rotMat.M33);
@@ -266,12 +263,8 @@ namespace GameEditor.Framework.Scene
                 if (rb.MotionType != RigidbodyMotionType.Kinematic) continue;
                 if (!world.TryGetComponent<Transform>(entity, out var tr)) continue;
 
-                var rot = Quaternion.CreateFromYawPitchRoll(
-                    tr.EulerAngles.Y * MathF.PI / 180f,
-                    tr.EulerAngles.X * MathF.PI / 180f,
-                    tr.EulerAngles.Z * MathF.PI / 180f);
                 // MoveKinematic computes implicit velocity so the body correctly pushes dynamic bodies.
-                _physics.MoveKinematic(handle, tr.Position, rot, deltaTime);
+                _physics.MoveKinematic(handle, tr.Position, tr.Rotation, deltaTime);
             }
 
             _physics.Step(deltaTime);
@@ -288,7 +281,7 @@ namespace GameEditor.Framework.Scene
                 var rot = _physics.GetRotation(handle);
 
                 tr.Position = pos;
-                tr.EulerAngles = QuaternionToEuler(rot);
+                tr.Rotation = rot;
                 world.AddComponent(entity, tr);
             }
         }
@@ -403,31 +396,9 @@ namespace GameEditor.Framework.Scene
             if (!world.TryGetComponent<Transform>(entity, out var tr)) return true;
 
             tr.Position = position;
-            tr.EulerAngles = Transform.QuaternionToEuler(rotation);
+            tr.Rotation = rotation;
             world.AddComponent(entity, tr);
             return true;
-        }
-
-        static Vector3 QuaternionToEuler(Quaternion q)
-        {
-            // Roll (X)
-            float sinrCosp = 2f * (q.W * q.X + q.Y * q.Z);
-            float cosrCosp = 1f - 2f * (q.X * q.X + q.Y * q.Y);
-            float roll = MathF.Atan2(sinrCosp, cosrCosp);
-
-            // Pitch (Y)
-            float sinp = 2f * (q.W * q.Y - q.Z * q.X);
-            float pitch = MathF.Abs(sinp) >= 1f
-                ? MathF.CopySign(MathF.PI / 2f, sinp)
-                : MathF.Asin(sinp);
-
-            // Yaw (Z)
-            float sinyCosp = 2f * (q.W * q.Z + q.X * q.Y);
-            float cosyCosp = 1f - 2f * (q.Y * q.Y + q.Z * q.Z);
-            float yaw = MathF.Atan2(sinyCosp, cosyCosp);
-
-            const float toDeg = 180f / MathF.PI;
-            return new Vector3(roll * toDeg, pitch * toDeg, yaw * toDeg);
         }
 
         static void InitializePhysics()
@@ -442,13 +413,8 @@ namespace GameEditor.Framework.Scene
                 if (!world.TryGetComponent<RigidbodyComponent>(entity, out var rb)) continue;
                 if (!world.TryGetComponent<Transform>(entity, out var tr)) continue;
 
-                var rot = Quaternion.CreateFromYawPitchRoll(
-                    tr.EulerAngles.Y * MathF.PI / 180f,
-                    tr.EulerAngles.X * MathF.PI / 180f,
-                    tr.EulerAngles.Z * MathF.PI / 180f);
-
                 var desc = new BodyDesc(
-                    tr.Position, rot, tr.Scale,
+                    tr.Position, tr.Rotation, tr.Scale,
                     rb.MotionType, rb.Mass, rb.UseGravity,
                     rb.Friction, rb.Restitution, rb.LinearDamping, rb.AngularDamping,
                     rb.Shape, rb.IsTrigger, rb.Layer, rb.LayerMask);

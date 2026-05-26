@@ -8,25 +8,34 @@ namespace GameEditor.Framework.ECS.Components
 {
     public struct Transform
     {
-        public Vector3 Position;
-        public Vector3 EulerAngles;
-        public Vector3 Scale;
-        public Entity? Parent;
+        public Vector3    Position;
+        /// <summary>Canonical rotation storage. Use this in all hot paths (physics, rendering).</summary>
+        public Quaternion Rotation;
+        public Vector3    Scale;
+        public Entity?    Parent;
+
+        /// <summary>Euler angles in degrees (YXZ order). Computed from <see cref="Rotation"/>.
+        /// Prefer <see cref="Rotation"/> in hot paths to avoid decomposition overhead.</summary>
+        public Vector3 EulerAngles
+        {
+            get => QuaternionToEuler(Rotation);
+            set => Rotation = Quaternion.CreateFromYawPitchRoll(
+                value.Y * MathF.PI / 180f,
+                value.X * MathF.PI / 180f,
+                value.Z * MathF.PI / 180f);
+        }
 
         public static Transform Default => new Transform
         {
             Position = Vector3.Zero,
-            EulerAngles = Vector3.Zero,
-            Scale = Vector3.One,
-            Parent = null
+            Rotation = Quaternion.Identity,
+            Scale    = Vector3.One,
+            Parent   = null
         };
 
         public Matrix4x4 LocalMatrix =>
             Matrix4x4.CreateScale(Scale) *
-            Matrix4x4.CreateFromYawPitchRoll(
-                EulerAngles.Y * MathF.PI / 180f,
-                EulerAngles.X * MathF.PI / 180f,
-                EulerAngles.Z * MathF.PI / 180f) *
+            Matrix4x4.CreateFromQuaternion(Rotation) *
             Matrix4x4.CreateTranslation(Position);
 
         // Walks the parent chain to compute the world-space matrix.
@@ -65,10 +74,7 @@ namespace GameEditor.Framework.ECS.Components
         {
             get
             {
-                var rot = Matrix4x4.CreateFromYawPitchRoll(
-                    EulerAngles.Y * MathF.PI / 180f,
-                    EulerAngles.X * MathF.PI / 180f,
-                    EulerAngles.Z * MathF.PI / 180f);
+                var rot = Matrix4x4.CreateFromQuaternion(Rotation);
                 return new Vector3(rot.M31, rot.M32, rot.M33);
             }
         }

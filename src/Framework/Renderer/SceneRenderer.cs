@@ -96,10 +96,7 @@ namespace GameEditor.Framework.Renderer
                 if (!world.TryGetComponent<LightComponent>(lid, out var lc)) continue;
                 if (!world.TryGetComponent<Transform>(lid, out var lt)) continue;
 
-                var rot = Matrix4x4.CreateFromYawPitchRoll(
-                    lt.EulerAngles.Y * MathF.PI / 180f,
-                    lt.EulerAngles.X * MathF.PI / 180f,
-                    lt.EulerAngles.Z * MathF.PI / 180f);
+                var rot = Matrix4x4.CreateFromQuaternion(lt.Rotation);
                 var fwd = new Vector3(rot.M31, rot.M32, rot.M33);
 
                 int b = lightCount * 4;
