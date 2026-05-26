@@ -40,6 +40,10 @@ public sealed class DockSpace : Widget
 
     private Vector2 _tabReorderMouseLocal; // current mouse position (local) during reorder
 
+    // Hover state for tab highlighting (no drag in progress).
+    private DockNode? _hoveredTabLeaf;
+    private int       _hoveredTabIdx = -1;
+
     /// <summary>The DockManager that owns this DockSpace (set by the DockManager constructor).</summary>
     internal DockManager? Manager { get; set; }
 
@@ -226,10 +230,12 @@ public sealed class DockSpace : Widget
             }
             else
             {
+                bool isHovered = _hoveredTabLeaf == leaf && _hoveredTabIdx == i;
+                var baseColor = isHovered ? theme.TabBarColor.Lighten(0.12f) : theme.TabBarColor;
                 var insetGrad = renderer.BoxGradient(tabRect, cr, 4f,
-                    theme.TabBarColor.Darken(0.12f), theme.TabBarColor.Lighten(0.04f));
+                    baseColor.Darken(0.12f), baseColor.Lighten(0.04f));
                 renderer.FillRoundedRectTopWithPaint(tabRect, cr, insetGrad);
-                renderer.StrokeRoundedRectTop(tabRect, cr, 1f, theme.TabBorder.WithAlpha(0.6f));
+                renderer.StrokeRoundedRectTop(tabRect, cr, 1f, theme.TabBorder.WithAlpha(isHovered ? 0.9f : 0.6f));
             }
 
             var labelColor = isActive ? theme.TabText : theme.TextMutedColor;
@@ -308,8 +314,9 @@ public sealed class DockSpace : Widget
             return true;
         }
 
-        // Tab hit?
-        var (leaf, tabIdx, tabRect) = HitTabInternal(local);
+        // Tab hit? Use nearest-fallback so clicking in a small gap still works,
+        // but not past the last tab's right edge.
+        var (leaf, tabIdx, tabRect) = HitTabInternal(local, nearestFallback: true);
         if (leaf != null && tabIdx >= 0)
         {
             leaf.ActivePanelIndex = tabIdx;
@@ -342,6 +349,8 @@ public sealed class DockSpace : Widget
 
         if (_draggingTabPanel != null)
         {
+            _hoveredTabLeaf = null;
+            _hoveredTabIdx  = -1;
             var delta = e.Position - _tabDragStartScreen;
             if (!_tabDragBegun && (MathF.Abs(delta.X) > 5f || MathF.Abs(delta.Y) > 5f))
             {
@@ -393,6 +402,11 @@ public sealed class DockSpace : Widget
             }
             return true;
         }
+
+        // Track which tab the cursor is over for hover highlighting.
+        var (hLeaf, hIdx, _) = HitTabInternal(ToLocal(e.Position));
+        _hoveredTabLeaf = hLeaf;
+        _hoveredTabIdx  = hIdx;
         return false;
     }
 
@@ -414,6 +428,13 @@ public sealed class DockSpace : Widget
         _tabReorderInsertX   = -1f;
         _tabReorderInsertIdx = -1;
         return handled;
+    }
+
+    public override bool OnMouseLeave(MouseEvent e)
+    {
+        _hoveredTabLeaf = null;
+        _hoveredTabIdx  = -1;
+        return false;
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -480,24 +501,59 @@ public sealed class DockSpace : Widget
             ?? (node.Second != null ? FindDividerAt(node.Second, local) : null);
     }
 
-    internal (DockNode? Leaf, int TabIndex, Rect TabRect) HitTabInternal(Vector2 local)
+    /// <param name="nearestFallback">
+    /// When true the function returns the nearest tab if the point is in the tab
+    /// bar but between/before tabs — but only if the point is within the span of
+    /// all tabs (not past the last tab's right edge). Set false for hover tracking
+    /// so empty space never lights up a tab.
+    /// </param>
+    internal (DockNode? Leaf, int TabIndex, Rect TabRect) HitTabInternal(Vector2 local, bool nearestFallback = false)
     {
         foreach (var leaf in Root.EnumerateLeaves())
         {
             var b = leaf.ComputedBounds;
             var tabBar = new Rect(b.X, b.Y, b.Width, TabBarHeight);
             if (!tabBar.Contains(local)) continue;
-            float x = b.X + 4f;
-            var renderer = Screen.Instance?.Renderer;
-            for (int i = 0; i < leaf.Panels.Count; i++)
+
+            // Use the per-frame cached widths when available (populated by DrawLeaf).
+            if (!_tabWidthCache.TryGetValue(leaf, out var cachedWidths))
             {
-                string title = leaf.Panels[i].Title;
-                float textW = renderer?.MeasureText(title) ?? (title.Length * 7f);
-                float tabW = textW + TabPaddingH * 2f;
-                var tabRect = new Rect(x, b.Y + 2f, tabW, TabBarHeight - 3f);
+                var r2 = Screen.Instance?.Renderer;
+                cachedWidths = new float[leaf.Panels.Count];
+                for (int i = 0; i < leaf.Panels.Count; i++)
+                {
+                    string t = leaf.Panels[i].Title;
+                    cachedWidths[i] = (r2?.MeasureText(t) ?? t.Length * 7f) + TabPaddingH * 2f;
+                }
+            }
+
+            float x = b.X + 4f;
+            int   nearestIdx  = -1;
+            float nearestDist = float.MaxValue;
+            Rect  nearestRect = Rect.Empty;
+            float tabsEndX    = x; // will be updated to the right edge of the last tab
+
+            for (int i = 0; i < cachedWidths.Length && i < leaf.Panels.Count; i++)
+            {
+                float tabW = cachedWidths[i];
+                // Use full tab-bar height for hit-testing so clicks anywhere in the
+                // bar row (top, bottom, small gaps) register on the right tab.
+                var tabRect = new Rect(x, b.Y, tabW, TabBarHeight);
                 if (tabRect.Contains(local)) return (leaf, i, tabRect);
+
+                // Track the nearest tab by horizontal distance for fallback.
+                float dist = MathF.Abs(local.X - (x + tabW * 0.5f));
+                if (dist < nearestDist) { nearestDist = dist; nearestIdx = i; nearestRect = tabRect; }
+                tabsEndX = x + tabW;
                 x += tabW + 2f;
             }
+
+            // Fallback: point is in the tab bar but landed in a gap between/before
+            // tabs. Only activate when the cursor is within the horizontal span of all
+            // tabs so that clicking/hovering in the empty area past the last tab does
+            // NOT highlight or activate anything.
+            if (nearestFallback && nearestIdx >= 0 && local.X <= tabsEndX)
+                return (leaf, nearestIdx, nearestRect);
         }
         return (null, -1, Rect.Empty);
     }
