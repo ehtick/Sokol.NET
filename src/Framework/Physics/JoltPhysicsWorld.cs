@@ -32,6 +32,28 @@ namespace GameEditor.Framework.Physics
         int _nextConstraintHandle = 1;
         readonly Dictionary<int, JPH.TwoBodyConstraint> _constraintMap = new();
 
+        // ── Character controllers ─────────────────────────────────────────────
+        JPH.TempAllocatorImpl? _charTempAlloc;
+        int _nextCharHandle = 1;
+        readonly Dictionary<int, CharState> _charStates = new();
+
+        private sealed class CharState : IDisposable
+        {
+            public required JPH.CharacterVirtual     Character;
+            public required JPH.RotatedTranslatedShape RotTransShape;
+            public required JPH.CapsuleShape           CapsuleShapeObj;
+            public Vector3 DesiredVelocity;
+            private bool _disposed;
+            public void Dispose()
+            {
+                if (_disposed) return;
+                _disposed = true;
+                Character.Dispose();
+                RotTransShape.Dispose();
+                CapsuleShapeObj.Dispose();
+            }
+        }
+
         enum EvKind { CollisionEnter, CollisionStay, CollisionExit, TriggerEnter, TriggerExit }
         readonly record struct CollEv(uint PackedA, uint PackedB, ContactPoint Contact, EvKind Kind);
         readonly List<CollEv> _pending = new();
@@ -86,6 +108,8 @@ namespace GameEditor.Framework.Physics
             while (_accumulator >= FixedDt)
             {
                 _physics.Update(FixedDt, 1, _tempAlloc, _jobSystem);
+                if (_charStates.Count > 0)
+                    StepAllCharacters(FixedDt);
                 _accumulator -= FixedDt;
             }
 
@@ -104,6 +128,11 @@ namespace GameEditor.Framework.Physics
             foreach (var (_, constraint) in _constraintMap)
                 _physics?.RemoveConstraint(constraint);
             _constraintMap.Clear();
+
+            foreach (var state in _charStates.Values)
+                state.Dispose();
+            _charStates.Clear();
+            _charTempAlloc?.Dispose(); _charTempAlloc = null;
 
             foreach (var (handle, bodyId) in _handleToBodyId)
             {
@@ -611,6 +640,161 @@ namespace GameEditor.Framework.Physics
         public void SetCollisionListener(ICollisionListener? listener)
         {
             _gameListener = listener;
+        }
+
+        // ── Character controller implementation ───────────────────────────────
+
+        public CharacterHandle CreateCharacter(CharacterDesc desc)
+        {
+            if (_physics == null)
+                throw new InvalidOperationException("JoltPhysicsWorld not initialized.");
+
+            _charTempAlloc ??= new JPH.TempAllocatorImpl(4 * 1024 * 1024);
+
+            // Build capsule: feet at the character's position, top at position + height.
+            // RotatedTranslatedShape offsets the capsule so its base aligns with position.
+            float halfHeight = MathF.Max(0f, desc.Height * 0.5f - desc.Radius);
+            var capsule   = new JPH.CapsuleShape(halfHeight, desc.Radius);
+            using var offset   = new JPH.Vec3(0f, halfHeight + desc.Radius, 0f);
+            using var identRot = JPH.Quat.SIdentity();
+            var rotTrans = new JPH.RotatedTranslatedShape(offset, identRot, capsule);
+
+            using var settings = new JPH.CharacterVirtualSettings();
+            settings.mMaxSlopeAngle  = desc.MaxSlopeAngle;
+            settings.mMaxStrength    = desc.MaxStrength;
+            settings.mMass           = desc.Mass;
+            settings.mInnerBodyLayer = ObjLayerMoving;
+            settings.SetShape((JPH.Const_RotatedTranslatedShape)rotTrans);
+
+            // SupportingVolume: treat contact points at or below -radius as ground support.
+            var supVol = settings.mSupportingVolume;
+            using var axisY = new JPH.Vec3(0f, 1f, 0f);
+            supVol.SetNormal(axisY);
+            supVol.SetConstant(-desc.Radius);
+
+            using var pos = new JPH.Vec3(desc.Position.X, desc.Position.Y, desc.Position.Z);
+            using var rot = new JPH.Quat(desc.Rotation.X, desc.Rotation.Y, desc.Rotation.Z, desc.Rotation.W);
+
+            var character = new JPH.CharacterVirtual(settings, pos, rot, 0, _physics);
+
+            int h = _nextCharHandle++;
+            _charStates[h] = new CharState
+            {
+                Character       = character,
+                RotTransShape   = rotTrans,
+                CapsuleShapeObj = capsule,
+                DesiredVelocity = Vector3.Zero,
+            };
+            return new CharacterHandle(h);
+        }
+
+        public void DestroyCharacter(CharacterHandle handle)
+        {
+            if (!_charStates.TryGetValue(handle.Value, out var state)) return;
+            state.Dispose();
+            _charStates.Remove(handle.Value);
+        }
+
+        public void SetCharacterLinearVelocity(CharacterHandle handle, Vector3 velocity)
+        {
+            if (_charStates.TryGetValue(handle.Value, out var state))
+                state.DesiredVelocity = velocity;
+        }
+
+        public Vector3 GetCharacterPosition(CharacterHandle handle)
+        {
+            if (!_charStates.TryGetValue(handle.Value, out var state)) return Vector3.Zero;
+            using var p = state.Character.GetPosition();
+            return new Vector3(p.GetX(), p.GetY(), p.GetZ());
+        }
+
+        public Quaternion GetCharacterRotation(CharacterHandle handle)
+        {
+            if (!_charStates.TryGetValue(handle.Value, out var state)) return Quaternion.Identity;
+            using var r = state.Character.GetRotation();
+            return new Quaternion(r.GetX(), r.GetY(), r.GetZ(), r.GetW());
+        }
+
+        public void SetCharacterPosition(CharacterHandle handle, Vector3 position)
+        {
+            if (!_charStates.TryGetValue(handle.Value, out var state)) return;
+            using var p = new JPH.Vec3(position.X, position.Y, position.Z);
+            state.Character.SetPosition(p);
+        }
+
+        public bool IsCharacterGrounded(CharacterHandle handle)
+        {
+            if (!_charStates.TryGetValue(handle.Value, out var state)) return false;
+            return state.Character.GetGroundState() == JPH.CharacterBase.EGroundState.OnGround;
+        }
+
+        public Vector3 GetCharacterGroundNormal(CharacterHandle handle)
+        {
+            if (!_charStates.TryGetValue(handle.Value, out var state)) return Vector3.UnitY;
+            using var n = state.Character.GetGroundNormal();
+            return new Vector3(n.GetX(), n.GetY(), n.GetZ());
+        }
+
+        private void StepAllCharacters(float dt)
+        {
+            if (_physics == null || _charTempAlloc == null) return;
+
+            using var gravVec = _physics.GetGravity();
+            var g  = new Vector3(gravVec.GetX(), gravVec.GetY(), gravVec.GetZ());
+            var up = Vector3.UnitY;
+
+            using var extSettings = new JPH.CharacterVirtual.ExtendedUpdateSettings();
+            using var bpFilter    = _physics.GetDefaultBroadPhaseLayerFilter(ObjLayerMoving);
+            using var layerFilter = _physics.GetDefaultLayerFilter(ObjLayerMoving);
+            using var bodyFilter  = new JPH.BodyFilter();
+            using var shapeFilter = new JPH.ShapeFilter();
+
+            foreach (var state in _charStates.Values)
+            {
+                var ch = state.Character;
+
+                ch.UpdateGroundVelocity();
+
+                using var curVelJph = ch.GetLinearVelocity();
+                var curVel  = new Vector3(curVelJph.GetX(), curVelJph.GetY(), curVelJph.GetZ());
+                float vertV = Vector3.Dot(curVel, up);
+
+                bool onGround = ch.GetGroundState() == JPH.CharacterBase.EGroundState.OnGround;
+
+                Vector3 newVel;
+                if (onGround && vertV <= 0f)
+                {
+                    // Follow ground platform velocity (moving platforms work automatically)
+                    using var gVelJph = ch.GetGroundVelocity();
+                    newVel = new Vector3(gVelJph.GetX(), gVelJph.GetY(), gVelJph.GetZ());
+                }
+                else
+                {
+                    // In air: preserve vertical, apply gravity
+                    newVel  = vertV * up;
+                    newVel += g * dt;
+                }
+
+                // Apply caller-supplied horizontal/jump velocity
+                using var gNormJph = ch.GetGroundNormal();
+                bool tooSteep = onGround && ch.IsSlopeTooSteep(gNormJph);
+                if (!tooSteep)
+                {
+                    newVel.X += state.DesiredVelocity.X;
+                    newVel.Z += state.DesiredVelocity.Z;
+                    // Jump: caller sets positive Y via SetCharacterLinearVelocity
+                    if (state.DesiredVelocity.Y > 0f)
+                        newVel.Y = state.DesiredVelocity.Y;
+                }
+
+                using var newVelJph = new JPH.Vec3(newVel.X, newVel.Y, newVel.Z);
+                ch.SetLinearVelocity(newVelJph);
+
+                ch.ExtendedUpdate(dt, gravVec, extSettings, bpFilter, layerFilter, bodyFilter, shapeFilter, _charTempAlloc);
+
+                // Desired velocity is consumed each physics step; caller refreshes it every frame.
+                state.DesiredVelocity = Vector3.Zero;
+            }
         }
 
         // ---- Contact listener -----------------------------------------------

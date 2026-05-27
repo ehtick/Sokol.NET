@@ -20,8 +20,10 @@ namespace GameEditor.Framework.Scene
 
         // ---- Physics -------------------------------------------------------
         private static IPhysicsWorld? _physics;
-        private static readonly Dictionary<Entity, PhysicsBodyHandle> _entityToHandle = new();
-        private static readonly Dictionary<int, Entity> _handleToEntity = new();
+        private static readonly Dictionary<Entity, PhysicsBodyHandle>      _entityToHandle    = new();
+        private static readonly Dictionary<int, Entity>                     _handleToEntity    = new();
+        private static readonly Dictionary<Entity, CharacterHandle>         _entityToCharHandle = new();
+        private static readonly Dictionary<int, Entity>                     _charHandleToEntity = new();
 
         private sealed class PhysicsCollisionDispatcher : ICollisionListener
         {
@@ -285,6 +287,16 @@ namespace GameEditor.Framework.Scene
                 tr.Rotation = rot;
                 world.AddComponent(entity, tr);
             }
+
+            // Post-step: sync character controller positions back to Transform.
+            foreach (var (entity, charHandle) in _entityToCharHandle)
+            {
+                if (!world.TryGetComponent<Transform>(entity, out var tr)) continue;
+
+                tr.Position = _physics.GetCharacterPosition(charHandle);
+                tr.Rotation = _physics.GetCharacterRotation(charHandle);
+                world.AddComponent(entity, tr);
+            }
         }
 
         public static bool Raycast(Vector3 origin, Vector3 direction, float maxDistance, out Entity hitEntity, out RaycastHit hit)
@@ -471,6 +483,29 @@ namespace GameEditor.Framework.Scene
                 cc.RuntimeHandle = ch;
                 world.AddComponent(entity, cc);
             }
+
+            // Create character controllers.
+            foreach (Entity entity in world.Entities)
+            {
+                if (!world.TryGetComponent<CharacterComponent>(entity, out var cc)) continue;
+                if (!world.TryGetComponent<Transform>(entity, out var tr)) continue;
+
+                var charDesc = new CharacterDesc
+                {
+                    Position     = tr.Position,
+                    Rotation     = tr.Rotation,
+                    Height       = cc.Height,
+                    Radius       = cc.Radius,
+                    MaxSlopeAngle = cc.MaxSlopeAngle,
+                    MaxStrength  = cc.MaxStrength,
+                    Mass         = cc.Mass,
+                    Layer        = cc.Layer,
+                    LayerMask    = cc.LayerMask,
+                };
+                var charHandle = _physics.CreateCharacter(charDesc);
+                _entityToCharHandle[entity] = charHandle;
+                _charHandleToEntity[charHandle.Value] = entity;
+            }
         }
 
         /// <summary>
@@ -515,11 +550,40 @@ namespace GameEditor.Framework.Scene
                 world.AddComponent(entity, cc);
             }
 
+            // Destroy character controllers.
+            foreach (var (_, charHandle) in _entityToCharHandle)
+                _physics?.DestroyCharacter(charHandle);
+            _entityToCharHandle.Clear();
+            _charHandleToEntity.Clear();
+
             _physics?.Shutdown();
             _physics = null;
             _entityToHandle.Clear();
             _handleToEntity.Clear();
             Logger.Info("[SceneManager] Physics shutdown.");
+        }
+
+        // ---- Character controller helpers (called by GameBehaviour) --------
+
+        public static bool MoveCharacter(Entity entity, Vector3 velocity)
+        {
+            if (_physics == null || !_entityToCharHandle.TryGetValue(entity, out var h)) return false;
+            _physics.SetCharacterLinearVelocity(h, velocity);
+            return true;
+        }
+
+        public static bool IsCharacterGrounded(Entity entity)
+        {
+            if (_physics == null || !_entityToCharHandle.TryGetValue(entity, out var h)) return false;
+            return _physics.IsCharacterGrounded(h);
+        }
+
+        public static bool TryGetCharacterGroundNormal(Entity entity, out Vector3 normal)
+        {
+            normal = Vector3.Zero;
+            if (_physics == null || !_entityToCharHandle.TryGetValue(entity, out var h)) return false;
+            normal = _physics.GetCharacterGroundNormal(h);
+            return true;
         }
     }
 }

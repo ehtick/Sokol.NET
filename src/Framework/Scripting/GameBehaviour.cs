@@ -242,6 +242,17 @@ namespace GameEditor.Framework.Scripting
 
         protected int OverlapBox(Vector3 center, Vector3 halfExtents, Quaternion rotation, List<Entity> results, int maxResults = 64)
             => SceneManager.OverlapBox(center, halfExtents, rotation, results, maxResults);
+
+        // ---- Character controller helpers ----------------------------------
+
+        protected bool IsGrounded()
+            => SceneManager.IsCharacterGrounded(EntityId);
+
+        protected void MoveCharacter(Vector3 velocity)
+            => SceneManager.MoveCharacter(EntityId, velocity);
+
+        protected bool TryGetCharacterGroundNormal(out Vector3 normal)
+            => SceneManager.TryGetCharacterGroundNormal(EntityId, out normal);
     }
 }
 

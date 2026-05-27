@@ -149,6 +149,35 @@ namespace GameEditor.Framework.ECS.Components
         }
     }
 
+    public struct CharacterComponent
+    {
+        /// <summary>Total height of the capsule (cylindrical portion + two hemispheres), in metres.</summary>
+        public float Height;
+        /// <summary>Capsule radius in metres.</summary>
+        public float Radius;
+        /// <summary>Maximum climbable slope angle in radians (default π/4 = 45°).</summary>
+        public float MaxSlopeAngle;
+        /// <summary>Maximum push force against other bodies, in Newtons.</summary>
+        public float MaxStrength;
+        /// <summary>Character mass in kg.</summary>
+        public float Mass;
+        /// <summary>Physics layer this character occupies (typically the Moving layer).</summary>
+        public ushort Layer;
+        /// <summary>Bitmask of layers this character collides with.</summary>
+        public ushort LayerMask;
+
+        public static CharacterComponent Default => new CharacterComponent
+        {
+            Height        = 1.8f,
+            Radius        = 0.35f,
+            MaxSlopeAngle = MathF.PI / 4f,
+            MaxStrength   = 100f,
+            Mass          = 70f,
+            Layer         = 1,
+            LayerMask     = 0xFFFF,
+        };
+    }
+
     public struct ScriptComponent
     {
         public string TypeName;

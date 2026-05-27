@@ -116,6 +116,33 @@ namespace GameEditor.Framework.Physics
         }
     }
 
+    /// <summary>Opaque handle to a character controller (CharacterVirtual).</summary>
+    public readonly struct CharacterHandle
+    {
+        public readonly int Value;
+        public bool IsValid => Value > 0;
+
+        public CharacterHandle(int value) => Value = value;
+        public static readonly CharacterHandle Invalid = new CharacterHandle(0);
+    }
+
+    /// <summary>Describes a character controller to create.</summary>
+    public struct CharacterDesc
+    {
+        public Vector3    Position;
+        public Quaternion Rotation;
+        /// <summary>Total capsule height (cylindrical + 2 hemispheres), metres.</summary>
+        public float Height;
+        public float Radius;
+        /// <summary>Maximum slope the character can climb, radians.</summary>
+        public float MaxSlopeAngle;
+        /// <summary>Maximum force the character exerts on other bodies, Newtons.</summary>
+        public float MaxStrength;
+        public float Mass;
+        public ushort Layer;
+        public ushort LayerMask;
+    }
+
     /// <summary>Opaque handle to a physics constraint.</summary>
     public readonly struct ConstraintHandle
     {
@@ -212,5 +239,17 @@ namespace GameEditor.Framework.Physics
         void             SetConstraintEnabled(ConstraintHandle handle, bool enabled);
 
         void SetCollisionListener(ICollisionListener? listener);
+
+        // ── Character controllers ────────────────────────────────────────────
+
+        CharacterHandle CreateCharacter(CharacterDesc desc);
+        void            DestroyCharacter(CharacterHandle handle);
+        /// <summary>Sets the desired world-space velocity for the character (XZ = movement, Y is managed internally by gravity/ground).</summary>
+        void            SetCharacterLinearVelocity(CharacterHandle handle, Vector3 velocity);
+        Vector3         GetCharacterPosition(CharacterHandle handle);
+        Quaternion      GetCharacterRotation(CharacterHandle handle);
+        void            SetCharacterPosition(CharacterHandle handle, Vector3 position);
+        bool            IsCharacterGrounded(CharacterHandle handle);
+        Vector3         GetCharacterGroundNormal(CharacterHandle handle);
     }
 }
