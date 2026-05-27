@@ -35,6 +35,29 @@ namespace GameEditor.Framework.ECS
 
         public IReadOnlyList<Entity> Entities => _entities;
 
+        // ── Name lookup with ALC bridge ───────────────────────────────────────
+        // When the game DLL runs in an isolated AssemblyLoadContext its ECSWorld
+        // singleton has an empty _entities list.  GameAssemblyRunner calls
+        // RegisterFindByNameCallback so lookups are forwarded to the host world.
+
+        private static Func<string, Entity?>? _findByNameBridge;
+
+        public static void RegisterFindByNameCallback(Func<string, Entity?> fn)
+            => _findByNameBridge = fn;
+
+        /// <summary>
+        /// Returns the first entity whose <see cref="NameTag.Name"/> equals
+        /// <paramref name="name"/>, or <see langword="null"/> if not found.
+        /// </summary>
+        public Entity? FindEntityByName(string name)
+        {
+            if (_findByNameBridge != null) return _findByNameBridge(name);
+            foreach (var e in _entities)
+                if (TryGetComponent<NameTag>(e, out var tag) && tag.Name == name)
+                    return e;
+            return null;
+        }
+
         /// <summary>
         /// Replaces the internal entity ordering with <paramref name="orderedEntities"/>.
         /// Entities not present in the input are appended in their existing relative order.
