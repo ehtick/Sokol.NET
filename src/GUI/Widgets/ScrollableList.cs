@@ -64,6 +64,8 @@ public abstract class ScrollableList : Widget
         float h      = Bounds.Height;
         float sb     = theme.ScrollBarWidth;
         float totalH = ItemCount * ItemHeight;
+        float maxScr = MathF.Max(0f, totalH - h);
+        _scrollY = Math.Clamp(_scrollY, 0f, maxScr);
         bool  needSB = totalH > h;
         float viewW  = needSB ? w - sb : w;
         float cr     = theme.InputCornerRadius;
