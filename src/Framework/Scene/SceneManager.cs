@@ -450,6 +450,27 @@ namespace GameEditor.Framework.Scene
             }
 
             Logger.Info($"[SceneManager] Physics initialized. {_entityToHandle.Count} bodies created.");
+
+            // Create constraints after all bodies are registered.
+            foreach (Entity entity in world.Entities)
+            {
+                if (!world.TryGetComponent<ConstraintComponent>(entity, out var cc)) continue;
+
+                _entityToHandle.TryGetValue(cc.BodyA, out var handleA);
+                _entityToHandle.TryGetValue(cc.BodyB, out var handleB);
+                if (!handleA.IsValid || !handleB.IsValid) continue;
+
+                var cdesc = new ConstraintDesc(
+                    cc.Type,
+                    handleA, handleB,
+                    cc.LocalAnchorA, cc.LocalAnchorB,
+                    cc.LocalAxisA, cc.LocalAxisB,
+                    cc.MinLimit, cc.MaxLimit);
+
+                var ch = _physics.CreateConstraint(cdesc);
+                cc.RuntimeHandle = ch;
+                world.AddComponent(entity, cc);
+            }
         }
 
         /// <summary>
@@ -483,6 +504,17 @@ namespace GameEditor.Framework.Scene
 
         static void ShutdownPhysics()
         {
+            // Destroy constraints before bodies.
+            var world = ECSWorld.Instance;
+            foreach (Entity entity in world.Entities)
+            {
+                if (!world.TryGetComponent<ConstraintComponent>(entity, out var cc)) continue;
+                if (!cc.RuntimeHandle.IsValid) continue;
+                _physics?.DestroyConstraint(cc.RuntimeHandle);
+                cc.RuntimeHandle = ConstraintHandle.Invalid;
+                world.AddComponent(entity, cc);
+            }
+
             _physics?.Shutdown();
             _physics = null;
             _entityToHandle.Clear();

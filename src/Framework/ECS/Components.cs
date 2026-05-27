@@ -161,4 +161,30 @@ namespace GameEditor.Framework.ECS.Components
         /// <summary>Additional scripts attached to the entity (beyond primary ScriptComponent).</summary>
         public List<ScriptComponent>? Scripts;
     }
+
+    /// <summary>
+    /// Constraint (joint) between two bodies. BodyA/BodyB reference sibling entities that
+    /// carry <see cref="RigidbodyComponent"/>. At play-mode start SceneManager resolves them
+    /// to <see cref="GameEditor.Framework.Physics.PhysicsBodyHandle"/> references and calls
+    /// <see cref="GameEditor.Framework.Physics.IPhysicsWorld.CreateConstraint"/>.
+    /// </summary>
+    public struct ConstraintComponent
+    {
+        public GameEditor.Framework.Physics.ConstraintType Type;
+        /// <summary>Entity with a RigidbodyComponent. Null entity = world anchor.</summary>
+        public Frent.Entity BodyA;
+        /// <summary>Entity with a RigidbodyComponent.</summary>
+        public Frent.Entity BodyB;
+        public System.Numerics.Vector3 LocalAnchorA;
+        public System.Numerics.Vector3 LocalAnchorB;
+        /// <summary>Primary axis in body-A space (hinge axis, slider axis, cone twist axis).</summary>
+        public System.Numerics.Vector3 LocalAxisA;
+        /// <summary>Primary axis in body-B space.</summary>
+        public System.Numerics.Vector3 LocalAxisB;
+        public float MinLimit;
+        public float MaxLimit;
+
+        /// <summary>Runtime-only: handle returned by CreateConstraint. Not serialized.</summary>
+        public GameEditor.Framework.Physics.ConstraintHandle RuntimeHandle;
+    }
 }

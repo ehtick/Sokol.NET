@@ -23,10 +23,14 @@ namespace GameEditor.Framework.Physics
 
         int _nextHandle = 1;
         readonly Dictionary<int, JPH.BodyID>  _handleToBodyId  = new();
+        readonly Dictionary<int, JPH.Body>    _handleToBody    = new();
         readonly Dictionary<uint, int>         _packedToHandle  = new();
         readonly Dictionary<uint, ushort>      _packedToLayer   = new();
         readonly Dictionary<uint, ushort>      _packedToMask    = new();
         readonly HashSet<uint>                 _sensors         = new();
+
+        int _nextConstraintHandle = 1;
+        readonly Dictionary<int, JPH.TwoBodyConstraint> _constraintMap = new();
 
         enum EvKind { CollisionEnter, CollisionStay, CollisionExit, TriggerEnter, TriggerExit }
         readonly record struct CollEv(uint PackedA, uint PackedB, ContactPoint Contact, EvKind Kind);
@@ -97,6 +101,10 @@ namespace GameEditor.Framework.Physics
                 _contactListener = null;
             }
 
+            foreach (var (_, constraint) in _constraintMap)
+                _physics?.RemoveConstraint(constraint);
+            _constraintMap.Clear();
+
             foreach (var (handle, bodyId) in _handleToBodyId)
             {
                 _bodyInterface?.RemoveBody(bodyId);
@@ -104,6 +112,7 @@ namespace GameEditor.Framework.Physics
             }
 
             _handleToBodyId.Clear();
+            _handleToBody.Clear();
             _packedToHandle.Clear();
             _packedToLayer.Clear();
             _packedToMask.Clear();
@@ -199,11 +208,16 @@ namespace GameEditor.Framework.Physics
 
             cs.mIsSensor = desc.IsTrigger;
 
-            var bodyId = _bodyInterface.CreateAndAddBody(cs, activation);
+            var body   = _bodyInterface.CreateBody(cs);
+            if (body == null)
+                throw new InvalidOperationException("JoltPhysicsWorld: CreateBody returned null.");
+            var bodyId = body.GetID();
+            _bodyInterface.AddBody(bodyId, activation);
 
             int handle = _nextHandle++;
             uint packed = bodyId.GetIndexAndSequenceNumber();
             _handleToBodyId[handle] = bodyId;
+            _handleToBody[handle]   = body;
             _packedToHandle[packed] = handle;
             _packedToLayer[packed] = desc.Layer;
             _packedToMask[packed] = desc.LayerMask;
@@ -311,10 +325,146 @@ namespace GameEditor.Framework.Physics
             _bodyInterface?.RemoveBody(bodyId);
             _bodyInterface?.DestroyBody(bodyId);
             _handleToBodyId.Remove(handle.Value);
+            _handleToBody.Remove(handle.Value);
             _packedToHandle.Remove(packed);
             _packedToLayer.Remove(packed);
             _packedToMask.Remove(packed);
             _sensors.Remove(packed);
+        }
+
+        public ConstraintHandle CreateConstraint(ConstraintDesc desc)
+        {
+            if (_physics == null || _bodyInterface == null)
+                throw new InvalidOperationException("JoltPhysicsWorld not initialized.");
+
+            // Resolve bodies; BodyA/BodyB.Invalid means world anchor — use the static world body.
+            if (!_handleToBody.TryGetValue(desc.BodyA.Value, out var bodyA) ||
+                !_handleToBody.TryGetValue(desc.BodyB.Value, out var bodyB))
+                return ConstraintHandle.Invalid;
+
+            JPH.TwoBodyConstraint? constraint = null;
+
+            using var a1 = new JPH.Vec3(desc.LocalAnchorA.X, desc.LocalAnchorA.Y, desc.LocalAnchorA.Z);
+            using var a2 = new JPH.Vec3(desc.LocalAnchorB.X, desc.LocalAnchorB.Y, desc.LocalAnchorB.Z);
+            using var ax1 = new JPH.Vec3(
+                desc.LocalAxisA == System.Numerics.Vector3.Zero ? 0f : desc.LocalAxisA.X,
+                desc.LocalAxisA == System.Numerics.Vector3.Zero ? 1f : desc.LocalAxisA.Y,
+                desc.LocalAxisA == System.Numerics.Vector3.Zero ? 0f : desc.LocalAxisA.Z);
+            using var ax2 = new JPH.Vec3(
+                desc.LocalAxisB == System.Numerics.Vector3.Zero ? 0f : desc.LocalAxisB.X,
+                desc.LocalAxisB == System.Numerics.Vector3.Zero ? 1f : desc.LocalAxisB.Y,
+                desc.LocalAxisB == System.Numerics.Vector3.Zero ? 0f : desc.LocalAxisB.Z);
+
+            switch (desc.Type)
+            {
+                case ConstraintType.Fixed:
+                {
+                    using var s = new JPH.FixedConstraintSettings();
+                    s.mPoint1.Set(a1.GetX(), a1.GetY(), a1.GetZ());
+                    s.mPoint2.Set(a2.GetX(), a2.GetY(), a2.GetZ());
+                    s.mAxisX1.Set(1f, 0f, 0f); s.mAxisY1.Set(0f, 1f, 0f);
+                    s.mAxisX2.Set(1f, 0f, 0f); s.mAxisY2.Set(0f, 1f, 0f);
+                    constraint = s.Create(bodyA, bodyB);
+                    break;
+                }
+                case ConstraintType.Point:
+                {
+                    using var s = new JPH.PointConstraintSettings();
+                    s.mPoint1.Set(a1.GetX(), a1.GetY(), a1.GetZ());
+                    s.mPoint2.Set(a2.GetX(), a2.GetY(), a2.GetZ());
+                    constraint = s.Create(bodyA, bodyB);
+                    break;
+                }
+                case ConstraintType.Hinge:
+                {
+                    using var s = new JPH.HingeConstraintSettings();
+                    s.mPoint1.Set(a1.GetX(), a1.GetY(), a1.GetZ());
+                    s.mPoint2.Set(a2.GetX(), a2.GetY(), a2.GetZ());
+                    s.mHingeAxis1.Set(ax1.GetX(), ax1.GetY(), ax1.GetZ());
+                    s.mHingeAxis2.Set(ax2.GetX(), ax2.GetY(), ax2.GetZ());
+                    s.mLimitsMin = desc.MinLimit;
+                    s.mLimitsMax = desc.MaxLimit;
+                    constraint = s.Create(bodyA, bodyB);
+                    break;
+                }
+                case ConstraintType.Slider:
+                {
+                    using var s = new JPH.SliderConstraintSettings();
+                    s.mPoint1.Set(a1.GetX(), a1.GetY(), a1.GetZ());
+                    s.mPoint2.Set(a2.GetX(), a2.GetY(), a2.GetZ());
+                    s.mSliderAxis1.Set(ax1.GetX(), ax1.GetY(), ax1.GetZ());
+                    s.mSliderAxis2.Set(ax2.GetX(), ax2.GetY(), ax2.GetZ());
+                    s.mLimitsMin = desc.MinLimit;
+                    s.mLimitsMax = desc.MaxLimit;
+                    constraint = s.Create(bodyA, bodyB);
+                    break;
+                }
+                case ConstraintType.Distance:
+                {
+                    using var s = new JPH.DistanceConstraintSettings();
+                    s.mPoint1.Set(a1.GetX(), a1.GetY(), a1.GetZ());
+                    s.mPoint2.Set(a2.GetX(), a2.GetY(), a2.GetZ());
+                    s.mMinDistance = desc.MinLimit;
+                    s.mMaxDistance = desc.MaxLimit < desc.MinLimit ? desc.MinLimit : desc.MaxLimit;
+                    constraint = s.Create(bodyA, bodyB);
+                    break;
+                }
+                case ConstraintType.Cone:
+                {
+                    using var s = new JPH.ConeConstraintSettings();
+                    s.mPoint1.Set(a1.GetX(), a1.GetY(), a1.GetZ());
+                    s.mPoint2.Set(a2.GetX(), a2.GetY(), a2.GetZ());
+                    s.mTwistAxis1.Set(ax1.GetX(), ax1.GetY(), ax1.GetZ());
+                    s.mTwistAxis2.Set(ax2.GetX(), ax2.GetY(), ax2.GetZ());
+                    s.mHalfConeAngle = Math.Max(0f, desc.MaxLimit);
+                    constraint = s.Create(bodyA, bodyB);
+                    break;
+                }
+                case ConstraintType.SwingTwist:
+                {
+                    using var s = new JPH.SwingTwistConstraintSettings();
+                    s.mPosition1.Set(a1.GetX(), a1.GetY(), a1.GetZ());
+                    s.mPosition2.Set(a2.GetX(), a2.GetY(), a2.GetZ());
+                    s.mTwistAxis1.Set(ax1.GetX(), ax1.GetY(), ax1.GetZ());
+                    s.mTwistAxis2.Set(ax2.GetX(), ax2.GetY(), ax2.GetZ());
+                    s.mNormalHalfConeAngle = Math.Max(0f, desc.MaxLimit);
+                    s.mPlaneHalfConeAngle  = Math.Max(0f, desc.MaxLimit);
+                    s.mTwistMinAngle = desc.MinLimit;
+                    s.mTwistMaxAngle = desc.MaxLimit;
+                    constraint = s.Create(bodyA, bodyB);
+                    break;
+                }
+                case ConstraintType.SixDOF:
+                {
+                    using var s = new JPH.SixDOFConstraintSettings();
+                    s.mPosition1.Set(a1.GetX(), a1.GetY(), a1.GetZ());
+                    s.mPosition2.Set(a2.GetX(), a2.GetY(), a2.GetZ());
+                    constraint = s.Create(bodyA, bodyB);
+                    break;
+                }
+                default:
+                    return ConstraintHandle.Invalid;
+            }
+
+            if (constraint == null) return ConstraintHandle.Invalid;
+
+            _physics.AddConstraint(constraint);
+            int ch = _nextConstraintHandle++;
+            _constraintMap[ch] = constraint;
+            return new ConstraintHandle(ch);
+        }
+
+        public void DestroyConstraint(ConstraintHandle handle)
+        {
+            if (!_constraintMap.TryGetValue(handle.Value, out var constraint)) return;
+            _physics?.RemoveConstraint(constraint);
+            _constraintMap.Remove(handle.Value);
+        }
+
+        public void SetConstraintEnabled(ConstraintHandle handle, bool enabled)
+        {
+            if (!_constraintMap.TryGetValue(handle.Value, out var constraint)) return;
+            constraint.SetEnabled(enabled);
         }
 
         public void SetPosition(PhysicsBodyHandle handle, Vector3 position)

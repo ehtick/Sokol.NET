@@ -169,6 +169,21 @@ namespace GameEditor.Framework.Scene
                     sb.Append(']');
                 }
 
+                if (world.TryGetComponent<ConstraintComponent>(id, out var con))
+                {
+                    Comma(sb, ref fc);
+                    sb.Append("\"Constraint\":{\"T\":\"").Append(con.Type.ToString()).Append('"')
+                      .Append(",\"A\":").Append(!con.BodyA.IsNull ? con.BodyA.GetHashCode() : -1)
+                      .Append(",\"B\":").Append(!con.BodyB.IsNull ? con.BodyB.GetHashCode() : -1)
+                      .Append(",\"AA\":").Append(V3(con.LocalAnchorA))
+                      .Append(",\"AB\":").Append(V3(con.LocalAnchorB))
+                      .Append(",\"XA\":").Append(V3(con.LocalAxisA))
+                      .Append(",\"XB\":").Append(V3(con.LocalAxisB))
+                      .Append(",\"Min\":").Append(F(con.MinLimit))
+                      .Append(",\"Max\":").Append(F(con.MaxLimit))
+                      .Append('}');
+                }
+
                 sb.Append("}}"); // close components + entity
             }
 
@@ -196,6 +211,8 @@ namespace GameEditor.Framework.Scene
             var idMap = new Dictionary<int, Entity>();
             // Entities that have a saved parent int needing fixup
             var parentFixups = new Dictionary<Entity, int>();
+            // Entities with a ConstraintComponent whose BodyA/BodyB IDs need remapping
+            var constraintFixups = new Dictionary<Entity, (int, int)>();
 
             // First pass — create entities and load all components
             foreach (var eEl in entitiesEl.EnumerateArray())
@@ -341,6 +358,26 @@ namespace GameEditor.Framework.Scene
                     if (list.Count > 0)
                         world.AddComponent(newId, new ScriptCollectionComponent { Scripts = list });
                 }
+
+                if (c.TryGetProperty("Constraint", out var conEl))
+                {
+                    int savedA = conEl.TryGetProperty("A", out var conAEl) ? conAEl.GetInt32() : -1;
+                    int savedB = conEl.TryGetProperty("B", out var conBEl) ? conBEl.GetInt32() : -1;
+                    world.AddComponent(newId, new ConstraintComponent
+                    {
+                        Type         = conEl.TryGetProperty("T", out var tEl2) &&
+                                       Enum.TryParse(tEl2.GetString(), out GameEditor.Framework.Physics.ConstraintType ct)
+                                       ? ct : GameEditor.Framework.Physics.ConstraintType.Fixed,
+                        LocalAnchorA = RV3(conEl, "AA"),
+                        LocalAnchorB = RV3(conEl, "AB"),
+                        LocalAxisA   = RV3(conEl, "XA"),
+                        LocalAxisB   = RV3(conEl, "XB"),
+                        MinLimit     = conEl.TryGetProperty("Min", out var minEl) ? minEl.GetSingle() : 0f,
+                        MaxLimit     = conEl.TryGetProperty("Max", out var maxEl) ? maxEl.GetSingle() : 0f,
+                    });
+                    if (savedA >= 0 || savedB >= 0)
+                        constraintFixups[newId] = (savedA, savedB);
+                }
             }
 
             // Second pass — remap parent IDs from saved ints to live Entities
@@ -352,6 +389,17 @@ namespace GameEditor.Framework.Scene
                     tr.Parent = parentEntity;
                     world.AddComponent(entity, tr);
                 }
+            }
+
+            // Third pass — remap constraint BodyA/BodyB saved IDs to live Entities
+            foreach (var (entity, savedIds) in constraintFixups)
+            {
+                if (!world.TryGetComponent<ConstraintComponent>(entity, out var cc)) continue;
+                if (savedIds.Item1 >= 0 && idMap.TryGetValue(savedIds.Item1, out Entity ea))
+                    cc.BodyA = ea;
+                if (savedIds.Item2 >= 0 && idMap.TryGetValue(savedIds.Item2, out Entity eb))
+                    cc.BodyB = eb;
+                world.AddComponent(entity, cc);
             }
         }
 

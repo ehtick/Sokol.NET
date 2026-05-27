@@ -116,6 +116,64 @@ namespace GameEditor.Framework.Physics
         }
     }
 
+    /// <summary>Opaque handle to a physics constraint.</summary>
+    public readonly struct ConstraintHandle
+    {
+        public readonly int Value;
+        public bool IsValid => Value > 0;
+
+        public ConstraintHandle(int value) => Value = value;
+        public static readonly ConstraintHandle Invalid = new ConstraintHandle(0);
+    }
+
+    public enum ConstraintType
+    {
+        Fixed,
+        Point,
+        Hinge,
+        Slider,
+        Distance,
+        Cone,
+        SwingTwist,
+        SixDOF,
+    }
+
+    public readonly struct ConstraintDesc
+    {
+        public readonly ConstraintType    Type;
+        /// <summary>Invalid = world anchor (static world body).</summary>
+        public readonly PhysicsBodyHandle BodyA;
+        public readonly PhysicsBodyHandle BodyB;
+        public readonly Vector3           LocalAnchorA;
+        public readonly Vector3           LocalAnchorB;
+        /// <summary>Hinge axis / slider axis / cone twist axis (body-A space).</summary>
+        public readonly Vector3           LocalAxisA;
+        /// <summary>Hinge axis / slider axis / cone twist axis (body-B space).</summary>
+        public readonly Vector3           LocalAxisB;
+        /// <summary>Minimum angle (rad) or distance limit.</summary>
+        public readonly float             MinLimit;
+        /// <summary>Maximum angle (rad) or distance limit.</summary>
+        public readonly float             MaxLimit;
+
+        public ConstraintDesc(
+            ConstraintType type,
+            PhysicsBodyHandle bodyA, PhysicsBodyHandle bodyB,
+            Vector3 localAnchorA, Vector3 localAnchorB,
+            Vector3 localAxisA, Vector3 localAxisB,
+            float minLimit = 0f, float maxLimit = 0f)
+        {
+            Type         = type;
+            BodyA        = bodyA;
+            BodyB        = bodyB;
+            LocalAnchorA = localAnchorA;
+            LocalAnchorB = localAnchorB;
+            LocalAxisA   = localAxisA;
+            LocalAxisB   = localAxisB;
+            MinLimit     = minLimit;
+            MaxLimit     = maxLimit;
+        }
+    }
+
     /// <summary>
     /// Physics engine abstraction — implemented by JoltPhysicsWorld (3D) and Box2DPhysicsWorld (2D).
     /// All methods are called from the main thread.
@@ -148,6 +206,10 @@ namespace GameEditor.Framework.Physics
         bool Raycast(Vector3 origin, Vector3 direction, float maxDistance, out RaycastHit hit);
         int OverlapSphere(Vector3 center, float radius, List<PhysicsBodyHandle> results, int maxResults = 64);
         int OverlapBox(Vector3 center, Vector3 halfExtents, Quaternion rotation, List<PhysicsBodyHandle> results, int maxResults = 64);
+
+        ConstraintHandle CreateConstraint(ConstraintDesc desc);
+        void             DestroyConstraint(ConstraintHandle handle);
+        void             SetConstraintEnabled(ConstraintHandle handle, bool enabled);
 
         void SetCollisionListener(ICollisionListener? listener);
     }
