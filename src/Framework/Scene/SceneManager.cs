@@ -492,15 +492,20 @@ namespace GameEditor.Framework.Scene
 
                 var charDesc = new CharacterDesc
                 {
-                    Position     = tr.Position,
-                    Rotation     = tr.Rotation,
-                    Height       = cc.Height,
-                    Radius       = cc.Radius,
-                    MaxSlopeAngle = cc.MaxSlopeAngle,
-                    MaxStrength  = cc.MaxStrength,
-                    Mass         = cc.Mass,
-                    Layer        = cc.Layer,
-                    LayerMask    = cc.LayerMask,
+                    Position           = tr.Position,
+                    Rotation           = tr.Rotation,
+                    Height             = cc.Height,
+                    Radius             = cc.Radius,
+                    MaxSlopeAngle      = cc.MaxSlopeAngle,
+                    MaxStrength        = cc.MaxStrength,
+                    Mass               = cc.Mass,
+                    Friction           = cc.Friction,
+                    GravityFactor      = cc.GravityFactor,
+                    CollisionTolerance = cc.CollisionTolerance,
+                    ShapeOffset        = cc.ShapeOffset,
+                    IsKinematic        = cc.Mode == CharacterMode.Kinematic,
+                    Layer              = cc.Layer,
+                    LayerMask          = cc.LayerMask,
                 };
                 var charHandle = _physics.CreateCharacter(charDesc);
                 _entityToCharHandle[entity] = charHandle;

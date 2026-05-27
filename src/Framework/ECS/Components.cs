@@ -149,18 +149,39 @@ namespace GameEditor.Framework.ECS.Components
         }
     }
 
+    /// <summary>Which Jolt character backend to use.</summary>
+    public enum CharacterMode
+    {
+        /// <summary>JPH::CharacterVirtual — no physics body, moves via ExtendedUpdate each step.</summary>
+        Virtual,
+        /// <summary>JPH::Character — IS a kinematic physics body; gravity applied by the physics system.</summary>
+        Kinematic,
+    }
+
     public struct CharacterComponent
     {
+        /// <summary>Virtual or Kinematic character controller backend.</summary>
+        public CharacterMode Mode;
         /// <summary>Total height of the capsule (cylindrical portion + two hemispheres), in metres.</summary>
         public float Height;
         /// <summary>Capsule radius in metres.</summary>
         public float Radius;
+        /// <summary>Additional offset applied to the capsule shape relative to the character's feet position (metres).
+        /// The default automatic offset already centres the capsule so its base sits at Transform.Position;
+        /// use this to nudge the shape further (e.g. +Y to raise the collision volume).</summary>
+        public Vector3 ShapeOffset;
         /// <summary>Maximum climbable slope angle in radians (default π/4 = 45°).</summary>
         public float MaxSlopeAngle;
-        /// <summary>Maximum push force against other bodies, in Newtons.</summary>
+        /// <summary>Maximum push force against other bodies, in Newtons (Virtual mode only).</summary>
         public float MaxStrength;
         /// <summary>Character mass in kg.</summary>
         public float Mass;
+        /// <summary>Friction coefficient (Kinematic mode; default 0.5).</summary>
+        public float Friction;
+        /// <summary>Gravity scale multiplier (Kinematic mode; default 1.0).</summary>
+        public float GravityFactor;
+        /// <summary>Maximum separation distance used in PostSimulation (Kinematic mode; default 0.05).</summary>
+        public float CollisionTolerance;
         /// <summary>Physics layer this character occupies (typically the Moving layer).</summary>
         public ushort Layer;
         /// <summary>Bitmask of layers this character collides with.</summary>
@@ -168,13 +189,18 @@ namespace GameEditor.Framework.ECS.Components
 
         public static CharacterComponent Default => new CharacterComponent
         {
-            Height        = 1.8f,
-            Radius        = 0.35f,
-            MaxSlopeAngle = MathF.PI / 4f,
-            MaxStrength   = 100f,
-            Mass          = 70f,
-            Layer         = 1,
-            LayerMask     = 0xFFFF,
+            Mode               = CharacterMode.Virtual,
+            Height             = 1.8f,
+            Radius             = 0.35f,
+            MaxSlopeAngle      = MathF.PI / 4f,
+            MaxStrength        = 100f,
+            Mass               = 70f,
+            Friction           = 0.5f,
+            GravityFactor      = 1.0f,
+            CollisionTolerance = 0.05f,
+            ShapeOffset        = Vector3.Zero,
+            Layer              = 1,
+            LayerMask          = 0xFFFF,
         };
     }
 

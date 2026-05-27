@@ -35,19 +35,45 @@ namespace GameEditor.Framework.Physics
         // ── Character controllers ─────────────────────────────────────────────
         JPH.TempAllocatorImpl? _charTempAlloc;
         int _nextCharHandle = 1;
-        readonly Dictionary<int, CharState> _charStates = new();
+        readonly Dictionary<int, CharState>    _charStates    = new();  // virtual
+        readonly Dictionary<int, KinCharState> _kinCharStates = new();  // kinematic
 
         private sealed class CharState : IDisposable
         {
-            public required JPH.CharacterVirtual     Character;
-            public required JPH.RotatedTranslatedShape RotTransShape;
-            public required JPH.CapsuleShape           CapsuleShapeObj;
+            public required JPH.CharacterVirtual                       Character;
+            public required JPH.RotatedTranslatedShape                 RotTransShape;
+            public required JPH.CapsuleShape                           CapsuleShapeObj;
+            public required JPH.RotatedTranslatedShape                 InnerRotTransShape;
+            public required JPH.CapsuleShape                           InnerCapsuleShapeObj;
+            public required JPH.CharacterVsCharacterCollisionSimple    Cvsc;
             public Vector3 DesiredVelocity;
             private bool _disposed;
             public void Dispose()
             {
                 if (_disposed) return;
                 _disposed = true;
+                Cvsc.Dispose();
+                Character.Dispose();
+                RotTransShape.Dispose();
+                CapsuleShapeObj.Dispose();
+                InnerRotTransShape.Dispose();
+                InnerCapsuleShapeObj.Dispose();
+            }
+        }
+
+        private sealed class KinCharState : IDisposable
+        {
+            public required JPH.Character                 Character;
+            public required JPH.RotatedTranslatedShape   RotTransShape;
+            public required JPH.CapsuleShape             CapsuleShapeObj;
+            public float CollisionTolerance;
+            public Vector3 DesiredVelocity;
+            private bool _disposed;
+            public void Dispose()
+            {
+                if (_disposed) return;
+                _disposed = true;
+                Character.RemoveFromPhysicsSystem();
                 Character.Dispose();
                 RotTransShape.Dispose();
                 CapsuleShapeObj.Dispose();
@@ -107,9 +133,13 @@ namespace GameEditor.Framework.Physics
             _accumulator += deltaTime;
             while (_accumulator >= FixedDt)
             {
-                _physics.Update(FixedDt, 1, _tempAlloc, _jobSystem);
+                // Virtual characters (CharacterVirtual): ExtendedUpdate BEFORE physics step.
                 if (_charStates.Count > 0)
                     StepAllCharacters(FixedDt);
+                // Kinematic characters (Character): PostSimulation + velocity BEFORE physics step.
+                if (_kinCharStates.Count > 0)
+                    StepKinematicCharacters(FixedDt);
+                _physics.Update(FixedDt, 1, _tempAlloc, _jobSystem);
                 _accumulator -= FixedDt;
             }
 
@@ -132,6 +162,9 @@ namespace GameEditor.Framework.Physics
             foreach (var state in _charStates.Values)
                 state.Dispose();
             _charStates.Clear();
+            foreach (var state in _kinCharStates.Values)
+                state.Dispose();
+            _kinCharStates.Clear();
             _charTempAlloc?.Dispose(); _charTempAlloc = null;
 
             foreach (var (handle, bodyId) in _handleToBodyId)
@@ -649,90 +682,186 @@ namespace GameEditor.Framework.Physics
             if (_physics == null)
                 throw new InvalidOperationException("JoltPhysicsWorld not initialized.");
 
-            _charTempAlloc ??= new JPH.TempAllocatorImpl(4 * 1024 * 1024);
-
-            // Build capsule: feet at the character's position, top at position + height.
-            // RotatedTranslatedShape offsets the capsule so its base aligns with position.
-            float halfHeight = MathF.Max(0f, desc.Height * 0.5f - desc.Radius);
-            var capsule   = new JPH.CapsuleShape(halfHeight, desc.Radius);
-            using var offset   = new JPH.Vec3(0f, halfHeight + desc.Radius, 0f);
-            using var identRot = JPH.Quat.SIdentity();
-            var rotTrans = new JPH.RotatedTranslatedShape(offset, identRot, capsule);
-
-            using var settings = new JPH.CharacterVirtualSettings();
-            settings.mMaxSlopeAngle  = desc.MaxSlopeAngle;
-            settings.mMaxStrength    = desc.MaxStrength;
-            settings.mMass           = desc.Mass;
-            settings.mInnerBodyLayer = ObjLayerMoving;
-            settings.SetShape((JPH.Const_RotatedTranslatedShape)rotTrans);
-
-            // SupportingVolume: treat contact points at or below -radius as ground support.
-            var supVol = settings.mSupportingVolume;
-            using var axisY = new JPH.Vec3(0f, 1f, 0f);
-            supVol.SetNormal(axisY);
-            supVol.SetConstant(-desc.Radius);
-
             using var pos = new JPH.Vec3(desc.Position.X, desc.Position.Y, desc.Position.Z);
             using var rot = new JPH.Quat(desc.Rotation.X, desc.Rotation.Y, desc.Rotation.Z, desc.Rotation.W);
 
-            var character = new JPH.CharacterVirtual(settings, pos, rot, 0, _physics);
+            // Build capsule: feet at the character's position, top at position + height.
+            // RotatedTranslatedShape offsets the capsule so its base aligns with position,
+            // plus any user-supplied ShapeOffset for fine-tuning.
+            float halfHeight = MathF.Max(0f, desc.Height * 0.5f - desc.Radius);
+            var capsule  = new JPH.CapsuleShape(halfHeight, desc.Radius);
+            using var offset   = new JPH.Vec3(
+                desc.ShapeOffset.X,
+                halfHeight + desc.Radius + desc.ShapeOffset.Y,
+                desc.ShapeOffset.Z);
+            using var identRot = JPH.Quat.SIdentity();
+            var rotTrans = new JPH.RotatedTranslatedShape(offset, identRot, capsule);
 
             int h = _nextCharHandle++;
-            _charStates[h] = new CharState
+
+            if (desc.IsKinematic)
             {
-                Character       = character,
-                RotTransShape   = rotTrans,
-                CapsuleShapeObj = capsule,
-                DesiredVelocity = Vector3.Zero,
-            };
+                using var settings = new JPH.CharacterSettings();
+                settings.mLayer        = desc.Layer;
+                settings.mFriction     = desc.Friction;
+                settings.mGravityFactor = desc.GravityFactor;
+                settings.mMass         = desc.Mass;
+                settings.mMaxSlopeAngle = desc.MaxSlopeAngle;
+                settings.SetShape((JPH.Const_RotatedTranslatedShape)rotTrans);
+
+                var supVol = settings.mSupportingVolume;
+                using var axisY = new JPH.Vec3(0f, 1f, 0f);
+                supVol.SetNormal(axisY);
+                supVol.SetConstant(-desc.Radius);
+
+                var character = new JPH.Character(settings, pos, rot, 0, _physics);
+                character.AddToPhysicsSystem(JPH.EActivation.Activate);
+
+                _kinCharStates[h] = new KinCharState
+                {
+                    Character          = character,
+                    RotTransShape      = rotTrans,
+                    CapsuleShapeObj    = capsule,
+                    CollisionTolerance = desc.CollisionTolerance > 0f ? desc.CollisionTolerance : 0.05f,
+                    DesiredVelocity    = Vector3.Zero,
+                };
+            }
+            else
+            {
+                _charTempAlloc ??= new JPH.TempAllocatorImpl(4 * 1024 * 1024);
+
+                // Inner body shape: 90% scale of outer — used as the physics body for interactions.
+                const float InnerFraction = 0.9f;
+                float innerHH = halfHeight * InnerFraction;
+                float innerR  = desc.Radius  * InnerFraction;
+                var innerCapsule = new JPH.CapsuleShape(innerHH, innerR);
+                var innerRts     = new JPH.RotatedTranslatedShape(offset, identRot, innerCapsule);
+
+                using var settings = new JPH.CharacterVirtualSettings();
+                settings.mMaxSlopeAngle  = desc.MaxSlopeAngle;
+                settings.mMaxStrength    = desc.MaxStrength;
+                settings.mMass           = desc.Mass;
+                settings.mInnerBodyLayer = ObjLayerMoving;
+                settings.SetShape((JPH.Const_RotatedTranslatedShape)rotTrans);
+                settings.SetInnerBodyShape((JPH.Const_RotatedTranslatedShape)innerRts);
+
+                var supVol = settings.mSupportingVolume;
+                using var axisY2 = new JPH.Vec3(0f, 1f, 0f);
+                supVol.SetNormal(axisY2);
+                supVol.SetConstant(-desc.Radius);
+
+                var character = new JPH.CharacterVirtual(settings, pos, rot, 0, _physics);
+
+                var cvsc = new JPH.CharacterVsCharacterCollisionSimple();
+                cvsc.Add(character);
+                character.SetCharacterVsCharacterCollision(cvsc);
+
+                _charStates[h] = new CharState
+                {
+                    Character            = character,
+                    RotTransShape        = rotTrans,
+                    CapsuleShapeObj      = capsule,
+                    InnerRotTransShape   = innerRts,
+                    InnerCapsuleShapeObj = innerCapsule,
+                    Cvsc                 = cvsc,
+                    DesiredVelocity      = Vector3.Zero,
+                };
+            }
+
             return new CharacterHandle(h);
         }
 
         public void DestroyCharacter(CharacterHandle handle)
         {
-            if (!_charStates.TryGetValue(handle.Value, out var state)) return;
-            state.Dispose();
-            _charStates.Remove(handle.Value);
+            if (_charStates.TryGetValue(handle.Value, out var state))
+            {
+                state.Dispose();
+                _charStates.Remove(handle.Value);
+                return;
+            }
+            if (_kinCharStates.TryGetValue(handle.Value, out var kstate))
+            {
+                kstate.Dispose();
+                _kinCharStates.Remove(handle.Value);
+            }
         }
 
         public void SetCharacterLinearVelocity(CharacterHandle handle, Vector3 velocity)
         {
             if (_charStates.TryGetValue(handle.Value, out var state))
                 state.DesiredVelocity = velocity;
+            else if (_kinCharStates.TryGetValue(handle.Value, out var kstate))
+                kstate.DesiredVelocity = velocity;
         }
 
         public Vector3 GetCharacterPosition(CharacterHandle handle)
         {
-            if (!_charStates.TryGetValue(handle.Value, out var state)) return Vector3.Zero;
-            using var p = state.Character.GetPosition();
-            return new Vector3(p.GetX(), p.GetY(), p.GetZ());
+            if (_charStates.TryGetValue(handle.Value, out var state))
+            {
+                using var p = state.Character.GetPosition();
+                return new Vector3(p.GetX(), p.GetY(), p.GetZ());
+            }
+            if (_kinCharStates.TryGetValue(handle.Value, out var kstate))
+            {
+                using var p = kstate.Character.GetPosition();
+                return new Vector3(p.GetX(), p.GetY(), p.GetZ());
+            }
+            return Vector3.Zero;
         }
 
         public Quaternion GetCharacterRotation(CharacterHandle handle)
         {
-            if (!_charStates.TryGetValue(handle.Value, out var state)) return Quaternion.Identity;
-            using var r = state.Character.GetRotation();
-            return new Quaternion(r.GetX(), r.GetY(), r.GetZ(), r.GetW());
+            if (_charStates.TryGetValue(handle.Value, out var state))
+            {
+                using var r = state.Character.GetRotation();
+                return new Quaternion(r.GetX(), r.GetY(), r.GetZ(), r.GetW());
+            }
+            if (_kinCharStates.TryGetValue(handle.Value, out var kstate))
+            {
+                using var r = kstate.Character.GetRotation();
+                return new Quaternion(r.GetX(), r.GetY(), r.GetZ(), r.GetW());
+            }
+            return Quaternion.Identity;
         }
 
         public void SetCharacterPosition(CharacterHandle handle, Vector3 position)
         {
-            if (!_charStates.TryGetValue(handle.Value, out var state)) return;
-            using var p = new JPH.Vec3(position.X, position.Y, position.Z);
-            state.Character.SetPosition(p);
+            if (_charStates.TryGetValue(handle.Value, out var state))
+            {
+                using var p = new JPH.Vec3(position.X, position.Y, position.Z);
+                state.Character.SetPosition(p);
+                return;
+            }
+            if (_kinCharStates.TryGetValue(handle.Value, out var kstate))
+            {
+                using var p = new JPH.Vec3(position.X, position.Y, position.Z);
+                using var r = kstate.Character.GetRotation();
+                kstate.Character.SetPositionAndRotation(p, r, JPH.EActivation.Activate);
+            }
         }
 
         public bool IsCharacterGrounded(CharacterHandle handle)
         {
-            if (!_charStates.TryGetValue(handle.Value, out var state)) return false;
-            return state.Character.GetGroundState() == JPH.CharacterBase.EGroundState.OnGround;
+            if (_charStates.TryGetValue(handle.Value, out var state))
+                return state.Character.GetGroundState() == JPH.CharacterBase.EGroundState.OnGround;
+            if (_kinCharStates.TryGetValue(handle.Value, out var kstate))
+                return kstate.Character.GetGroundState() == JPH.CharacterBase.EGroundState.OnGround;
+            return false;
         }
 
         public Vector3 GetCharacterGroundNormal(CharacterHandle handle)
         {
-            if (!_charStates.TryGetValue(handle.Value, out var state)) return Vector3.UnitY;
-            using var n = state.Character.GetGroundNormal();
-            return new Vector3(n.GetX(), n.GetY(), n.GetZ());
+            if (_charStates.TryGetValue(handle.Value, out var state))
+            {
+                using var n = state.Character.GetGroundNormal();
+                return new Vector3(n.GetX(), n.GetY(), n.GetZ());
+            }
+            if (_kinCharStates.TryGetValue(handle.Value, out var kstate))
+            {
+                using var n = kstate.Character.GetGroundNormal();
+                return new Vector3(n.GetX(), n.GetY(), n.GetZ());
+            }
+            return Vector3.UnitY;
         }
 
         private void StepAllCharacters(float dt)
@@ -793,6 +922,56 @@ namespace GameEditor.Framework.Physics
                 ch.ExtendedUpdate(dt, gravVec, extSettings, bpFilter, layerFilter, bodyFilter, shapeFilter, _charTempAlloc);
 
                 // Desired velocity is consumed each physics step; caller refreshes it every frame.
+                state.DesiredVelocity = Vector3.Zero;
+            }
+        }
+
+        private void StepKinematicCharacters(float dt)
+        {
+            if (_physics == null) return;
+
+            foreach (var state in _kinCharStates.Values)
+            {
+                var ch = state.Character;
+
+                // PostSimulation refreshes ground-contact state from the previous physics step.
+                ch.PostSimulation(state.CollisionTolerance);
+
+                using var curVelJph = ch.GetLinearVelocity();
+                var curVel  = new Vector3(curVelJph.GetX(), curVelJph.GetY(), curVelJph.GetZ());
+
+                bool onGround = ch.GetGroundState() == JPH.CharacterBase.EGroundState.OnGround;
+
+                Vector3 newVel;
+                if (onGround)
+                {
+                    // Stick to moving platforms; blend horizontal toward desired.
+                    using var gVelJph = ch.GetGroundVelocity();
+                    var groundVel = new Vector3(gVelJph.GetX(), gVelJph.GetY(), gVelJph.GetZ());
+
+                    // Smooth blend: 75% current XZ + 25% desired XZ (matches JoltPhysicsDemo).
+                    newVel = new Vector3(
+                        0.75f * curVel.X + 0.25f * state.DesiredVelocity.X,
+                        groundVel.Y,
+                        0.75f * curVel.Z + 0.25f * state.DesiredVelocity.Z);
+
+                    // Jump: caller sets positive Y.
+                    if (state.DesiredVelocity.Y > 0f)
+                        newVel.Y = state.DesiredVelocity.Y;
+                }
+                else
+                {
+                    // In air: preserve Y (gravity is applied by the physics system).
+                    // Blend XZ toward desired so player has some air control.
+                    newVel = new Vector3(
+                        0.75f * curVel.X + 0.25f * state.DesiredVelocity.X,
+                        curVel.Y,
+                        0.75f * curVel.Z + 0.25f * state.DesiredVelocity.Z);
+                }
+
+                using var newVelJph = new JPH.Vec3(newVel.X, newVel.Y, newVel.Z);
+                ch.SetLinearVelocity(newVelJph);
+
                 state.DesiredVelocity = Vector3.Zero;
             }
         }

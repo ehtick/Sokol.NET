@@ -184,6 +184,26 @@ namespace GameEditor.Framework.Scene
                       .Append('}');
                 }
 
+                if (world.TryGetComponent<CharacterComponent>(id, out var chComp))
+                {
+                    Comma(sb, ref fc);
+                    sb.Append("\"Character\":{\"Mode\":").Append((int)chComp.Mode)
+                      .Append(",\"Height\":").Append(F(chComp.Height))
+                      .Append(",\"Radius\":").Append(F(chComp.Radius))
+                      .Append(",\"Slope\":").Append(F(chComp.MaxSlopeAngle))
+                      .Append(",\"Strength\":").Append(F(chComp.MaxStrength))
+                      .Append(",\"Mass\":").Append(F(chComp.Mass))
+                      .Append(",\"Friction\":").Append(F(chComp.Friction))
+                      .Append(",\"Gravity\":").Append(F(chComp.GravityFactor))
+                      .Append(",\"CtTol\":").Append(F(chComp.CollisionTolerance))
+                      .Append(",\"OfsX\":").Append(F(chComp.ShapeOffset.X))
+                      .Append(",\"OfsY\":").Append(F(chComp.ShapeOffset.Y))
+                      .Append(",\"OfsZ\":").Append(F(chComp.ShapeOffset.Z))
+                      .Append(",\"Layer\":").Append(chComp.Layer)
+                      .Append(",\"Mask\":").Append(chComp.LayerMask)
+                      .Append('}');
+                }
+
                 sb.Append("}}"); // close components + entity
             }
 
@@ -377,6 +397,28 @@ namespace GameEditor.Framework.Scene
                     });
                     if (savedA >= 0 || savedB >= 0)
                         constraintFixups[newId] = (savedA, savedB);
+                }
+
+                if (c.TryGetProperty("Character", out var charEl))
+                {
+                    world.AddComponent(newId, new CharacterComponent
+                    {
+                        Mode               = charEl.TryGetProperty("Mode",     out var modeEl) ? (CharacterMode)modeEl.GetInt32() : CharacterComponent.Default.Mode,
+                        Height             = charEl.TryGetProperty("Height",   out var hEl)    ? hEl.GetSingle()                  : CharacterComponent.Default.Height,
+                        Radius             = charEl.TryGetProperty("Radius",   out var rEl)    ? rEl.GetSingle()                  : CharacterComponent.Default.Radius,
+                        MaxSlopeAngle      = charEl.TryGetProperty("Slope",    out var slEl2)  ? slEl2.GetSingle()                : CharacterComponent.Default.MaxSlopeAngle,
+                        MaxStrength        = charEl.TryGetProperty("Strength", out var stEl)   ? stEl.GetSingle()                 : CharacterComponent.Default.MaxStrength,
+                        Mass               = charEl.TryGetProperty("Mass",     out var mEl)    ? mEl.GetSingle()                  : CharacterComponent.Default.Mass,
+                        Friction           = charEl.TryGetProperty("Friction", out var frEl)   ? frEl.GetSingle()                 : CharacterComponent.Default.Friction,
+                        GravityFactor      = charEl.TryGetProperty("Gravity",  out var gfEl)   ? gfEl.GetSingle()                 : CharacterComponent.Default.GravityFactor,
+                        CollisionTolerance = charEl.TryGetProperty("CtTol",    out var ctEl)   ? ctEl.GetSingle()                 : CharacterComponent.Default.CollisionTolerance,
+                        ShapeOffset        = new System.Numerics.Vector3(
+                            charEl.TryGetProperty("OfsX", out var oxEl) ? oxEl.GetSingle() : 0f,
+                            charEl.TryGetProperty("OfsY", out var oyEl) ? oyEl.GetSingle() : 0f,
+                            charEl.TryGetProperty("OfsZ", out var ozEl) ? ozEl.GetSingle() : 0f),
+                        Layer              = charEl.TryGetProperty("Layer",    out var lEl)    ? (ushort)lEl.GetInt32()           : CharacterComponent.Default.Layer,
+                        LayerMask          = charEl.TryGetProperty("Mask",     out var mkEl)   ? (ushort)mkEl.GetInt32()          : CharacterComponent.Default.LayerMask,
+                    });
                 }
             }
 

@@ -134,11 +134,21 @@ namespace GameEditor.Framework.Physics
         /// <summary>Total capsule height (cylindrical + 2 hemispheres), metres.</summary>
         public float Height;
         public float Radius;
+        /// <summary>Additional offset added to the auto-centred capsule shape, metres.</summary>
+        public Vector3 ShapeOffset;
         /// <summary>Maximum slope the character can climb, radians.</summary>
         public float MaxSlopeAngle;
-        /// <summary>Maximum force the character exerts on other bodies, Newtons.</summary>
+        /// <summary>Maximum force the character exerts on other bodies, Newtons (Virtual mode only).</summary>
         public float MaxStrength;
         public float Mass;
+        /// <summary>Friction (Kinematic mode only).</summary>
+        public float Friction;
+        /// <summary>Gravity scale (Kinematic mode only; 1.0 = normal gravity).</summary>
+        public float GravityFactor;
+        /// <summary>PostSimulation max separation distance (Kinematic mode only; default 0.05).</summary>
+        public float CollisionTolerance;
+        /// <summary>When true, use JPH::Character (kinematic body); otherwise JPH::CharacterVirtual.</summary>
+        public bool IsKinematic;
         public ushort Layer;
         public ushort LayerMask;
     }
