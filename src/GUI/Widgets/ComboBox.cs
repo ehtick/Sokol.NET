@@ -116,26 +116,28 @@ public class ComboBox : Widget
     }
 
     // Returns how tall the visible part of the dropdown should be, and whether a scrollbar is needed.
-    private (float visibleH, bool needsScroll) ComputeDropdownMetrics()
+    private (float visibleH, bool needsScroll, float ddY) ComputeDropdownMetrics()
     {
-        float itemH   = ThemeManager.Current.InputHeight;
-        float totalH  = _items.Count * itemH;
-        float sp      = ScreenPosition.Y;
-        float screenH = Screen.Instance.LogicalHeight;
-        float avail   = screenH - (sp + Bounds.Height) - 4f;   // 4 px bottom margin
-        avail = MathF.Max(itemH, avail);                        // always show at least one row
-        bool  need    = totalH > avail;
-        return (need ? avail : totalH, need);
+        float itemH      = ThemeManager.Current.InputHeight;
+        float totalH     = _items.Count * itemH;
+        float sp         = ScreenPosition.Y;
+        float screenH    = Screen.Instance.LogicalHeight;
+        float availBelow = screenH - (sp + Bounds.Height) - 4f;
+        float availAbove = sp - 4f;
+        bool  openAbove  = totalH > MathF.Max(itemH, availBelow) && availAbove > availBelow;
+        float avail      = MathF.Max(itemH, openAbove ? availAbove : availBelow);
+        float visibleH   = MathF.Min(totalH, avail);
+        float ddY        = openAbove ? -visibleH : Bounds.Height;
+        return (visibleH, totalH > visibleH, ddY);
     }
 
     private void DrawDropdown(Renderer renderer, Theme theme, Rect bounds)
     {
         float itemH   = ThemeManager.Current.InputHeight;
         float totalH  = _items.Count * itemH;
-        float ddY     = bounds.Height;
         float sbW     = theme.ScrollBarWidth;
 
-        var (visibleH, needsScroll) = ComputeDropdownMetrics();
+        var (visibleH, needsScroll, ddY) = ComputeDropdownMetrics();
 
         // Clamp scroll so we never go past the end.
         float maxScroll = MathF.Max(0f, totalH - visibleH);
@@ -198,16 +200,17 @@ public class ComboBox : Widget
         return new Vector2(targetLocal.X - off.X, targetLocal.Y - off.Y);
     }
 
-    // When the dropdown is open it renders below Bounds (via Screen overlay) — extend HitTest.
+    // When the dropdown is open it renders above or below Bounds (via Screen overlay) — extend HitTest.
     public override bool HitTest(Vector2 localPoint)
     {
         if (_open)
         {
             var popupLocal = PopupLocalFromTargetLocal(localPoint);
-            var (visibleH, _) = ComputeDropdownMetrics();
-            float totalH = Bounds.Height + visibleH;
-            return popupLocal.X >= 0 && popupLocal.Y >= 0 &&
-                   popupLocal.X < Bounds.Width && popupLocal.Y < totalH;
+            var (visibleH, _, ddY) = ComputeDropdownMetrics();
+            float yMin = MathF.Min(0f, ddY);
+            float yMax = MathF.Max(Bounds.Height, ddY + visibleH);
+            return popupLocal.X >= 0 && popupLocal.Y >= yMin &&
+                   popupLocal.X < Bounds.Width && popupLocal.Y < yMax;
         }
         return base.HitTest(localPoint);
     }
@@ -242,8 +245,7 @@ public class ComboBox : Widget
 
         if (_open)
         {
-            var (visibleH, needsScroll) = ComputeDropdownMetrics();
-            float ddY = Bounds.Height;
+            var (visibleH, needsScroll, ddY) = ComputeDropdownMetrics();
 
             // Click on scrollbar?
             if (needsScroll && local.X >= Bounds.Width - sbW && local.Y >= ddY && local.Y < ddY + visibleH)
@@ -299,9 +301,8 @@ public class ComboBox : Widget
         var   local   = PopupLocalFromTargetLocal(e.LocalPosition);
         float itemH   = ThemeManager.Current.InputHeight;
         float sbW     = ThemeManager.Current.ScrollBarWidth;
-        var (visibleH, needsScroll) = ComputeDropdownMetrics();
+        var (visibleH, needsScroll, ddY) = ComputeDropdownMetrics();
         float totalH  = _items.Count * itemH;
-        float ddY     = Bounds.Height;
 
         // Scrollbar drag
         if (_sbDragging)
@@ -333,7 +334,7 @@ public class ComboBox : Widget
         if (!_open) return false;
         float itemH   = ThemeManager.Current.InputHeight;
         float totalH  = _items.Count * itemH;
-        var (visibleH, _) = ComputeDropdownMetrics();
+        var (visibleH, _, _ddY) = ComputeDropdownMetrics();
         float maxScroll   = MathF.Max(0f, totalH - visibleH);
         _scrollOffset     = Math.Clamp(_scrollOffset - e.Scroll.Y * itemH, 0f, maxScroll);
         return true;
