@@ -2,8 +2,11 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/ext/Frent" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/ext/ImGuizmo" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/ext/JoltPhysics" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/ext/SharpGLTF" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/ext/TinySoundFont" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/ext/box2d" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/ext/bullet3" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/ext/cgltf" vcs="Git" />
@@ -12,6 +15,7 @@
     <mapping directory="$PROJECT_DIR$/ext/joltc" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/ext/lynx" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/ext/manifold" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/ext/miniaudio" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/ext/nanosvg" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/ext/nanovg" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/ext/sokol" vcs="Git" />

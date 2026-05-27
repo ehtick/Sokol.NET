@@ -9,6 +9,7 @@ using static Sokol.Utils;
 using static phong_shader_cs.Shaders;
 using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
+using static Sokol.SGlue;
 
 namespace GameEditor.Framework.Renderer
 {
@@ -64,6 +65,16 @@ namespace GameEditor.Framework.Renderer
                     write_enabled = true
                 },
                 colors = { [0] = new sg_color_target_state { pixel_format = SG_PIXELFORMAT_RGBA8 } },
+
+#else
+                sample_count = 4,
+                depth = new sg_depth_state
+                {
+                    pixel_format = SG_PIXELFORMAT_DEPTH_STENCIL,
+                    compare = SG_COMPAREFUNC_LESS_EQUAL,
+                    write_enabled = true
+                },
+                colors = { [0] = new sg_color_target_state { pixel_format = sglue_swapchain().color_format } },
 #endif
                 label = "scene-pipeline"
             });

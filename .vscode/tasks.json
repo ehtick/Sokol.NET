@@ -1170,6 +1170,20 @@
 			"problemMatcher": "$msCompile"
 		},
 		{
+			"label": "prepare-GameEditor",
+			"type": "shell",
+			"command": "dotnet",
+			"args": ["run", "--project", "${workspaceFolder}/tools/SokolApplicationBuilder", "--", "--task", "prepare", "--architecture", "desktop", "--path", "${workspaceFolder}/examples/GameEditor"],
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "prepare-GameEditor-web",
+			"type": "shell",
+			"command": "dotnet",
+			"args": ["run", "--project", "${workspaceFolder}/tools/SokolApplicationBuilder", "--", "--task", "prepare", "--architecture", "web", "--path", "${workspaceFolder}/examples/GameEditor"],
+			"problemMatcher": "$msCompile"
+		},
+		{
 			"label": "Create New Example",
 			"type": "shell",
 			"command": "dotnet",
@@ -1285,6 +1299,7 @@
 			"type": "pickString",
 			"description": "Select an example",
 			"options": [
+				"GameEditor",
 				"MiniAudioDemo",
 				"JoltPhysicsDemo",
 				"BulletPhysics",
@@ -1359,6 +1374,7 @@
 			"type": "pickString",
 			"description": "Select an example to build",
 			"options": [
+				"examples/GameEditor",
 				"examples/MiniAudioDemo",
 				"examples/JoltPhysicsDemo",
 				"examples/BulletPhysics",
@@ -1467,6 +1483,7 @@
 			"type": "pickString",
 			"description": "⚠️ WARNING: Select an example to PERMANENTLY DELETE",
 			"options": [
+				"GameEditor",
 				"MiniAudioDemo",
 				"JoltPhysicsDemo",
 				"BulletPhysics",
