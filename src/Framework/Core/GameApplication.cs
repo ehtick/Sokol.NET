@@ -3,6 +3,10 @@ using System.IO;
 using GameEditor.Framework.Scene;
 using GameEditor.Framework.Scripting;
 using GameEditor.Framework.ECS;
+using Sokol.GUI;
+using static Sokol.SApp;
+using static Sokol.NanoVG;
+using static Sokol.STM;
 
 namespace GameEditor.Framework.Core
 {
@@ -40,6 +44,9 @@ namespace GameEditor.Framework.Core
     /// </summary>
     public static class GameApplication
     {
+        static IntPtr _nvgCtx = IntPtr.Zero;
+        static Screen? _screen;
+
         /// <summary>Resolved project config (null until <see cref="Init"/> succeeds).</summary>
         public static ProjectConfig? Config { get; private set; }
 
@@ -134,6 +141,13 @@ namespace GameEditor.Framework.Core
             RegisterAvailableGameBehaviours();
 #endif
 
+            if (_screen == null)
+            {
+                stm_setup();
+                _nvgCtx = nvgCreateSokol(NVG_ANTIALIAS | NVG_STENCIL_STROKES);
+                _screen = Screen.Initialize(_nvgCtx);
+            }
+
             Logger.OnLog -= ConsoleLog;
             Logger.OnLog += ConsoleLog;
 
@@ -190,11 +204,35 @@ namespace GameEditor.Framework.Core
         /// </summary>
         public static void Update(float deltaTime)
         {
+            if (_screen != null)
+            {
+                float dpi = sapp_dpi_scale();
+                float logicalWidth = sapp_width() / MathF.Max(1f, dpi);
+                float logicalHeight = sapp_height() / MathF.Max(1f, dpi);
+                _screen.Update(logicalWidth, logicalHeight, dpi);
+            }
+
             if (SceneManager.PlayMode == PlayModeState.Playing)
             {
                 SceneManager.UpdatePhysics(deltaTime);
                 ScriptSystem.UpdateAll(deltaTime);
             }
+        }
+
+        public static void Render()
+        {
+            if (_screen == null)
+                return;
+
+            float dpi = sapp_dpi_scale();
+            float logicalWidth = sapp_width() / MathF.Max(1f, dpi);
+            float logicalHeight = sapp_height() / MathF.Max(1f, dpi);
+            _screen.Draw(logicalWidth, logicalHeight, dpi);
+        }
+
+        public static unsafe void DispatchEvent(sapp_event* e)
+        {
+            _screen?.DispatchEvent(e);
         }
 
         // ── Cleanup ───────────────────────────────────────────────────────────
@@ -205,6 +243,13 @@ namespace GameEditor.Framework.Core
         public static void Cleanup()
         {
             ScriptSystem.StopAll();
+            Screen.Shutdown();
+            if (_nvgCtx != IntPtr.Zero)
+            {
+                nvgDeleteSokol(_nvgCtx);
+                _nvgCtx = IntPtr.Zero;
+            }
+            _screen = null;
             Logger.Info("[GameApplication] Shutdown complete.");
         }
 

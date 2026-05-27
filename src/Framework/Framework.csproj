@@ -40,4 +40,11 @@
     </Compile>
   </ItemGroup>
 
+  <!-- Sokol.GUI framework sources (used by GameApplication mobile touch UI host) -->
+  <ItemGroup>
+    <Compile Include="../GUI/**/*.cs">
+      <Link>GUI/%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </Compile>
+  </ItemGroup>
+
 </Project>
