@@ -24,6 +24,8 @@ namespace GameEditor.Framework.Scene
         private static readonly Dictionary<int, Entity>                     _handleToEntity    = new();
         private static readonly Dictionary<Entity, CharacterHandle>         _entityToCharHandle = new();
         private static readonly Dictionary<int, Entity>                     _charHandleToEntity = new();
+        private static readonly Dictionary<Entity, VehicleHandle>           _entityToVehicleHandle = new();
+        private static readonly Dictionary<int, Entity>                     _vehicleHandleToEntity = new();
 
         private sealed class PhysicsCollisionDispatcher : ICollisionListener
         {
@@ -297,6 +299,16 @@ namespace GameEditor.Framework.Scene
                 tr.Rotation = _physics.GetCharacterRotation(charHandle);
                 world.AddComponent(entity, tr);
             }
+
+            // Post-step: sync vehicle chassis positions back to Transform.
+            foreach (var (handle, entity) in _vehicleHandleToEntity)
+            {
+                var vHandle = new VehicleHandle(handle);
+                if (!world.TryGetComponent<Transform>(entity, out var tr)) continue;
+                tr.Position = _physics.GetVehiclePosition(vHandle);
+                tr.Rotation = _physics.GetVehicleRotation(vHandle);
+                world.AddComponent(entity, tr);
+            }
         }
 
         public static bool Raycast(Vector3 origin, Vector3 direction, float maxDistance, out Entity hitEntity, out RaycastHit hit)
@@ -511,6 +523,53 @@ namespace GameEditor.Framework.Scene
                 _entityToCharHandle[entity] = charHandle;
                 _charHandleToEntity[charHandle.Value] = entity;
             }
+
+            // Create vehicle controllers.
+            foreach (Entity entity in world.Entities)
+            {
+                if (!world.TryGetComponent<VehicleComponent>(entity, out var vc)) continue;
+                if (!world.TryGetComponent<Transform>(entity, out var tr)) continue;
+
+                var wheels = new VehicleWheelDesc[vc.Wheels.Length];
+                for (int i = 0; i < vc.Wheels.Length; i++)
+                {
+                    var w = vc.Wheels[i];
+                    wheels[i] = new VehicleWheelDesc
+                    {
+                        LocalPosition     = w.Position,
+                        Radius            = w.Radius,
+                        Width             = w.Width,
+                        SuspMinLength     = w.SuspMinLength,
+                        SuspMaxLength     = w.SuspMaxLength,
+                        SuspFrequency     = w.SuspFrequency,
+                        SuspDamping       = w.SuspDamping,
+                        MaxSteerAngle     = w.MaxSteerAngle,
+                        MaxHandBrakeTorque = w.MaxHandBrakeTorque,
+                        IsDriven          = w.IsDriven,
+                    };
+                }
+                var vdesc = new VehicleDesc
+                {
+                    Type              = vc.Type,
+                    Position          = tr.Position,
+                    Rotation          = tr.Rotation,
+                    ChassisHalfExtent = vc.ChassisHalfExtent,
+                    Mass              = vc.Mass,
+                    COMOffsetY        = vc.COMOffsetY,
+                    MaxEngineTorque   = vc.MaxEngineTorque,
+                    ClutchStrength    = vc.ClutchStrength,
+                    MaxRollAngle      = vc.MaxRollAngle,
+                    Friction          = vc.Friction,
+                    Wheels            = wheels,
+                    Layer             = vc.Layer,
+                    LayerMask         = vc.LayerMask,
+                };
+                var vHandle = _physics!.CreateVehicle(vdesc);
+                vc.RuntimeHandle = vHandle;
+                world.AddComponent(entity, vc);
+                _entityToVehicleHandle[entity] = vHandle;
+                _vehicleHandleToEntity[vHandle.Value] = entity;
+            }
         }
 
         /// <summary>
@@ -561,6 +620,12 @@ namespace GameEditor.Framework.Scene
             _entityToCharHandle.Clear();
             _charHandleToEntity.Clear();
 
+            // Destroy vehicle controllers.
+            foreach (var (_, vHandle) in _entityToVehicleHandle)
+                _physics?.DestroyVehicle(vHandle);
+            _entityToVehicleHandle.Clear();
+            _vehicleHandleToEntity.Clear();
+
             _physics?.Shutdown();
             _physics = null;
             _entityToHandle.Clear();
@@ -589,6 +654,39 @@ namespace GameEditor.Framework.Scene
             if (_physics == null || !_entityToCharHandle.TryGetValue(entity, out var h)) return false;
             normal = _physics.GetCharacterGroundNormal(h);
             return true;
+        }
+
+        // ---- Vehicle controller helpers (called by GameBehaviour) ----------
+
+        public static bool SetVehicleInput(Entity entity, float steer, float throttle, float brake, float handBrake = 0f)
+        {
+            if (_physics == null || !_entityToVehicleHandle.TryGetValue(entity, out var h)) return false;
+            _physics.SetVehicleInput(h, steer, throttle, brake, handBrake);
+            return true;
+        }
+
+        public static bool IsWheelOnGround(Entity entity, int wheelIndex)
+        {
+            if (_physics == null || !_entityToVehicleHandle.TryGetValue(entity, out var h)) return false;
+            return _physics.IsWheelOnGround(h, wheelIndex);
+        }
+
+        public static float GetWheelRotationSpeed(Entity entity, int wheelIndex)
+        {
+            if (_physics == null || !_entityToVehicleHandle.TryGetValue(entity, out var h)) return 0f;
+            return _physics.GetWheelRotationSpeed(h, wheelIndex);
+        }
+
+        public static Matrix4x4 GetWheelWorldTransform(Entity entity, int wheelIndex)
+        {
+            if (_physics == null || !_entityToVehicleHandle.TryGetValue(entity, out var h)) return Matrix4x4.Identity;
+            return _physics.GetWheelWorldTransform(h, wheelIndex);
+        }
+
+        public static PhysicsBodyHandle GetVehicleBodyHandle(Entity entity)
+        {
+            if (_physics == null || !_entityToVehicleHandle.TryGetValue(entity, out var h)) return PhysicsBodyHandle.Invalid;
+            return _physics.GetVehicleBodyHandle(h);
         }
     }
 }

@@ -38,6 +38,33 @@ namespace GameEditor.Framework.Physics
         readonly Dictionary<int, CharState>    _charStates    = new();  // virtual
         readonly Dictionary<int, KinCharState> _kinCharStates = new();  // kinematic
 
+        // ── Vehicle controllers ───────────────────────────────────────────────
+        int _nextVehicleHandle = 1;
+        readonly Dictionary<int, VehicleState> _vehicleStates = new();
+
+        private sealed class VehicleState : IDisposable
+        {
+            public required JPH.VehicleConstraint Constraint;
+            public required JPH.Body              CarBody;
+            public required JPH.BodyID            CarBodyId;
+            /// <summary>Kept alive so Jolt refcount > 0 after SetVehicleCollisionTester. Dispose AFTER Constraint.</summary>
+            public IDisposable?                   CollisionTester;
+            public required ECS.Components.VehicleType Type;
+            public int WheelCount;
+            /// <summary>PhysicsBodyHandle.Value for the chassis — for external force/velocity queries.</summary>
+            public int BodyHandleValue;
+            /// <summary>Tracks previous forward direction so we can flip throttle sign (matches demo pattern).</summary>
+            public float PreviousForward = 1f;
+            private bool _disposed;
+
+            public void Dispose()
+            {
+                if (_disposed) return;
+                _disposed = true;
+                Constraint.Dispose();
+                CollisionTester?.Dispose();
+            }
+        }
         private sealed class CharState : IDisposable
         {
             public required JPH.CharacterVirtual                       Character;
@@ -166,6 +193,16 @@ namespace GameEditor.Framework.Physics
                 state.Dispose();
             _kinCharStates.Clear();
             _charTempAlloc?.Dispose(); _charTempAlloc = null;
+
+            foreach (var state in _vehicleStates.Values)
+            {
+                _physics?.RemoveStepListener(state.Constraint);
+                _physics?.RemoveConstraint(state.Constraint);
+                _bodyInterface?.RemoveBody(state.CarBodyId);
+                _bodyInterface?.DestroyBody(state.CarBodyId);
+                state.Dispose();
+            }
+            _vehicleStates.Clear();
 
             foreach (var (handle, bodyId) in _handleToBodyId)
             {
@@ -862,6 +899,349 @@ namespace GameEditor.Framework.Physics
                 return new Vector3(n.GetX(), n.GetY(), n.GetZ());
             }
             return Vector3.UnitY;
+        }
+
+        // ── Vehicle controllers ───────────────────────────────────────────────
+
+        public VehicleHandle CreateVehicle(VehicleDesc desc)
+        {
+            if (_physics == null || _bodyInterface == null)
+                throw new InvalidOperationException("JoltPhysicsWorld not initialized.");
+
+            var type = desc.Type;
+
+            // ── Build chassis shape ──────────────────────────────────────────
+            using var bodyHE  = new JPH.Vec3(desc.ChassisHalfExtent.X, desc.ChassisHalfExtent.Y, desc.ChassisHalfExtent.Z);
+            using var bodyBox = new JPH.BoxShapeSettings(bodyHE);
+
+            // Lower centre-of-mass for stability
+            using var comOff = new JPH.Vec3(0f, desc.COMOffsetY, 0f);
+            using var comSS  = new JPH.OffsetCenterOfMassShapeSettings(comOff, bodyBox);
+
+            // ── Create chassis body ──────────────────────────────────────────
+            using var carCS = new JPH.BodyCreationSettings();
+            carCS.SetShapeSettings(comSS);
+            carCS.mPosition.Set(desc.Position.X, desc.Position.Y, desc.Position.Z);
+            carCS.mRotation.Set(desc.Rotation.X,  desc.Rotation.Y,  desc.Rotation.Z, desc.Rotation.W);
+            carCS.mMotionType  = JPH.EMotionType.Dynamic;
+            carCS.mObjectLayer = ObjLayerMoving;
+            carCS.SetOverrideMassProperties(1);
+            carCS.SetMassOverride(desc.Mass);
+
+            var carBody = _bodyInterface.CreateBody(carCS);
+            if (carBody == null)
+                throw new InvalidOperationException("Failed to create vehicle chassis body.");
+            var carBodyId = carBody.GetID();
+            _bodyInterface.AddBody(carBodyId, JPH.EActivation.Activate);
+
+            // Register chassis in the standard handle maps so GetVehicleBodyHandle works
+            // and scripts can apply external forces via AddForce / SetLinearVelocity.
+            int bodyHandleValue = _nextHandle++;
+            _handleToBodyId[bodyHandleValue]  = carBodyId;
+            _handleToBody[bodyHandleValue]    = carBody;
+            uint packedId = carBodyId.GetIndexAndSequenceNumber();
+            _packedToHandle[packedId]  = bodyHandleValue;
+            _packedToLayer[packedId]   = desc.Layer;
+            _packedToMask[packedId]    = desc.LayerMask;
+
+            // ── Vehicle constraint settings ──────────────────────────────────
+            using var vehicleSettings = new JPH.VehicleConstraintSettings();
+            vehicleSettings.mMaxPitchRollAngle = desc.MaxRollAngle;
+
+            int wheelCount = desc.Wheels.Length;
+            if (type == ECS.Components.VehicleType.Tracked)
+            {
+                // ── Tracked (tank) ───────────────────────────────────────────
+                using var ctrlSettings = new JPH.TrackedVehicleControllerSettings();
+                vehicleSettings.VehicleSettingsSetTrackedController(ctrlSettings);
+
+                // Distribute wheels evenly across 2 tracks (left = 1, right = 0 by Jolt convention)
+                int wheelsPerTrack = wheelCount / 2;
+                for (int t = 0; t < 2; t++)
+                {
+                    var track = ctrlSettings.mTracks[t];
+                    // Last wheel added to each track is the driven wheel
+                    track.mDrivenWheel = (uint)(t * wheelsPerTrack + wheelsPerTrack - 1);
+
+                    for (int w = 0; w < wheelsPerTrack; w++)
+                    {
+                        var wd = desc.Wheels[t * wheelsPerTrack + w];
+                        using var ws = new JPH.WheelSettingsTV();
+                        ws.mPosition.Set(wd.LocalPosition.X, wd.LocalPosition.Y, wd.LocalPosition.Z);
+                        ws.mRadius              = wd.Radius;
+                        ws.mWidth               = wd.Width;
+                        ws.mSuspensionMinLength = wd.SuspMinLength;
+                        ws.mSuspensionMaxLength = wd.SuspMaxLength;
+                        ws.mSuspensionSpring.mFrequency = wd.SuspFrequency;
+
+                        track.mWheels.PushBack((uint)(t * wheelsPerTrack + w));
+                        vehicleSettings.VehicleSettingsAddWheelTV(ws);
+                    }
+                }
+
+                // Ray tester suits tracks (flat contact, no cylinder)
+                var constraint = new JPH.VehicleConstraint(carBody, vehicleSettings);
+                var tester     = new JPH.VehicleCollisionTesterRay(ObjLayerMoving);
+                constraint.SetVehicleCollisionTester(tester);
+                _physics.AddConstraint(constraint);
+                _physics.AddStepListener(constraint);
+
+                int handle = _nextVehicleHandle++;
+                _vehicleStates[handle] = new VehicleState
+                {
+                    Constraint       = constraint,
+                    CarBody          = carBody,
+                    CarBodyId        = carBodyId,
+                    CollisionTester  = tester,
+                    Type             = type,
+                    WheelCount       = wheelCount,
+                    BodyHandleValue  = bodyHandleValue,
+                };
+                return new VehicleHandle(handle);
+            }
+            else
+            {
+                // ── Wheeled or Motorcycle ────────────────────────────────────
+                using var ctrlSettings = type == ECS.Components.VehicleType.Motorcycle
+                    ? (JPH.WheeledVehicleControllerSettings)new JPH.MotorcycleControllerSettings()
+                    : new JPH.WheeledVehicleControllerSettings();
+
+                ctrlSettings.mEngine.mMaxTorque     = desc.MaxEngineTorque;
+                ctrlSettings.mTransmission.mClutchStrength = desc.ClutchStrength;
+
+                // Add wheels
+                for (int i = 0; i < wheelCount; i++)
+                {
+                    var wd = desc.Wheels[i];
+                    using var ws = new JPH.WheelSettingsWV();
+                    ws.mPosition.Set(wd.LocalPosition.X, wd.LocalPosition.Y, wd.LocalPosition.Z);
+                    ws.mRadius              = wd.Radius;
+                    ws.mWidth               = wd.Width;
+                    ws.mSuspensionMinLength = wd.SuspMinLength;
+                    ws.mSuspensionMaxLength = wd.SuspMaxLength;
+                    ws.mSuspensionSpring.mFrequency = wd.SuspFrequency;
+                    ws.mSuspensionSpring.mDamping   = wd.SuspDamping;
+                    ws.mMaxSteerAngle       = wd.MaxSteerAngle;
+                    ws.mMaxHandBrakeTorque  = wd.MaxHandBrakeTorque;
+                    vehicleSettings.VehicleSettingsAddWheel(ws);
+                }
+                vehicleSettings.VehicleSettingsSetController(ctrlSettings);
+
+                // Build per-axle differentials from driven-wheel pairs
+                var drivenLeft  = new List<int>();
+                var drivenRight = new List<int>();
+                for (int i = 0; i < wheelCount; i++)
+                {
+                    if (!desc.Wheels[i].IsDriven) continue;
+                    if (desc.Wheels[i].LocalPosition.X <= 0f) drivenLeft.Add(i);
+                    else                                        drivenRight.Add(i);
+                }
+                int axleCount = Math.Max(drivenLeft.Count, drivenRight.Count);
+                if (axleCount == 0)
+                {
+                    // No driven wheels configured — drive all wheels on first axle as fallback
+                    if (wheelCount >= 2)
+                    {
+                        using var d = new JPH.VehicleDifferentialSettings();
+                        d.mLeftWheel  = 0;
+                        d.mRightWheel = 1;
+                        ctrlSettings.mDifferentials.PushBack(d);
+                    }
+                }
+                else if (wheelCount == 2)
+                {
+                    // Motorcycle: single center chain drive
+                    using var d = new JPH.VehicleDifferentialSettings();
+                    d.mLeftWheel  = drivenLeft.Count > 0  ? drivenLeft[0]  : 1;
+                    d.mRightWheel = drivenRight.Count > 0 ? drivenRight[0] : 1;
+                    ctrlSettings.mDifferentials.PushBack(d);
+                }
+                else
+                {
+                    for (int a = 0; a < axleCount; a++)
+                    {
+                        using var d = new JPH.VehicleDifferentialSettings();
+                        d.mLeftWheel  = a < drivenLeft.Count  ? drivenLeft[a]  : -1;
+                        d.mRightWheel = a < drivenRight.Count ? drivenRight[a] : -1;
+                        ctrlSettings.mDifferentials.PushBack(d);
+                    }
+                }
+
+                // Anti-roll bar for four-wheel cars (skip for 2-wheelers)
+                if (wheelCount >= 4)
+                {
+                    using var arbFront = new JPH.VehicleAntiRollBar();
+                    arbFront.mLeftWheel  = 0;
+                    arbFront.mRightWheel = 1;
+                    vehicleSettings.mAntiRollBars.PushBack(arbFront);
+                    using var arbRear = new JPH.VehicleAntiRollBar();
+                    arbRear.mLeftWheel  = 2;
+                    arbRear.mRightWheel = 3;
+                    vehicleSettings.mAntiRollBars.PushBack(arbRear);
+                }
+
+                // Collision tester: cast cylinder (convex radius 0.05 m)
+                var tester = new JPH.VehicleCollisionTesterCastCylinder(ObjLayerMoving, 0.05f);
+
+                var constraint = new JPH.VehicleConstraint(carBody, vehicleSettings);
+                constraint.SetVehicleCollisionTester(tester);
+                _physics.AddConstraint(constraint);
+                _physics.AddStepListener(constraint);
+
+                int handle = _nextVehicleHandle++;
+                _vehicleStates[handle] = new VehicleState
+                {
+                    Constraint      = constraint,
+                    CarBody         = carBody,
+                    CarBodyId       = carBodyId,
+                    CollisionTester = tester,
+                    Type            = type,
+                    WheelCount      = wheelCount,
+                    BodyHandleValue = bodyHandleValue,
+                };
+                return new VehicleHandle(handle);
+            }
+        }
+
+        public void DestroyVehicle(VehicleHandle handle)
+        {
+            if (!_vehicleStates.TryGetValue(handle.Value, out var state)) return;
+            _vehicleStates.Remove(handle.Value);
+
+            _physics?.RemoveStepListener(state.Constraint);
+            _physics?.RemoveConstraint(state.Constraint);
+
+            // Remove chassis body from handle maps
+            uint packedId = state.CarBodyId.GetIndexAndSequenceNumber();
+            _handleToBodyId.Remove(state.BodyHandleValue);
+            _handleToBody.Remove(state.BodyHandleValue);
+            _packedToHandle.Remove(packedId);
+            _packedToLayer.Remove(packedId);
+            _packedToMask.Remove(packedId);
+
+            _bodyInterface?.RemoveBody(state.CarBodyId);
+            _bodyInterface?.DestroyBody(state.CarBodyId);
+            state.Dispose();
+        }
+
+        public void SetVehicleInput(VehicleHandle handle, float steer, float throttle, float brake, float handBrake)
+        {
+            if (!_vehicleStates.TryGetValue(handle.Value, out var state)) return;
+            var constraint = state.Constraint;
+
+            if (state.Type == ECS.Components.VehicleType.Tracked)
+            {
+                var ctrl = (JPH.TrackedVehicleController?)constraint.GetController();
+                if (ctrl == null) return;
+
+                // Tank steering: differential throttle per track (matches Demo_Tank.cs)
+                float leftR  = throttle - steer;
+                float rightR = throttle + steer;
+
+                ctrl.SetDriverInput(throttle, leftR, rightR, brake);
+                if (MathF.Abs(throttle) > 0f || MathF.Abs(steer) > 0f)
+                    _bodyInterface?.ActivateBody(state.CarBodyId);
+            }
+            else
+            {
+                var ctrl = constraint.GetWheeledController();
+                if (ctrl == null) return;
+
+                // Match Demo_VehicleConstraint.cs pattern: flip sign based on direction of travel
+                float currentForward = 1f;
+                using var curVelJph = _bodyInterface!.GetLinearVelocity(state.CarBodyId);
+                using var rotJph    = _bodyInterface.GetRotation(state.CarBodyId);
+                var rot     = new Quaternion(rotJph.GetX(), rotJph.GetY(), rotJph.GetZ(), rotJph.GetW());
+                var fwdVec  = Vector3.Transform(Vector3.UnitZ, rot);
+                var velVec  = new Vector3(curVelJph.GetX(), curVelJph.GetY(), curVelJph.GetZ());
+                float dotFwd = Vector3.Dot(velVec, fwdVec);
+
+                if (dotFwd < -0.1f)       currentForward = -1f;
+                else if (dotFwd > 0.1f)   currentForward =  1f;
+                else                      currentForward = state.PreviousForward;
+                state.PreviousForward = currentForward;
+
+                // When reversing, flip brake/throttle so the car doesn't fight itself
+                float forward;
+                float brakeVal;
+                if (throttle > 0f)
+                {
+                    forward  = throttle;
+                    brakeVal = currentForward < 0f ? brake + throttle : brake;
+                }
+                else if (throttle < 0f)
+                {
+                    forward  = throttle;
+                    brakeVal = currentForward > 0f ? brake - throttle : brake;
+                }
+                else
+                {
+                    forward  = 0f;
+                    brakeVal = brake;
+                }
+
+                ctrl.SetDriverInput(forward, steer, brakeVal, handBrake);
+                if (MathF.Abs(throttle) > 0f || MathF.Abs(steer) > 0f || handBrake > 0f)
+                    _bodyInterface?.ActivateBody(state.CarBodyId);
+            }
+        }
+
+        public bool IsWheelOnGround(VehicleHandle handle, int wheelIndex)
+        {
+            if (!_vehicleStates.TryGetValue(handle.Value, out var state)) return false;
+            var wheel = state.Constraint.GetWheel((uint)wheelIndex);
+            if (wheel == null) return false;
+            return wheel.HasContact();
+        }
+
+        public float GetWheelRotationSpeed(VehicleHandle handle, int wheelIndex)
+        {
+            if (!_vehicleStates.TryGetValue(handle.Value, out var state)) return 0f;
+            var wheel = state.Constraint.GetWheel((uint)wheelIndex);
+            if (wheel == null) return 0f;
+            return wheel.GetAngularVelocity();
+        }
+
+        public int GetWheelCount(VehicleHandle handle)
+        {
+            if (!_vehicleStates.TryGetValue(handle.Value, out var state)) return 0;
+            return state.WheelCount;
+        }
+
+        public Matrix4x4 GetWheelWorldTransform(VehicleHandle handle, int wheelIndex)
+        {
+            if (!_vehicleStates.TryGetValue(handle.Value, out var state))
+                return Matrix4x4.Identity;
+
+            using var axisY = new JPH.Vec3(0f, 1f, 0f);
+            using var axisX = new JPH.Vec3(1f, 0f, 0f);
+            using var mat   = state.Constraint.GetWheelWorldTransform((uint)wheelIndex, axisY, axisX);
+
+            return new Matrix4x4(
+                mat.GetColumn4(0).GetX(), mat.GetColumn4(0).GetY(), mat.GetColumn4(0).GetZ(), mat.GetColumn4(0).GetW(),
+                mat.GetColumn4(1).GetX(), mat.GetColumn4(1).GetY(), mat.GetColumn4(1).GetZ(), mat.GetColumn4(1).GetW(),
+                mat.GetColumn4(2).GetX(), mat.GetColumn4(2).GetY(), mat.GetColumn4(2).GetZ(), mat.GetColumn4(2).GetW(),
+                mat.GetColumn4(3).GetX(), mat.GetColumn4(3).GetY(), mat.GetColumn4(3).GetZ(), mat.GetColumn4(3).GetW());
+        }
+
+        public Vector3 GetVehiclePosition(VehicleHandle handle)
+        {
+            if (!_vehicleStates.TryGetValue(handle.Value, out var state)) return Vector3.Zero;
+            using var pos = _bodyInterface!.GetPosition(state.CarBodyId);
+            return new Vector3(pos.GetX(), pos.GetY(), pos.GetZ());
+        }
+
+        public Quaternion GetVehicleRotation(VehicleHandle handle)
+        {
+            if (!_vehicleStates.TryGetValue(handle.Value, out var state)) return Quaternion.Identity;
+            using var rot = _bodyInterface!.GetRotation(state.CarBodyId);
+            return new Quaternion(rot.GetX(), rot.GetY(), rot.GetZ(), rot.GetW());
+        }
+
+        public PhysicsBodyHandle GetVehicleBodyHandle(VehicleHandle handle)
+        {
+            if (!_vehicleStates.TryGetValue(handle.Value, out var state)) return PhysicsBodyHandle.Invalid;
+            return new PhysicsBodyHandle(state.BodyHandleValue);
         }
 
         private void StepAllCharacters(float dt)

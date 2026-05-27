@@ -261,5 +261,73 @@ namespace GameEditor.Framework.Physics
         void            SetCharacterPosition(CharacterHandle handle, Vector3 position);
         bool            IsCharacterGrounded(CharacterHandle handle);
         Vector3         GetCharacterGroundNormal(CharacterHandle handle);
+
+        // ── Vehicle controllers ──────────────────────────────────────────────
+
+        VehicleHandle   CreateVehicle(VehicleDesc desc);
+        void            DestroyVehicle(VehicleHandle handle);
+        /// <summary>
+        /// Apply driver input each frame.
+        /// <paramref name="steer"/>    : [-1, +1] — left/right steering.
+        /// <paramref name="throttle"/> : [-1, +1] — forward (+) / reverse (-).
+        /// <paramref name="brake"/>    : [0, 1]   — foot brake.
+        /// <paramref name="handBrake"/>: [0, 1]   — hand brake (rear wheels).
+        /// </summary>
+        void            SetVehicleInput(VehicleHandle handle, float steer, float throttle, float brake, float handBrake);
+        /// <summary>Returns true when the specified wheel is in contact with the ground.</summary>
+        bool            IsWheelOnGround(VehicleHandle handle, int wheelIndex);
+        /// <summary>Returns the spin speed of the specified wheel in rad/s.</summary>
+        float           GetWheelRotationSpeed(VehicleHandle handle, int wheelIndex);
+        /// <summary>Number of wheels on the vehicle.</summary>
+        int             GetWheelCount(VehicleHandle handle);
+        /// <summary>World-space transform of wheel <paramref name="wheelIndex"/>.</summary>
+        Matrix4x4       GetWheelWorldTransform(VehicleHandle handle, int wheelIndex);
+        Vector3         GetVehiclePosition(VehicleHandle handle);
+        Quaternion      GetVehicleRotation(VehicleHandle handle);
+        /// <summary>Returns the body handle for the vehicle chassis (for applying forces etc.).</summary>
+        PhysicsBodyHandle GetVehicleBodyHandle(VehicleHandle handle);
+    }
+
+    /// <summary>Opaque handle to a vehicle constraint.</summary>
+    public readonly struct VehicleHandle
+    {
+        public readonly int Value;
+        public bool IsValid => Value > 0;
+
+        public VehicleHandle(int value) => Value = value;
+        public static readonly VehicleHandle Invalid = new VehicleHandle(0);
+    }
+
+    /// <summary>Per-wheel parameters used by <see cref="VehicleDesc"/>.</summary>
+    public struct VehicleWheelDesc
+    {
+        public Vector3 LocalPosition;
+        public float   Radius;
+        public float   Width;
+        public float   SuspMinLength;
+        public float   SuspMaxLength;
+        public float   SuspFrequency;
+        public float   SuspDamping;
+        public float   MaxSteerAngle;
+        public float   MaxHandBrakeTorque;
+        public bool    IsDriven;
+    }
+
+    /// <summary>Vehicle creation parameters for <see cref="IPhysicsWorld.CreateVehicle"/>.</summary>
+    public struct VehicleDesc
+    {
+        public GameEditor.Framework.ECS.Components.VehicleType Type;
+        public Vector3    Position;
+        public Quaternion Rotation;
+        public Vector3    ChassisHalfExtent;
+        public float      Mass;
+        public float      COMOffsetY;
+        public float      MaxEngineTorque;
+        public float      ClutchStrength;
+        public float      MaxRollAngle;
+        public float      Friction;
+        public VehicleWheelDesc[] Wheels;
+        public ushort     Layer;
+        public ushort     LayerMask;
     }
 }

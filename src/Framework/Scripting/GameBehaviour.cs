@@ -253,6 +253,20 @@ namespace GameEditor.Framework.Scripting
 
         protected bool TryGetCharacterGroundNormal(out Vector3 normal)
             => SceneManager.TryGetCharacterGroundNormal(EntityId, out normal);
+
+        // ---- Vehicle helpers ------------------------------------------------
+
+        protected bool SetVehicleInput(float steer, float throttle, float brake, float handBrake = 0f)
+            => SceneManager.SetVehicleInput(EntityId, steer, throttle, brake, handBrake);
+
+        protected bool IsWheelOnGround(int wheelIndex)
+            => SceneManager.IsWheelOnGround(EntityId, wheelIndex);
+
+        protected float GetWheelRotationSpeed(int wheelIndex)
+            => SceneManager.GetWheelRotationSpeed(EntityId, wheelIndex);
+
+        protected Matrix4x4 GetWheelWorldTransform(int wheelIndex)
+            => SceneManager.GetWheelWorldTransform(EntityId, wheelIndex);
     }
 }
 

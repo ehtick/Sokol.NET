@@ -242,4 +242,150 @@ namespace GameEditor.Framework.ECS.Components
         /// <summary>Runtime-only: handle returned by CreateConstraint. Not serialized.</summary>
         public GameEditor.Framework.Physics.ConstraintHandle RuntimeHandle;
     }
+
+    /// <summary>Vehicle controller type.</summary>
+    public enum VehicleType { Wheeled, Motorcycle, Tracked }
+
+    /// <summary>Per-wheel configuration stored inside <see cref="VehicleComponent"/>.</summary>
+    public struct VehicleWheelSettings
+    {
+        /// <summary>Wheel centre position in chassis-local space (relative to body origin).</summary>
+        public System.Numerics.Vector3 Position;
+        public float Radius;
+        public float Width;
+        public float SuspMinLength;
+        public float SuspMaxLength;
+        public float SuspFrequency;
+        public float SuspDamping;
+        /// <summary>Maximum steering angle in radians. 0 = non-steering wheel.</summary>
+        public float MaxSteerAngle;
+        /// <summary>Maximum hand-brake torque in N·m. 0 = no hand brake on this wheel.</summary>
+        public float MaxHandBrakeTorque;
+        /// <summary>Whether this wheel is driven by the differential.</summary>
+        public bool IsDriven;
+    }
+
+    /// <summary>
+    /// Attaches a Jolt vehicle constraint to an entity. The entity must also carry a
+    /// <see cref="Transform"/>; the chassis body is created automatically at play-mode start.
+    /// Drive the vehicle each frame by calling <c>SetVehicleInput</c> from a
+    /// <see cref="GameEditor.Framework.Scripting.GameBehaviour"/> script.
+    /// </summary>
+    public struct VehicleComponent
+    {
+        public VehicleType Type;
+        /// <summary>Half-extents of the chassis box shape (metres).</summary>
+        public System.Numerics.Vector3 ChassisHalfExtent;
+        /// <summary>Chassis mass in kg.</summary>
+        public float Mass;
+        /// <summary>Y offset for the chassis centre-of-mass (negative lowers CoM for stability).</summary>
+        public float COMOffsetY;
+        /// <summary>Maximum engine torque in N·m.</summary>
+        public float MaxEngineTorque;
+        /// <summary>Clutch strength (affects gear-shift smoothness).</summary>
+        public float ClutchStrength;
+        /// <summary>Maximum allowed pitch/roll angle in radians (keeps vehicle from tipping too far).</summary>
+        public float MaxRollAngle;
+        public float Friction;
+        public VehicleWheelSettings[] Wheels;
+        public ushort Layer;
+        public ushort LayerMask;
+
+        /// <summary>Runtime-only: handle returned by CreateVehicle. Not serialized.</summary>
+        public GameEditor.Framework.Physics.VehicleHandle RuntimeHandle;
+
+        /// <summary>Default four-wheel car configuration.</summary>
+        public static VehicleComponent DefaultCar => new VehicleComponent
+        {
+            Type              = VehicleType.Wheeled,
+            ChassisHalfExtent = new System.Numerics.Vector3(0.9f, 0.2f, 2.0f),
+            Mass              = 1500f,
+            COMOffsetY        = -0.2f,
+            MaxEngineTorque   = 500f,
+            ClutchStrength    = 10f,
+            MaxRollAngle      = 60f * MathF.PI / 180f,
+            Friction          = 0.5f,
+            Layer             = 1,
+            LayerMask         = 0xFFFF,
+            Wheels = new VehicleWheelSettings[]
+            {
+                // Front-left
+                new VehicleWheelSettings { Position = new System.Numerics.Vector3(-0.9f, -0.3f,  1.4f), Radius = 0.3f, Width = 0.1f, SuspMinLength = 0.3f, SuspMaxLength = 0.5f, SuspFrequency = 1.5f, SuspDamping = 0.5f, MaxSteerAngle = 30f * MathF.PI / 180f, MaxHandBrakeTorque = 0f,   IsDriven = false },
+                // Front-right
+                new VehicleWheelSettings { Position = new System.Numerics.Vector3( 0.9f, -0.3f,  1.4f), Radius = 0.3f, Width = 0.1f, SuspMinLength = 0.3f, SuspMaxLength = 0.5f, SuspFrequency = 1.5f, SuspDamping = 0.5f, MaxSteerAngle = 30f * MathF.PI / 180f, MaxHandBrakeTorque = 0f,   IsDriven = false },
+                // Rear-left
+                new VehicleWheelSettings { Position = new System.Numerics.Vector3(-0.9f, -0.3f, -1.4f), Radius = 0.3f, Width = 0.1f, SuspMinLength = 0.3f, SuspMaxLength = 0.5f, SuspFrequency = 1.5f, SuspDamping = 0.5f, MaxSteerAngle = 0f,                      MaxHandBrakeTorque = 4000f, IsDriven = true  },
+                // Rear-right
+                new VehicleWheelSettings { Position = new System.Numerics.Vector3( 0.9f, -0.3f, -1.4f), Radius = 0.3f, Width = 0.1f, SuspMinLength = 0.3f, SuspMaxLength = 0.5f, SuspFrequency = 1.5f, SuspDamping = 0.5f, MaxSteerAngle = 0f,                      MaxHandBrakeTorque = 4000f, IsDriven = true  },
+            }
+        };
+
+        /// <summary>Default two-wheel motorcycle configuration.</summary>
+        public static VehicleComponent DefaultMotorcycle => new VehicleComponent
+        {
+            Type              = VehicleType.Motorcycle,
+            ChassisHalfExtent = new System.Numerics.Vector3(0.2f, 0.3f, 0.8f),
+            Mass              = 250f,
+            COMOffsetY        = -0.3f,
+            MaxEngineTorque   = 150f,
+            ClutchStrength    = 10f,
+            MaxRollAngle      = 60f * MathF.PI / 180f,
+            Friction          = 0.5f,
+            Layer             = 1,
+            LayerMask         = 0xFFFF,
+            Wheels = new VehicleWheelSettings[]
+            {
+                // Front
+                new VehicleWheelSettings { Position = new System.Numerics.Vector3(0f, -0.3f,  0.75f), Radius = 0.3f, Width = 0.05f, SuspMinLength = 0.3f, SuspMaxLength = 0.5f, SuspFrequency = 1.5f, SuspDamping = 0.5f, MaxSteerAngle = 45f * MathF.PI / 180f, MaxHandBrakeTorque = 0f,   IsDriven = false },
+                // Rear
+                new VehicleWheelSettings { Position = new System.Numerics.Vector3(0f, -0.3f, -0.75f), Radius = 0.3f, Width = 0.05f, SuspMinLength = 0.3f, SuspMaxLength = 0.5f, SuspFrequency = 1.5f, SuspDamping = 0.5f, MaxSteerAngle = 0f,                      MaxHandBrakeTorque = 4000f, IsDriven = true  },
+            }
+        };
+
+        /// <summary>Default tracked-vehicle (tank) configuration — 18 wheels, 9 per side.</summary>
+        public static VehicleComponent DefaultTank => new VehicleComponent
+        {
+            Type              = VehicleType.Tracked,
+            ChassisHalfExtent = new System.Numerics.Vector3(1.5f, 0.3f, 2.8f),
+            Mass              = 4000f,
+            COMOffsetY        = -0.3f,
+            MaxEngineTorque   = 2000f,
+            ClutchStrength    = 10f,
+            MaxRollAngle      = 60f * MathF.PI / 180f,
+            Friction          = 0.5f,
+            Layer             = 1,
+            LayerMask         = 0xFFFF,
+            Wheels            = BuildTankWheels()
+        };
+
+        private static VehicleWheelSettings[] BuildTankWheels()
+        {
+            float[] zpos = { 2.4f, 1.6f, 0.8f, 0.0f, -0.8f, -1.6f, -2.4f, -3.2f, 2.0f };
+            float[] ypos = { -0.3f, -0.3f, -0.3f, -0.3f, -0.3f, -0.3f, -0.3f, -0.3f, 0.1f };
+            float[] suspMax = { 0.1f, 0.3f, 0.3f, 0.3f, 0.3f, 0.3f, 0.3f, 0.1f, 0.3f };
+            float suspMin = 0.1f;
+            var wheels = new VehicleWheelSettings[18];
+            for (int side = 0; side < 2; side++)
+            {
+                float x = (side == 0) ? 1.5f : -1.5f;
+                for (int w = 0; w < 9; w++)
+                {
+                    wheels[side * 9 + w] = new VehicleWheelSettings
+                    {
+                        Position           = new System.Numerics.Vector3(x, ypos[w], zpos[w]),
+                        Radius             = 0.35f,
+                        Width              = 0.1f,
+                        SuspMinLength      = suspMin,
+                        SuspMaxLength      = suspMax[w],
+                        SuspFrequency      = 1.5f,
+                        SuspDamping        = 0.5f,
+                        MaxSteerAngle      = 0f,
+                        MaxHandBrakeTorque = 0f,
+                        IsDriven           = (w == 8), // last wheel per track is the driven wheel
+                    };
+                }
+            }
+            return wheels;
+        }
+    }
 }

@@ -204,6 +204,43 @@ namespace GameEditor.Framework.Scene
                       .Append('}');
                 }
 
+                if (world.TryGetComponent<VehicleComponent>(id, out var vehComp))
+                {
+                    Comma(sb, ref fc);
+                    sb.Append("\"Vehicle\":{\"Type\":").Append((int)vehComp.Type)
+                      .Append(",\"HX\":").Append(F(vehComp.ChassisHalfExtent.X))
+                      .Append(",\"HY\":").Append(F(vehComp.ChassisHalfExtent.Y))
+                      .Append(",\"HZ\":").Append(F(vehComp.ChassisHalfExtent.Z))
+                      .Append(",\"Mass\":").Append(F(vehComp.Mass))
+                      .Append(",\"COM\":").Append(F(vehComp.COMOffsetY))
+                      .Append(",\"Torque\":").Append(F(vehComp.MaxEngineTorque))
+                      .Append(",\"Clutch\":").Append(F(vehComp.ClutchStrength))
+                      .Append(",\"Roll\":").Append(F(vehComp.MaxRollAngle))
+                      .Append(",\"Friction\":").Append(F(vehComp.Friction))
+                      .Append(",\"Layer\":").Append(vehComp.Layer)
+                      .Append(",\"Mask\":").Append(vehComp.LayerMask)
+                      .Append(",\"Wheels\":[");
+                    for (int wi = 0; wi < vehComp.Wheels.Length; wi++)
+                    {
+                        if (wi > 0) sb.Append(',');
+                        var w = vehComp.Wheels[wi];
+                        sb.Append("{\"PX\":").Append(F(w.Position.X))
+                          .Append(",\"PY\":").Append(F(w.Position.Y))
+                          .Append(",\"PZ\":").Append(F(w.Position.Z))
+                          .Append(",\"R\":").Append(F(w.Radius))
+                          .Append(",\"W\":").Append(F(w.Width))
+                          .Append(",\"SMin\":").Append(F(w.SuspMinLength))
+                          .Append(",\"SMax\":").Append(F(w.SuspMaxLength))
+                          .Append(",\"SFreq\":").Append(F(w.SuspFrequency))
+                          .Append(",\"SDamp\":").Append(F(w.SuspDamping))
+                          .Append(",\"Steer\":").Append(F(w.MaxSteerAngle))
+                          .Append(",\"HBrake\":").Append(F(w.MaxHandBrakeTorque))
+                          .Append(",\"Driven\":").Append(w.IsDriven ? "true" : "false")
+                          .Append('}');
+                    }
+                    sb.Append("]}");
+                }
+
                 sb.Append("}}"); // close components + entity
             }
 
@@ -418,6 +455,61 @@ namespace GameEditor.Framework.Scene
                             charEl.TryGetProperty("OfsZ", out var ozEl) ? ozEl.GetSingle() : 0f),
                         Layer              = charEl.TryGetProperty("Layer",    out var lEl)    ? (ushort)lEl.GetInt32()           : CharacterComponent.Default.Layer,
                         LayerMask          = charEl.TryGetProperty("Mask",     out var mkEl)   ? (ushort)mkEl.GetInt32()          : CharacterComponent.Default.LayerMask,
+                    });
+                }
+
+                if (c.TryGetProperty("Vehicle", out var vehEl))
+                {
+                    var def = VehicleComponent.DefaultCar;
+                    var vType = vehEl.TryGetProperty("Type", out var vtEl) ? (VehicleType)vtEl.GetInt32() : def.Type;
+                    VehicleWheelSettings[] wheels;
+                    if (vehEl.TryGetProperty("Wheels", out var wheelsEl) && wheelsEl.ValueKind == JsonValueKind.Array)
+                    {
+                        var wList = new List<VehicleWheelSettings>();
+                        var dw = def.Wheels.Length > 0 ? def.Wheels[0] : default;
+                        foreach (var we in wheelsEl.EnumerateArray())
+                        {
+                            wList.Add(new VehicleWheelSettings
+                            {
+                                Position          = new System.Numerics.Vector3(
+                                    we.TryGetProperty("PX", out var px) ? px.GetSingle() : 0f,
+                                    we.TryGetProperty("PY", out var py) ? py.GetSingle() : 0f,
+                                    we.TryGetProperty("PZ", out var pz) ? pz.GetSingle() : 0f),
+                                Radius            = we.TryGetProperty("R",     out var wr)   ? wr.GetSingle()   : dw.Radius,
+                                Width             = we.TryGetProperty("W",     out var ww)   ? ww.GetSingle()   : dw.Width,
+                                SuspMinLength     = we.TryGetProperty("SMin",  out var sm)   ? sm.GetSingle()   : dw.SuspMinLength,
+                                SuspMaxLength     = we.TryGetProperty("SMax",  out var sx)   ? sx.GetSingle()   : dw.SuspMaxLength,
+                                SuspFrequency     = we.TryGetProperty("SFreq", out var sf)   ? sf.GetSingle()   : dw.SuspFrequency,
+                                SuspDamping       = we.TryGetProperty("SDamp", out var sd)   ? sd.GetSingle()   : dw.SuspDamping,
+                                MaxSteerAngle     = we.TryGetProperty("Steer", out var st)   ? st.GetSingle()   : dw.MaxSteerAngle,
+                                MaxHandBrakeTorque= we.TryGetProperty("HBrake",out var hb)   ? hb.GetSingle()   : dw.MaxHandBrakeTorque,
+                                IsDriven          = we.TryGetProperty("Driven",out var dr) && dr.GetBoolean(),
+                            });
+                        }
+                        wheels = wList.ToArray();
+                    }
+                    else
+                    {
+                        wheels = vType == VehicleType.Motorcycle ? VehicleComponent.DefaultMotorcycle.Wheels :
+                                 vType == VehicleType.Tracked    ? VehicleComponent.DefaultTank.Wheels :
+                                                                    VehicleComponent.DefaultCar.Wheels;
+                    }
+                    world.AddComponent(newId, new VehicleComponent
+                    {
+                        Type              = vType,
+                        ChassisHalfExtent = new System.Numerics.Vector3(
+                            vehEl.TryGetProperty("HX", out var hxEl) ? hxEl.GetSingle() : def.ChassisHalfExtent.X,
+                            vehEl.TryGetProperty("HY", out var hyEl) ? hyEl.GetSingle() : def.ChassisHalfExtent.Y,
+                            vehEl.TryGetProperty("HZ", out var hzEl) ? hzEl.GetSingle() : def.ChassisHalfExtent.Z),
+                        Mass              = vehEl.TryGetProperty("Mass",    out var vmEl)  ? vmEl.GetSingle()  : def.Mass,
+                        COMOffsetY        = vehEl.TryGetProperty("COM",     out var comEl) ? comEl.GetSingle() : def.COMOffsetY,
+                        MaxEngineTorque   = vehEl.TryGetProperty("Torque",  out var tqEl)  ? tqEl.GetSingle()  : def.MaxEngineTorque,
+                        ClutchStrength    = vehEl.TryGetProperty("Clutch",  out var clEl)  ? clEl.GetSingle()  : def.ClutchStrength,
+                        MaxRollAngle      = vehEl.TryGetProperty("Roll",    out var rlEl)  ? rlEl.GetSingle()  : def.MaxRollAngle,
+                        Friction          = vehEl.TryGetProperty("Friction", out var vfEl) ? vfEl.GetSingle()  : def.Friction,
+                        Layer             = vehEl.TryGetProperty("Layer",   out var vlEl)  ? (ushort)vlEl.GetInt32() : def.Layer,
+                        LayerMask         = vehEl.TryGetProperty("Mask",    out var vmkEl) ? (ushort)vmkEl.GetInt32(): def.LayerMask,
+                        Wheels            = wheels,
                     });
                 }
             }
