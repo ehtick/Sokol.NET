@@ -309,6 +309,18 @@ namespace GameEditor.Framework.Scene
                 tr.Rotation = _physics.GetVehicleRotation(vHandle);
                 world.AddComponent(entity, tr);
             }
+
+            // Sync wheel follower entity transforms to wheel world transforms.
+            foreach (Entity entity in world.Entities)
+            {
+                if (!world.TryGetComponent<WheelFollowerComponent>(entity, out var wf)) continue;
+                if (wf.VehicleEntity.IsNull) continue;
+                if (!world.TryGetComponent<Transform>(entity, out var wfTr)) continue;
+                var wm = GetWheelWorldTransform(wf.VehicleEntity, wf.WheelIndex);
+                wfTr.Position = new Vector3(wm.M41, wm.M42, wm.M43);
+                wfTr.Rotation = Quaternion.CreateFromRotationMatrix(wm);
+                world.AddComponent(entity, wfTr);
+            }
         }
 
         public static bool Raycast(Vector3 origin, Vector3 direction, float maxDistance, out Entity hitEntity, out RaycastHit hit)

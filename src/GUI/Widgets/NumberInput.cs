@@ -25,6 +25,13 @@ public class NumberInput : TextBox
     public int   DecimalPlaces { get; set; } = 2;
     public float Step          { get; set; } = 0.1f;
 
+    /// <summary>When true, forces <see cref="DecimalPlaces"/>=0 and <see cref="Step"/>=1 so only integers are accepted.</summary>
+    public bool IsInteger
+    {
+        get => DecimalPlaces == 0;
+        set { if (value) { DecimalPlaces = 0; Step = 1f; } }
+    }
+
     public event Action<float>? ValueChanged;
     public event Action<float>? ValueCommitted; // fired on Enter / focus loss
 

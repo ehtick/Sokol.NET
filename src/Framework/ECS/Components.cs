@@ -388,4 +388,11 @@ namespace GameEditor.Framework.ECS.Components
             return wheels;
         }
     }
+
+    /// <summary>Attaches this entity's Transform to a specific wheel of a VehicleComponent entity.</summary>
+    public struct WheelFollowerComponent
+    {
+        public Entity VehicleEntity;
+        public int    WheelIndex;
+    }
 }

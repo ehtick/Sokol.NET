@@ -241,6 +241,15 @@ namespace GameEditor.Framework.Scene
                     sb.Append("]}");
                 }
 
+                if (world.TryGetComponent<WheelFollowerComponent>(id, out var wf))
+                {
+                    Comma(sb, ref fc);
+                    sb.Append("\"WheelFollow\":{\"V\":")
+                      .Append(!wf.VehicleEntity.IsNull ? wf.VehicleEntity.GetHashCode() : -1)
+                      .Append(",\"WI\":").Append(wf.WheelIndex)
+                      .Append('}');
+                }
+
                 sb.Append("}}"); // close components + entity
             }
 
@@ -270,6 +279,8 @@ namespace GameEditor.Framework.Scene
             var parentFixups = new Dictionary<Entity, int>();
             // Entities with a ConstraintComponent whose BodyA/BodyB IDs need remapping
             var constraintFixups = new Dictionary<Entity, (int, int)>();
+            // Entities with a WheelFollowerComponent whose VehicleEntity ID needs remapping
+            var wheelFollowFixups = new Dictionary<Entity, int>();
 
             // First pass — create entities and load all components
             foreach (var eEl in entitiesEl.EnumerateArray())
@@ -512,6 +523,14 @@ namespace GameEditor.Framework.Scene
                         Wheels            = wheels,
                     });
                 }
+
+                if (c.TryGetProperty("WheelFollow", out var wfEl))
+                {
+                    int savedV = wfEl.TryGetProperty("V",  out var vEl)  ? vEl.GetInt32()  : -1;
+                    int wi     = wfEl.TryGetProperty("WI", out var wiEl) ? wiEl.GetInt32() : 0;
+                    world.AddComponent(newId, new WheelFollowerComponent { WheelIndex = wi });
+                    if (savedV >= 0) wheelFollowFixups[newId] = savedV;
+                }
             }
 
             // Second pass — remap parent IDs from saved ints to live Entities
@@ -534,6 +553,15 @@ namespace GameEditor.Framework.Scene
                 if (savedIds.Item2 >= 0 && idMap.TryGetValue(savedIds.Item2, out Entity eb))
                     cc.BodyB = eb;
                 world.AddComponent(entity, cc);
+            }
+
+            // Fourth pass — remap WheelFollowerComponent.VehicleEntity IDs to live Entities
+            foreach (var (entity, savedVId) in wheelFollowFixups)
+            {
+                if (!world.TryGetComponent<WheelFollowerComponent>(entity, out var wfc)) continue;
+                if (idMap.TryGetValue(savedVId, out Entity ve))
+                    wfc.VehicleEntity = ve;
+                world.AddComponent(entity, wfc);
             }
         }
 
