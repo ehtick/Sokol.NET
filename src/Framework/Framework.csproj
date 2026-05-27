@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>GameEditor.Framework</AssemblyName>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PublishAot>true</PublishAot>
+    <PublishAotUsingRuntimePack>true</PublishAotUsingRuntimePack>
+    <TrimMode>partial</TrimMode>
+    <TrimmerRemoveSymbols>false</TrimmerRemoveSymbols>
+    <NoWarn>$(NoWarn);IL2026;IL2067;IL2070;IL2072;IL2077</NoWarn>
+  </PropertyGroup>
+
+  <!-- Exclude shader-dependent renderers — they stay in GameEditor which has the compiled shaders -->
+  <ItemGroup>
+    <Compile Remove="Renderer/SceneRenderer.cs" />
+    <Compile Remove="Renderer/GridRenderer.cs" />
+  </ItemGroup>
+
+  <!-- Sokol bindings (separate DLL, shared by the ALC along with Framework) -->
+  <ItemGroup>
+    <ProjectReference Include="../sokol/sokol.csproj" />
+  </ItemGroup>
+
+  <!-- Frent ECS -->
+  <ItemGroup>
+    <ProjectReference Include="../../ext/Frent/Frent/Frent.csproj" />
+  </ItemGroup>
+
+  <!-- JoltPhysics C# bindings compiled directly into GameEditor.Framework.dll -->
+  <ItemGroup>
+    <Compile Include="../../ext/JoltPhysics/bindings/csharp/src/**/*.cs">
+      <Link>JoltPhysics/%(Filename)%(Extension)</Link>
+    </Compile>
+    <Compile Include="../../ext/JoltPhysics/bindings/csharp/extras/*.cs">
+      <Link>JoltPhysics/%(Filename)%(Extension)</Link>
+    </Compile>
+  </ItemGroup>
+
+</Project>

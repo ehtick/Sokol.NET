@@ -8,7 +8,7 @@ namespace GameEditor.Framework.Core
         public static float TotalTime { get; private set; }
         public static int FrameCount { get; private set; }
 
-        internal static void Update()
+        public static void Update()
         {
             DeltaTime = (float)sapp_frame_duration();
             TotalTime += DeltaTime;

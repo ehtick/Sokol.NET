@@ -52,10 +52,19 @@ namespace GameEditor.Framework.Core
 
         static void RegisterAvailableGameBehaviours()
         {
-            var gameBehaviours = typeof(GameBehaviour).Assembly.GetTypes().Where(t => t.IsSubclassOf(typeof(GameBehaviour)) && t != typeof(GameBehaviour));
-            foreach (var gameBehaviour in gameBehaviours)
+            // GameBehaviour is now in GameEditor.Framework.dll (a separate assembly).
+            // Game script types live in the entry/calling assembly, so scan all loaded assemblies.
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
-                ScriptSystem.RegisterType(gameBehaviour.ToString());
+                foreach (var type in assembly.GetTypes())
+                {
+                    if (type.IsAbstract || type == typeof(GameBehaviour)) continue;
+                    if (!type.IsSubclassOf(typeof(GameBehaviour))) continue;
+                    var captured = type;
+                    ScriptSystem.RegisterType(type.Name, () =>
+                        (GameBehaviour)(Activator.CreateInstance(captured)
+                            ?? throw new InvalidOperationException($"Cannot create {captured.Name}")));
+                }
             }
         }
         // ── Init ─────────────────────────────────────────────────────────────

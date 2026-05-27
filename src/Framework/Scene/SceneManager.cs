@@ -463,12 +463,12 @@ namespace GameEditor.Framework.Scene
                         var entry = shapes[i];
                         if (entry.Shape == ColliderShape.ConvexHull && entry.MeshVertices == null)
                         {
-                            entry.MeshVertices = SceneRenderer.GetHullPoints(spec);
+                            entry.MeshVertices = PrimitiveMeshGeometry.GetHullPoints(spec);
                             shapes[i] = entry;
                         }
                         else if (entry.Shape == ColliderShape.Mesh && entry.MeshVertices == null)
                         {
-                            (entry.MeshVertices, entry.MeshIndices) = SceneRenderer.GetMeshTriangles(spec);
+                            (entry.MeshVertices, entry.MeshIndices) = PrimitiveMeshGeometry.GetMeshTriangles(spec);
                             shapes[i] = entry;
                         }
                     }

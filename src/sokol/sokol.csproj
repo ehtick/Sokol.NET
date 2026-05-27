@@ -9,4 +9,9 @@
     <PublishAotUsingRuntimePack>true</PublishAotUsingRuntimePack>
   </PropertyGroup>
 
+  <!-- SDebugUI depends on Imgui (editor-only); exclude from the standalone sokol DLL -->
+  <ItemGroup>
+    <Compile Remove="SDebugUI.cs" />
+  </ItemGroup>
+
 </Project>
