@@ -104,10 +104,10 @@ namespace GameEditor.Framework.Core
                 Save(ProjectFolder, Config);
         }
 
-        /// <summary>Serializes <paramref name="config"/> to <c>config.json</c> inside <paramref name="projectFolder"/>.</summary>
+        /// <summary>Serializes <paramref name="config"/> to <c>config.json</c> inside <paramref name="projectFolder"/>
+        /// and to <c>Assets/config.json</c> (the copy used at application startup).</summary>
         public static void Save(string projectFolder, ProjectConfig config)
         {
-            string path = Path.Combine(projectFolder, ConfigFileName);
             try
             {
                 var sb = new StringBuilder();
@@ -124,7 +124,16 @@ namespace GameEditor.Framework.Core
                 sb.Append("  }\n");
                 sb.Append('}');
 
-                SokolFile.WriteAllText(path, sb.ToString());
+                string json = sb.ToString();
+
+                // Root copy
+                SokolFile.WriteAllText(Path.Combine(projectFolder, ConfigFileName), json);
+
+                // Assets/ copy — the one used by the application at startup
+                string assetsDir = Path.Combine(projectFolder, "Assets");
+                Directory.CreateDirectory(assetsDir);
+                SokolFile.WriteAllText(Path.Combine(assetsDir, ConfigFileName), json);
+
                 Logger.Info("Project config saved.");
             }
             catch (Exception ex)

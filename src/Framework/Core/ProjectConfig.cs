@@ -7,7 +7,7 @@ namespace GameEditor.Framework.Core
     {
         public string Version       { get; set; } = "1.0";
         public string ProjectName   { get; set; } = "MyGame";
-        public string DefaultScene  { get; set; } = "Assets/Scenes/Main.scene.json";
+        public string DefaultScene  { get; set; } = "Scenes/Main.scene.json";
         public string DefaultCamera { get; set; } = "MainCamera";
         public int    ScreenWidth   { get; set; } = 1280;
         public int    ScreenHeight  { get; set; } = 720;
