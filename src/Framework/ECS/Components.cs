@@ -127,10 +127,14 @@ namespace GameEditor.Framework.ECS.Components
         public float Restitution;
         public float LinearDamping;
         public float AngularDamping;
-        public ColliderShape Shape;
+        /// <summary>All collision shapes on this body. Always has at least one entry at play time.</summary>
+        public List<ShapeEntry>? Shapes;
         public bool IsTrigger;
         public ushort Layer;
         public ushort LayerMask;
+
+        /// <summary>Convenience accessor — type of the first (or only) shape entry.</summary>
+        public readonly ColliderShape Shape => Shapes?.Count > 0 ? Shapes[0].Shape : ColliderShape.Box;
 
         public bool IsStatic
         {

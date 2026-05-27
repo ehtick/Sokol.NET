@@ -7,6 +7,7 @@ using System.Text.Json;
 using Frent;
 using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
+using GameEditor.Framework.Physics;
 
 namespace GameEditor.Framework.Scene
 {
@@ -92,9 +93,30 @@ namespace GameEditor.Framework.Scene
                                                 .Append(",\"Friction\":").Append(F(rb.Friction))
                                                 .Append(",\"Restitution\":").Append(F(rb.Restitution))
                                                 .Append(",\"LinearDamping\":").Append(F(rb.LinearDamping))
-                                                .Append(",\"AngularDamping\":").Append(F(rb.AngularDamping))
-                        .Append(",\"Shape\":\"").Append(rb.Shape.ToString())
-                        .Append("\",\"Trigger\":").Append(rb.IsTrigger ? "true" : "false")
+                                                .Append(",\"AngularDamping\":").Append(F(rb.AngularDamping));
+                    // Shapes array (geometry is not serialised — repopulated at play time from MeshRenderer)
+                    sb.Append(",\"Shapes\":[");
+                    var shapes = rb.Shapes;
+                    if (shapes != null)
+                    {
+                        for (int si = 0; si < shapes.Count; si++)
+                        {
+                            if (si > 0) sb.Append(',');
+                            var se = shapes[si];
+                            sb.Append("{\"S\":\"").Append(se.Shape.ToString()).Append('"')
+                              .Append(",\"HX\":").Append(F(se.HalfExtent.X))
+                              .Append(",\"HY\":").Append(F(se.HalfExtent.Y))
+                              .Append(",\"HZ\":").Append(F(se.HalfExtent.Z))
+                              .Append(",\"R\":").Append(F(se.Radius))
+                              .Append(",\"H\":").Append(F(se.HalfHeight))
+                              .Append(",\"OX\":").Append(F(se.Offset.X))
+                              .Append(",\"OY\":").Append(F(se.Offset.Y))
+                              .Append(",\"OZ\":").Append(F(se.Offset.Z))
+                              .Append('}');
+                        }
+                    }
+                    sb.Append(']');
+                    sb.Append(",\"Trigger\":").Append(rb.IsTrigger ? "true" : "false")
                         .Append(",\"Layer\":").Append(rb.Layer)
                         .Append(",\"LayerMask\":").Append(rb.LayerMask)
                         .Append('}');
@@ -233,6 +255,41 @@ namespace GameEditor.Framework.Scene
                     });
 
                 if (c.TryGetProperty("Rigidbody", out var rbEl))
+                {
+                    List<ShapeEntry> loadedShapes;
+                    if (rbEl.TryGetProperty("Shapes", out var shapesEl) && shapesEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    {
+                        loadedShapes = new List<ShapeEntry>();
+                        foreach (var seEl in shapesEl.EnumerateArray())
+                        {
+                            var se = new ShapeEntry
+                            {
+                                Shape      = seEl.TryGetProperty("S", out var sEl2) ? Enum.Parse<GameEditor.Framework.Physics.ColliderShape>(sEl2.GetString() ?? "Box") : GameEditor.Framework.Physics.ColliderShape.Box,
+                                HalfExtent = new System.Numerics.Vector3(
+                                    seEl.TryGetProperty("HX", out var hxEl) ? hxEl.GetSingle() : 0.5f,
+                                    seEl.TryGetProperty("HY", out var hyEl) ? hyEl.GetSingle() : 0.5f,
+                                    seEl.TryGetProperty("HZ", out var hzEl) ? hzEl.GetSingle() : 0.5f),
+                                Radius     = seEl.TryGetProperty("R", out var rEl) ? rEl.GetSingle() : 0.5f,
+                                HalfHeight = seEl.TryGetProperty("H", out var hEl) ? hEl.GetSingle() : 0.5f,
+                                Offset     = new System.Numerics.Vector3(
+                                    seEl.TryGetProperty("OX", out var oxEl) ? oxEl.GetSingle() : 0f,
+                                    seEl.TryGetProperty("OY", out var oyEl) ? oyEl.GetSingle() : 0f,
+                                    seEl.TryGetProperty("OZ", out var ozEl) ? ozEl.GetSingle() : 0f),
+                                OffsetRotation = System.Numerics.Quaternion.Identity,
+                            };
+                            loadedShapes.Add(se);
+                        }
+                        if (loadedShapes.Count == 0)
+                            loadedShapes.Add(ShapeEntry.Default());
+                    }
+                    else
+                    {
+                        // Backward compat: old format had a single "Shape" string field
+                        var legacyShape = rbEl.TryGetProperty("Shape", out var shapeEl)
+                            ? Enum.Parse<GameEditor.Framework.Physics.ColliderShape>(shapeEl.GetString() ?? "Box")
+                            : GameEditor.Framework.Physics.ColliderShape.Box;
+                        loadedShapes = new List<ShapeEntry> { ShapeEntry.Default(legacyShape) };
+                    }
                     world.AddComponent(newId, new RigidbodyComponent
                     {
                         MotionType = ReadMotionType(rbEl),
@@ -242,13 +299,12 @@ namespace GameEditor.Framework.Scene
                         Restitution = rbEl.TryGetProperty("Restitution", out var restitutionEl) ? restitutionEl.GetSingle() : 0f,
                         LinearDamping = rbEl.TryGetProperty("LinearDamping", out var linearDampingEl) ? linearDampingEl.GetSingle() : 0f,
                         AngularDamping = rbEl.TryGetProperty("AngularDamping", out var angularDampingEl) ? angularDampingEl.GetSingle() : 0.05f,
-                        Shape      = rbEl.TryGetProperty("Shape", out var shapeEl)
-                            ? Enum.Parse<GameEditor.Framework.Physics.ColliderShape>(shapeEl.GetString() ?? nameof(GameEditor.Framework.Physics.ColliderShape.Box))
-                            : GameEditor.Framework.Physics.ColliderShape.Box,
+                        Shapes     = loadedShapes,
                         IsTrigger  = rbEl.TryGetProperty("Trigger", out var triggerEl) && triggerEl.GetBoolean(),
                         Layer      = rbEl.TryGetProperty("Layer", out var layerEl) ? (ushort)layerEl.GetInt32() : (ushort)1,
                         LayerMask  = rbEl.TryGetProperty("LayerMask", out var maskEl) ? (ushort)maskEl.GetInt32() : (ushort)0xFFFF
                     });
+                }
 
                 if (c.TryGetProperty("Script", out var sEl))
                 {

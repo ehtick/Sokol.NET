@@ -17,6 +17,40 @@ namespace GameEditor.Framework.Physics
 
     public enum RigidbodyMotionType { Dynamic, Static, Kinematic }
 
+    /// <summary>
+    /// One collider shape within a compound body (or the sole shape of a single-shape body).
+    /// Dimensions are in mesh-local units; <see cref="BodyDesc.Scale"/> is applied in CreateBody.
+    /// </summary>
+    public struct ShapeEntry
+    {
+        public ColliderShape Shape;
+
+        // Box
+        public Vector3 HalfExtent;
+        // Sphere, Capsule, Cylinder
+        public float Radius;
+        // Capsule (half-height of cylindrical portion), Cylinder (half-height)
+        public float HalfHeight;
+
+        // Offset relative to body centre (compound bodies)
+        public Vector3    Offset;
+        public Quaternion OffsetRotation;
+
+        // ConvexHull / Mesh source geometry (mesh-local coords; CreateBody scales by entity scale).
+        // Not serialised — repopulated from MeshRenderer at play-mode start.
+        public Vector3[]? MeshVertices;
+        public uint[]?    MeshIndices;
+
+        public static ShapeEntry Default(ColliderShape shape = ColliderShape.Box) => new ShapeEntry
+        {
+            Shape          = shape,
+            HalfExtent     = new Vector3(0.5f, 0.5f, 0.5f),
+            Radius         = 0.5f,
+            HalfHeight     = 0.5f,
+            OffsetRotation = Quaternion.Identity,
+        };
+    }
+
     public readonly struct BodyDesc
     {
         public readonly Vector3    Position;
@@ -29,46 +63,40 @@ namespace GameEditor.Framework.Physics
         public readonly float      Restitution;
         public readonly float      LinearDamping;
         public readonly float      AngularDamping;
-        public readonly ColliderShape Shape;
+        public readonly List<ShapeEntry> Shapes;
         public readonly bool       IsTrigger;
         public readonly ushort     Layer;
         public readonly ushort     LayerMask;
-        public readonly Vector3[]? MeshVertices;
-        public readonly uint[]?    MeshIndices;
 
-        public bool IsStatic => MotionType == RigidbodyMotionType.Static;
+        public bool IsStatic    => MotionType == RigidbodyMotionType.Static;
         public bool IsKinematic => MotionType == RigidbodyMotionType.Kinematic;
 
         public BodyDesc(
             Vector3 position, Quaternion rotation, Vector3 scale,
             RigidbodyMotionType motionType, float mass, bool useGravity,
+            List<ShapeEntry> shapes,
             float friction = 0.5f,
             float restitution = 0.0f,
             float linearDamping = 0.0f,
             float angularDamping = 0.05f,
-            ColliderShape shape = ColliderShape.Box,
             bool isTrigger = false,
             ushort layer = 1,
-            ushort layerMask = 0xFFFF,
-            Vector3[]? meshVertices = null,
-            uint[]? meshIndices = null)
+            ushort layerMask = 0xFFFF)
         {
-            Position   = position;
-            Rotation   = rotation;
-            Scale      = scale;
-            MotionType = motionType;
-            Mass       = mass;
-            UseGravity = useGravity;
-            Friction = friction;
-            Restitution = restitution;
-            LinearDamping = linearDamping;
+            Position      = position;
+            Rotation      = rotation;
+            Scale         = scale;
+            MotionType    = motionType;
+            Mass          = mass;
+            UseGravity    = useGravity;
+            Shapes        = shapes ?? new List<ShapeEntry> { ShapeEntry.Default() };
+            Friction      = friction;
+            Restitution   = restitution;
+            LinearDamping  = linearDamping;
             AngularDamping = angularDamping;
-            Shape      = shape;
             IsTrigger  = isTrigger;
             Layer      = layer;
             LayerMask  = layerMask;
-            MeshVertices = meshVertices;
-            MeshIndices  = meshIndices;
         }
     }
 

@@ -128,84 +128,35 @@ namespace GameEditor.Framework.Physics
 
             using var cs = new JPH.BodyCreationSettings();
 
-            // Shape
-            switch (desc.Shape)
+            // ── Shape ──────────────────────────────────────────────────────────
+            var shapes = desc.Shapes;
+            bool anyMesh = false;
+            foreach (var se in shapes)
+                if (se.Shape == ColliderShape.Mesh) { anyMesh = true; break; }
+
+            if (shapes.Count == 1)
             {
-                case ColliderShape.Sphere:
+                BuildShapeAndCall(shapes[0], desc.Scale, shapeSS => cs.SetShapeSettings(shapeSS));
+            }
+            else if (shapes.Count > 1)
+            {
+                using var scs = new JPH.StaticCompoundShapeSettings();
+                JPH.CompoundShapeSettings compound = scs;
+                foreach (var entry in shapes)
                 {
-                    float r = MathF.Max(desc.Scale.X, MathF.Max(desc.Scale.Y, desc.Scale.Z)) * 0.5f;
-                    using var ss = new JPH.SphereShapeSettings(r);
-                    cs.SetShapeSettings(ss);
-                    break;
+                    var e = entry;
+                    using var pos = new JPH.Vec3(e.Offset.X, e.Offset.Y, e.Offset.Z);
+                    using var rot = new JPH.Quat(e.OffsetRotation.X, e.OffsetRotation.Y, e.OffsetRotation.Z, e.OffsetRotation.W);
+                    var capturedPos = pos; var capturedRot = rot;
+                    BuildShapeAndCall(e, desc.Scale, shapeSS => compound.AddShape(capturedPos, capturedRot, shapeSS));
                 }
-                case ColliderShape.Capsule:
-                {
-                    float radius     = MathF.Max(desc.Scale.X, desc.Scale.Z) * 0.5f;
-                    float halfHeight = MathF.Max(0f, desc.Scale.Y - radius);
-                    using var ss = new JPH.CapsuleShapeSettings(halfHeight, radius);
-                    cs.SetShapeSettings(ss);
-                    break;
-                }
-                case ColliderShape.Cylinder:
-                {
-                    float radius    = MathF.Max(desc.Scale.X, desc.Scale.Z) * 0.5f;
-                    float halfHeight = desc.Scale.Y * 0.5f;
-                    using var ss = new JPH.CylinderShapeSettings(halfHeight, radius);
-                    cs.SetShapeSettings(ss);
-                    break;
-                }
-                case ColliderShape.Plane:
-                {
-                    using var plane = new JPH.Plane(new JPH.Vec4(0f, 1f, 0f, 0f));
-                    using var ss = new JPH.PlaneShapeSettings(plane);
-                    cs.SetShapeSettings(ss);
-                    break;
-                }
-                case ColliderShape.ConvexHull:
-                {
-                    Vector3 s = desc.Scale;
-                    Vector3[] src = desc.MeshVertices ?? new Vector3[]
-                    {
-                        new(-0.5f,-0.5f,-0.5f), new(0.5f,-0.5f,-0.5f),
-                        new( 0.5f, 0.5f,-0.5f), new(-0.5f, 0.5f,-0.5f),
-                        new(-0.5f,-0.5f, 0.5f), new(0.5f,-0.5f, 0.5f),
-                        new( 0.5f, 0.5f, 0.5f), new(-0.5f, 0.5f, 0.5f),
-                    };
-                    var pts = new JPH.Vec3f[src.Length];
-                    for (int i = 0; i < src.Length; i++)
-                        pts[i] = new JPH.Vec3f(src[i].X * s.X, src[i].Y * s.Y, src[i].Z * s.Z);
-                    using var hull = JPH.ConvexHullShapeSettingsFromPoints(pts, 0.05f);
-                    cs.SetShapeSettings(hull);
-                    break;
-                }
-                case ColliderShape.Mesh:
-                {
-                    if (desc.MeshVertices != null && desc.MeshIndices != null)
-                    {
-                        Vector3 s = desc.Scale;
-                        var pts = new JPH.Vec3f[desc.MeshVertices.Length];
-                        for (int i = 0; i < pts.Length; i++)
-                        {
-                            Vector3 v = desc.MeshVertices[i];
-                            pts[i] = new JPH.Vec3f(v.X * s.X, v.Y * s.Y, v.Z * s.Z);
-                        }
-                        using var mesh = JPH.MeshShapeSettingsFromIndexedMesh(pts, desc.MeshIndices);
-                        cs.SetShapeSettings(mesh);
-                    }
-                    else
-                    {
-                        // Fallback to box if geometry is missing
-                        using var ss = new JPH.BoxShapeSettings(new JPH.Vec3(desc.Scale.X * 0.5f, desc.Scale.Y * 0.5f, desc.Scale.Z * 0.5f));
-                        cs.SetShapeSettings(ss);
-                    }
-                    break;
-                }
-                default: // Box
-                {
-                    using var ss = new JPH.BoxShapeSettings(new JPH.Vec3(desc.Scale.X * 0.5f, desc.Scale.Y * 0.5f, desc.Scale.Z * 0.5f));
-                    cs.SetShapeSettings(ss);
-                    break;
-                }
+                cs.SetShapeSettings((JPH.Const_StaticCompoundShapeSettings)scs);
+            }
+            else
+            {
+                // Empty shapes list — fallback to unit box
+                using var ss = new JPH.BoxShapeSettings(new JPH.Vec3(desc.Scale.X * 0.5f, desc.Scale.Y * 0.5f, desc.Scale.Z * 0.5f));
+                cs.SetShapeSettings(ss);
             }
 
             // Position and rotation
@@ -230,7 +181,7 @@ namespace GameEditor.Framework.Physics
             }
 
             // MeshShape is static-only in Jolt — override regardless of MotionType
-            if (desc.Shape == ColliderShape.Mesh)
+            if (anyMesh)
             {
                 cs.mMotionType  = JPH.EMotionType.Static;
                 cs.mObjectLayer = ObjLayerNonMoving;
@@ -260,6 +211,97 @@ namespace GameEditor.Framework.Physics
                 _sensors.Add(packed);
 
             return new PhysicsBodyHandle(handle);
+        }
+
+        /// <summary>
+        /// Builds a Jolt shape-settings object for <paramref name="entry"/> (scaled by
+        /// <paramref name="scale"/>) and synchronously passes a non-owning
+        /// <see cref="JPH.Const_ShapeSettings"/> view to <paramref name="consume"/>.
+        /// The underlying native object is valid for the duration of the callback only.
+        /// </summary>
+        private static unsafe void BuildShapeAndCall(ShapeEntry entry, Vector3 scale, Action<JPH.Const_ShapeSettings> consume)
+        {
+            switch (entry.Shape)
+            {
+                case ColliderShape.Sphere:
+                {
+                    float r = entry.Radius * MathF.Max(scale.X, MathF.Max(scale.Y, scale.Z));
+                    using var ss = new JPH.SphereShapeSettings(r);
+                    consume(ss);
+                    break;
+                }
+                case ColliderShape.Capsule:
+                {
+                    float radius     = entry.Radius * MathF.Max(scale.X, scale.Z);
+                    float halfHeight = MathF.Max(0f, entry.HalfHeight * scale.Y);
+                    using var ss = new JPH.CapsuleShapeSettings(halfHeight, radius);
+                    consume(ss);
+                    break;
+                }
+                case ColliderShape.Cylinder:
+                {
+                    float radius     = entry.Radius * MathF.Max(scale.X, scale.Z);
+                    float halfHeight = entry.HalfHeight * scale.Y;
+                    using var ss = new JPH.CylinderShapeSettings(halfHeight, radius);
+                    consume(ss);
+                    break;
+                }
+                case ColliderShape.Plane:
+                {
+                    using var plane = new JPH.Plane(new JPH.Vec4(0f, 1f, 0f, 0f));
+                    using var ss = new JPH.PlaneShapeSettings(plane);
+                    consume(ss);
+                    break;
+                }
+                case ColliderShape.ConvexHull:
+                {
+                    Vector3 s = scale;
+                    Vector3[] src = entry.MeshVertices ?? new Vector3[]
+                    {
+                        new(-0.5f,-0.5f,-0.5f), new(0.5f,-0.5f,-0.5f),
+                        new( 0.5f, 0.5f,-0.5f), new(-0.5f, 0.5f,-0.5f),
+                        new(-0.5f,-0.5f, 0.5f), new(0.5f,-0.5f, 0.5f),
+                        new( 0.5f, 0.5f, 0.5f), new(-0.5f, 0.5f, 0.5f),
+                    };
+                    var pts = new JPH.Vec3f[src.Length];
+                    for (int i = 0; i < src.Length; i++)
+                        pts[i] = new JPH.Vec3f(src[i].X * s.X, src[i].Y * s.Y, src[i].Z * s.Z);
+                    using var hull = JPH.ConvexHullShapeSettingsFromPoints(pts, 0.05f);
+                    consume(hull);
+                    break;
+                }
+                case ColliderShape.Mesh:
+                {
+                    if (entry.MeshVertices != null && entry.MeshIndices != null)
+                    {
+                        Vector3 s = scale;
+                        var pts = new JPH.Vec3f[entry.MeshVertices.Length];
+                        for (int i = 0; i < pts.Length; i++)
+                        {
+                            Vector3 v = entry.MeshVertices[i];
+                            pts[i] = new JPH.Vec3f(v.X * s.X, v.Y * s.Y, v.Z * s.Z);
+                        }
+                        using var mesh = JPH.MeshShapeSettingsFromIndexedMesh(pts, entry.MeshIndices);
+                        consume(mesh);
+                    }
+                    else
+                    {
+                        // Geometry not yet populated — fallback to box
+                        using var ss = new JPH.BoxShapeSettings(new JPH.Vec3(scale.X * 0.5f, scale.Y * 0.5f, scale.Z * 0.5f));
+                        consume(ss);
+                    }
+                    break;
+                }
+                default: // Box
+                {
+                    using var ss = new JPH.BoxShapeSettings(new JPH.Vec3(
+                        entry.HalfExtent.X * scale.X,
+                        entry.HalfExtent.Y * scale.Y,
+                        entry.HalfExtent.Z * scale.Z));
+                    consume(ss);
+                    break;
+                }
+            }
         }
 
         public void DestroyBody(PhysicsBodyHandle handle)

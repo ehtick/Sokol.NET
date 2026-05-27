@@ -414,26 +414,35 @@ namespace GameEditor.Framework.Scene
                 if (!world.TryGetComponent<RigidbodyComponent>(entity, out var rb)) continue;
                 if (!world.TryGetComponent<Transform>(entity, out var tr)) continue;
 
-                System.Numerics.Vector3[]? meshVerts = null;
-                uint[]? meshIndices = null;
-                if (rb.Shape == ColliderShape.ConvexHull &&
-                    world.TryGetComponent<MeshRenderer>(entity, out var mr) &&
+                // Build the shapes list, populating geometry for ConvexHull/Mesh from the mesh renderer.
+                var shapes = rb.Shapes != null
+                    ? new List<ShapeEntry>(rb.Shapes)
+                    : new List<ShapeEntry> { ShapeEntry.Default() };
+
+                if (world.TryGetComponent<MeshRenderer>(entity, out var mr) &&
                     PrimitiveMeshSpec.TryParse(mr.MeshPath, out var spec))
                 {
-                    meshVerts = SceneRenderer.GetHullPoints(spec);
-                }
-                else if (rb.Shape == ColliderShape.Mesh &&
-                    world.TryGetComponent<MeshRenderer>(entity, out var mr2) &&
-                    PrimitiveMeshSpec.TryParse(mr2.MeshPath, out var spec2))
-                {
-                    (meshVerts, meshIndices) = SceneRenderer.GetMeshTriangles(spec2);
+                    for (int i = 0; i < shapes.Count; i++)
+                    {
+                        var entry = shapes[i];
+                        if (entry.Shape == ColliderShape.ConvexHull && entry.MeshVertices == null)
+                        {
+                            entry.MeshVertices = SceneRenderer.GetHullPoints(spec);
+                            shapes[i] = entry;
+                        }
+                        else if (entry.Shape == ColliderShape.Mesh && entry.MeshVertices == null)
+                        {
+                            (entry.MeshVertices, entry.MeshIndices) = SceneRenderer.GetMeshTriangles(spec);
+                            shapes[i] = entry;
+                        }
+                    }
                 }
 
                 var desc = new BodyDesc(
                     tr.Position, tr.Rotation, tr.Scale,
-                    rb.MotionType, rb.Mass, rb.UseGravity,
+                    rb.MotionType, rb.Mass, rb.UseGravity, shapes,
                     rb.Friction, rb.Restitution, rb.LinearDamping, rb.AngularDamping,
-                    rb.Shape, rb.IsTrigger, rb.Layer, rb.LayerMask, meshVerts, meshIndices);
+                    rb.IsTrigger, rb.Layer, rb.LayerMask);
 
                 var handle = _physics.CreateBody(desc);
                 _entityToHandle[entity] = handle;
@@ -441,6 +450,35 @@ namespace GameEditor.Framework.Scene
             }
 
             Logger.Info($"[SceneManager] Physics initialized. {_entityToHandle.Count} bodies created.");
+        }
+
+        /// <summary>
+        /// Computes sensible default <see cref="ShapeEntry"/> dimensions for <paramref name="shape"/>
+        /// from the entity's mesh spec (if available).  Used by the inspector when adding shapes.
+        /// </summary>
+        public static ShapeEntry DefaultShapeEntry(ColliderShape shape, PrimitiveMeshSpec? spec)
+        {
+            var entry = ShapeEntry.Default(shape);
+            if (!spec.HasValue) return entry;
+            var s = spec.Value;
+            switch (shape)
+            {
+                case ColliderShape.Box:
+                    entry.HalfExtent = new Vector3(s.Width * 0.5f, s.Height * 0.5f, s.Depth * 0.5f);
+                    break;
+                case ColliderShape.Sphere:
+                    entry.Radius = s.Radius;
+                    break;
+                case ColliderShape.Capsule:
+                    entry.Radius     = s.Radius;
+                    entry.HalfHeight = MathF.Max(0f, s.Height * 0.5f - s.Radius);
+                    break;
+                case ColliderShape.Cylinder:
+                    entry.Radius     = s.Radius;
+                    entry.HalfHeight = s.Height * 0.5f;
+                    break;
+            }
+            return entry;
         }
 
         static void ShutdownPhysics()
