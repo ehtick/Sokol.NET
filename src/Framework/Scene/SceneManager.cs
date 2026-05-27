@@ -637,6 +637,10 @@ namespace GameEditor.Framework.Scene
                 _physics?.DestroyVehicle(vHandle);
             _entityToVehicleHandle.Clear();
             _vehicleHandleToEntity.Clear();
+            _setVehicleInputBridge       = null;
+            _isWheelOnGroundBridge       = null;
+            _getWheelRotationSpeedBridge  = null;
+            _getWheelWorldTransformBridge = null;
 
             _physics?.Shutdown();
             _physics = null;
@@ -670,8 +674,28 @@ namespace GameEditor.Framework.Scene
 
         // ---- Vehicle controller helpers (called by GameBehaviour) ----------
 
+        // Bridge delegates injected by GameAssemblyRunner when the game DLL is
+        // loaded in an isolated AssemblyLoadContext (same pattern as Logger/Input).
+        private static Func<Entity, float, float, float, float, bool>? _setVehicleInputBridge;
+        private static Func<Entity, int, bool>?                         _isWheelOnGroundBridge;
+        private static Func<Entity, int, float>?                        _getWheelRotationSpeedBridge;
+        private static Func<Entity, int, Matrix4x4>?                    _getWheelWorldTransformBridge;
+
+        public static void RegisterVehicleCallbacks(
+            Func<Entity, float, float, float, float, bool> setVehicleInput,
+            Func<Entity, int, bool>                         isWheelOnGround,
+            Func<Entity, int, float>                        getWheelRotationSpeed,
+            Func<Entity, int, Matrix4x4>                    getWheelWorldTransform)
+        {
+            _setVehicleInputBridge          = setVehicleInput;
+            _isWheelOnGroundBridge          = isWheelOnGround;
+            _getWheelRotationSpeedBridge     = getWheelRotationSpeed;
+            _getWheelWorldTransformBridge    = getWheelWorldTransform;
+        }
+
         public static bool SetVehicleInput(Entity entity, float steer, float throttle, float brake, float handBrake = 0f)
         {
+            if (_setVehicleInputBridge != null) return _setVehicleInputBridge(entity, steer, throttle, brake, handBrake);
             if (_physics == null || !_entityToVehicleHandle.TryGetValue(entity, out var h)) return false;
             _physics.SetVehicleInput(h, steer, throttle, brake, handBrake);
             return true;
@@ -679,18 +703,21 @@ namespace GameEditor.Framework.Scene
 
         public static bool IsWheelOnGround(Entity entity, int wheelIndex)
         {
+            if (_isWheelOnGroundBridge != null) return _isWheelOnGroundBridge(entity, wheelIndex);
             if (_physics == null || !_entityToVehicleHandle.TryGetValue(entity, out var h)) return false;
             return _physics.IsWheelOnGround(h, wheelIndex);
         }
 
         public static float GetWheelRotationSpeed(Entity entity, int wheelIndex)
         {
+            if (_getWheelRotationSpeedBridge != null) return _getWheelRotationSpeedBridge(entity, wheelIndex);
             if (_physics == null || !_entityToVehicleHandle.TryGetValue(entity, out var h)) return 0f;
             return _physics.GetWheelRotationSpeed(h, wheelIndex);
         }
 
         public static Matrix4x4 GetWheelWorldTransform(Entity entity, int wheelIndex)
         {
+            if (_getWheelWorldTransformBridge != null) return _getWheelWorldTransformBridge(entity, wheelIndex);
             if (_physics == null || !_entityToVehicleHandle.TryGetValue(entity, out var h)) return Matrix4x4.Identity;
             return _physics.GetWheelWorldTransform(h, wheelIndex);
         }

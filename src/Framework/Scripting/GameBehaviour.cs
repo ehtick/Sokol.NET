@@ -3,11 +3,13 @@ using System.Globalization;
 using System.Numerics;
 using System.Reflection;
 using Frent;
+using GameEditor.Framework.Core;
 using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
 using GameEditor.Framework.Physics;
 using GameEditor.Framework.Scene;
 using static Sokol.SLog;
+using Input = GameEditor.Framework.Input;
 
 namespace GameEditor.Framework.Scripting
 {
@@ -267,6 +269,55 @@ namespace GameEditor.Framework.Scripting
 
         protected Matrix4x4 GetWheelWorldTransform(int wheelIndex)
             => SceneManager.GetWheelWorldTransform(EntityId, wheelIndex);
+
+        // ── Input helpers ────────────────────────────────────────────────────
+
+        /// <summary>True while the key is held.</summary>
+        protected static bool GetKey(Input.Key key)               => Input.InputManager.GetKey(key);
+        /// <summary>True only during the first frame the key is pressed.</summary>
+        protected static bool GetKeyDown(Input.Key key)           => Input.InputManager.GetKeyDown(key);
+        /// <summary>True only during the frame the key is released.</summary>
+        protected static bool GetKeyUp(Input.Key key)             => Input.InputManager.GetKeyUp(key);
+
+        /// <summary>True while the mouse button is held (0=left, 1=right, 2=middle).</summary>
+        protected static bool GetMouseButton(int button)          => Input.InputManager.GetMouseButton(button);
+        /// <summary>True during the first frame the mouse button is pressed.</summary>
+        protected static bool GetMouseButtonDown(int button)      => Input.InputManager.GetMouseButtonDown(button);
+        /// <summary>True during the frame the mouse button is released.</summary>
+        protected static bool GetMouseButtonUp(int button)        => Input.InputManager.GetMouseButtonUp(button);
+
+        /// <summary>Value of a named axis in [-1,1]. Built-ins: "Horizontal", "Vertical", "Jump", "Mouse X", etc.</summary>
+        protected static float GetAxis(string name)               => Input.InputManager.GetAxis(name);
+        /// <summary>True while the named button is held.</summary>
+        protected static bool GetButton(string name)              => Input.InputManager.GetButton(name);
+        /// <summary>True only during the first frame the named button is pressed.</summary>
+        protected static bool GetButtonDown(string name)          => Input.InputManager.GetButtonDown(name);
+        /// <summary>True only during the frame the named button is released.</summary>
+        protected static bool GetButtonUp(string name)            => Input.InputManager.GetButtonUp(name);
+
+        /// <summary>Number of currently active touch points.</summary>
+        protected static int TouchCount                           => Input.InputManager.TouchCount;
+        /// <summary>Returns the touch at the given index (0 ≤ index &lt; TouchCount).</summary>
+        protected static Input.Touch GetTouch(int index)          => Input.InputManager.GetTouch(index);
+
+        /// <summary>Current mouse position in screen pixels.</summary>
+        protected static Vector2 MousePosition                    => Input.InputManager.MousePosition;
+        /// <summary>Mouse movement delta accumulated this frame.</summary>
+        protected static Vector2 MouseDelta                       => Input.InputManager.MouseDelta;
+        /// <summary>Vertical scroll delta this frame.</summary>
+        protected static float   ScrollDelta                      => Input.InputManager.ScrollDelta;
+
+        // ── Logging helpers ──────────────────────────────────────────────────
+        // These route through the framework Logger (Default ALC) so the message
+        // reaches the GameEditor console panel in-editor and stdout when standalone,
+        // regardless of which AssemblyLoadContext the script was loaded into.
+
+        /// <summary>Logs an info-level message to the GameEditor console and stdout.</summary>
+        protected void Log(string msg)        => Logger.Info(msg);
+        /// <summary>Logs a warning-level message to the GameEditor console and stdout.</summary>
+        protected void LogWarning(string msg) => Logger.Warning(msg);
+        /// <summary>Logs an error-level message to the GameEditor console and stdout.</summary>
+        protected void LogError(string msg)   => Logger.Error(msg);
     }
 }
 
