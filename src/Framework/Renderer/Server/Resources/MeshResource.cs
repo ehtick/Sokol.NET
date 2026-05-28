@@ -14,6 +14,9 @@ namespace GameEditor.Framework.Renderer.Server.Resources
         public sg_buffer IndexBuffer;
         public int       IndexCount;
         public string    MaterialName = "";
+        /// <summary>Pre-computed registry key ("mtllib#materialName"). Empty when either part is absent.
+        /// Read by RenderingServer.ResolveSubMeshMaterial — avoids per-frame string allocation.</summary>
+        public string    MaterialKey  = "";
 
         public void Destroy()
         {

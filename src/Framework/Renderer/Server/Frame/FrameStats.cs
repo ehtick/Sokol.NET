@@ -21,6 +21,9 @@ namespace GameEditor.Framework.Renderer.Server
         /// <summary>Number of shadow-pass draw calls issued this frame.</summary>
         public int ShadowDrawCalls;
 
+        /// <summary>Instances silently dropped because the instance buffer was full (debug only).</summary>
+        public int InstancesDropped;
+
         public void Reset()
         {
             DrawCalls          = 0;
@@ -28,6 +31,7 @@ namespace GameEditor.Framework.Renderer.Server
             Culled             = 0;
             LodSwitches        = 0;
             ShadowDrawCalls    = 0;
+            InstancesDropped   = 0;
         }
     }
 }

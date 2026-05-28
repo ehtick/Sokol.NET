@@ -6,9 +6,11 @@
 // the CompileFrameworkShaders MSBuild target in Framework.csproj.
 //
 // Frame loop:
-//   BeginFrame()  → rotate instance ring, reset light buffer, reset stats
-//   SubmitView()  → Extract ECS → Sort → Upload instances (one sg_update_buffer) → Draw groups
+//   BeginFrame()  → reset instance staging count, reset light buffer, reset stats
+//   SubmitView()  → Extract ECS → Sort → Append instances (sg_append_buffer per view) → Draw groups
 //   EndFrame()    → (reserved for future stats push)
+// Note: sg_append_buffer (not sg_update_buffer) is required so two views in the same
+//       Sokol frame can each append without clobbering one another.
 
 using System;
 using System.Numerics;
@@ -53,8 +55,6 @@ namespace GameEditor.Framework.Renderer.Server
 
         private static FrameStats _stats;
         public static ref readonly FrameStats Stats => ref _stats;
-
-        static RenderingServer() { _matReg = new MaterialRegistry(_texCache); }
 
         private static bool _initialized;
 
@@ -118,9 +118,10 @@ namespace GameEditor.Framework.Renderer.Server
             // ── 1. Collect lights ─────────────────────────────────────────────────────────
 
             _lightBuf.Reset();
-            foreach (Entity lid in world.Entities)
+            for (int li = 0; li < world.Entities.Count; li++)
             {
                 if (_lightBuf.Count >= RenderingConstants.MAX_LIGHTS) break;
+                Entity lid = world.Entities[li];
                 if (!world.TryGetComponent<ActiveFlag>(lid, out var la) || !la.Active) continue;
                 if (!world.TryGetComponent<LightComponent>(lid, out var lc)) continue;
                 if (!world.TryGetComponent<Transform>(lid, out var lt)) continue;
@@ -144,9 +145,10 @@ namespace GameEditor.Framework.Renderer.Server
             // ── 2. Extract draw commands ──────────────────────────────────────────────────
 
             _drawCount = 0;
-            foreach (Entity id in world.Entities)
+            for (int ei = 0; ei < world.Entities.Count; ei++)
             {
                 if (_drawCount >= RenderingConstants.MAX_DRAWS) break;
+                Entity id = world.Entities[ei];
                 if (!world.TryGetComponent<ActiveFlag>(id, out var active) || !active.Active) continue;
                 if (!world.TryGetComponent<MeshRenderer>(id, out var mr) || !mr.Visible) continue;
                 if (!world.TryGetComponent<Transform>(id, out var tf)) continue;
@@ -183,7 +185,17 @@ namespace GameEditor.Framework.Renderer.Server
 
             _instanceBuf.ResetStaging();
             for (int j = 0; j < _drawCount; j++)
-                _instanceBuf.TryAppend(in _cpuInst[_sortOrder[j]]);
+            {
+                if (!_instanceBuf.TryAppend(in _cpuInst[_sortOrder[j]]))
+                {
+#if DEBUG
+                    _stats.InstancesDropped += _drawCount - j;
+#endif
+                    _drawCount = j;  // clamp: group-walking loop must not exceed staged range
+                    break;
+                }
+            }
+            if (_drawCount == 0) return;
             int instanceBaseByteOffset = _instanceBuf.Flush();
             _stats.InstancesSubmitted += _drawCount;
 
@@ -333,12 +345,8 @@ namespace GameEditor.Framework.Renderer.Server
         private static BlinnPhongMaterial? ResolveSubMeshMaterial(
             Material? entityMat, MeshResource mesh, MeshSubResource sub)
         {
-            if (!string.IsNullOrEmpty(sub.MaterialName) && !string.IsNullOrEmpty(mesh.MtlLib))
-            {
-                string key = mesh.MtlLib + "#" + sub.MaterialName;
-                if (_matReg.GetByKey(key) is BlinnPhongMaterial subBpm)
-                    return subBpm;
-            }
+            if (sub.MaterialKey.Length > 0 && _matReg.GetByKey(sub.MaterialKey) is BlinnPhongMaterial subBpm)
+                return subBpm;
             return entityMat as BlinnPhongMaterial;
         }
 

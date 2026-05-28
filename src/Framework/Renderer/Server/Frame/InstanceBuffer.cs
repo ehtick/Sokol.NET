@@ -25,7 +25,7 @@ namespace GameEditor.Framework.Renderer.Server
 
         public sg_buffer Buffer => _buf;
 
-        public InstanceBuffer(int maxInstancesPerView = RenderingConstants.MAX_INSTANCES_PER_DRAW)
+        public InstanceBuffer(int maxInstancesPerView = RenderingConstants.MAX_DRAWS)
         {
             _maxInstancesPerView = maxInstancesPerView;
             int stagingBytes     = maxInstancesPerView * InstanceSize;

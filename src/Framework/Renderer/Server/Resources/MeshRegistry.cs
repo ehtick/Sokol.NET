@@ -59,7 +59,10 @@ namespace GameEditor.Framework.Renderer.Server.Resources
                     VertexBuffer = vbRes,
                     IndexBuffer  = ibRes,
                     IndexCount   = sm.Indices.Length,
-                    MaterialName = sm.MaterialName
+                    MaterialName = sm.MaterialName,
+                    MaterialKey  = (!string.IsNullOrEmpty(obj.MtlLib) && !string.IsNullOrEmpty(sm.MaterialName))
+                                       ? string.Concat(obj.MtlLib, "#", sm.MaterialName)
+                                       : ""
                 };
             }
 
