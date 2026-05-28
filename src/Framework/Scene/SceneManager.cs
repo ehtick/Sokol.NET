@@ -230,6 +230,42 @@ namespace GameEditor.Framework.Scene
         /// Web / asset bundle: async via SFilesystem.LoadFileAsync.
         /// Must be called after scene deserialization, on the main thread.
         /// </summary>
+        // ── Static initializer: subscribe to EventBus events ─────────────────────────────
+        static SceneManager()
+        {
+            EventBus.ComponentChanged += OnComponentChanged;
+        }
+
+        /// <summary>
+        /// Reacts to Inspector changes on MeshRenderer: if MaterialPath points to a .mtl file
+        /// that has not been loaded yet, load and register it now.
+        /// </summary>
+        private static void OnComponentChanged(Entity id, string componentName)
+        {
+            if (componentName != nameof(MeshRenderer)) return;
+            if (!ECSWorld.Instance.TryGetComponent<MeshRenderer>(id, out var mr)) return;
+            if (string.IsNullOrEmpty(mr.MaterialPath)) return;
+            if (!mr.MaterialPath.EndsWith(".mtl", StringComparison.OrdinalIgnoreCase)) return;
+            if (!System.IO.File.Exists(mr.MaterialPath)) return;
+
+            // Use just the filename as the registry key prefix so it matches sub.MaterialKey
+            // (which is built as "mtlLib#materialName" using the OBJ's raw mtllib filename).
+            string mtlFileName = System.IO.Path.GetFileName(mr.MaterialPath);
+            string basePath    = System.IO.Path.GetDirectoryName(mr.MaterialPath) ?? string.Empty;
+            byte[] mtlBytes    = System.IO.File.ReadAllBytes(mr.MaterialPath);
+            RenderingServer.Materials.LoadMtl(
+                mtlFileName,
+                mtlBytes,
+                basePath,
+                relPath =>
+                {
+                    string abs = System.IO.Path.IsPathRooted(relPath)
+                        ? relPath
+                        : System.IO.Path.Combine(basePath, relPath);
+                    return System.IO.File.Exists(abs) ? System.IO.File.ReadAllBytes(abs) : null;
+                });
+        }
+
         private static void PreloadSceneMeshes()
         {
             var world = ECSWorld.Instance;
@@ -247,6 +283,8 @@ namespace GameEditor.Framework.Scene
                 {
                     // Desktop: synchronous load from absolute path.
                     RenderingServer.Meshes.Load(path, System.IO.File.ReadAllBytes(path));
+                    // Auto-load the co-located .mtl file (if the OBJ references one).
+                    TryLoadMeshMtlDesktop(path);
                 }
                 else
                 {
@@ -269,6 +307,34 @@ namespace GameEditor.Framework.Scene
                     });
                 }
             }
+        }
+
+        /// <summary>
+        /// After an OBJ mesh has been loaded into MeshRegistry, look up its MtlLib filename,
+        /// find the co-located .mtl file on disk, and register all materials from it.
+        /// Desktop-only (synchronous File I/O). No-op if MtlLib is empty or file not found.
+        /// </summary>
+        private static void TryLoadMeshMtlDesktop(string meshPath)
+        {
+            var meshRes = RenderingServer.Meshes.GetByPath(meshPath);
+            if (meshRes == null || string.IsNullOrEmpty(meshRes.MtlLib)) return;
+
+            string basePath   = System.IO.Path.GetDirectoryName(meshPath) ?? string.Empty;
+            string mtlAbsPath = System.IO.Path.Combine(basePath, meshRes.MtlLib);
+            if (!System.IO.File.Exists(mtlAbsPath)) return;
+
+            byte[] mtlBytes = System.IO.File.ReadAllBytes(mtlAbsPath);
+            RenderingServer.Materials.LoadMtl(
+                meshRes.MtlLib,   // key prefix matches sub.MaterialKey ("mtllib#matName")
+                mtlBytes,
+                basePath,
+                relPath =>
+                {
+                    string abs = System.IO.Path.IsPathRooted(relPath)
+                        ? relPath
+                        : System.IO.Path.Combine(basePath, relPath);
+                    return System.IO.File.Exists(abs) ? System.IO.File.ReadAllBytes(abs) : null;
+                });
         }
 
         private static string? ToAssetsRelativePath(string path)

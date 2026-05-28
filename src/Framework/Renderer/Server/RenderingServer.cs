@@ -246,9 +246,6 @@ namespace GameEditor.Framework.Renderer.Server
                 // Apply VS uniforms after pipeline (required by sokol validation).
                 sg_apply_uniforms(UB_blinn_phong_vs_params, SG_RANGE(ref vsParams));
 
-                BuildFsParams(mat, cameraPos, out var fsParams);
-                sg_apply_uniforms(UB_blinn_phong_fs_params, SG_RANGE(ref fsParams));
-
                 int instByteOffset = instanceOffset * Unsafe.SizeOf<InstanceData>();
 
                 foreach (MeshSubResource sub in mesh.SubMeshes)
@@ -258,18 +255,22 @@ namespace GameEditor.Framework.Renderer.Server
 
                     // Per-sub-mesh material override (from .mtl material name).
                     BlinnPhongMaterial? bpm = ResolveSubMeshMaterial(mat, mesh, sub);
+                    bool subAlpha = bpm?.HasAlpha ?? groupAlpha;
 
-                    // If alpha state differs from group, change pipeline + re-upload uniforms.
-                    if (bpm != null && bpm.HasAlpha != groupAlpha)
+                    // If alpha state differs from group, re-apply pipeline then VS uniforms.
+                    if (subAlpha != groupAlpha)
                     {
                         sg_apply_pipeline(_shaderCache.GetPipeline(
-                            bpm.HasAlpha
+                            subAlpha
                                 ? basePipelineFlags | PipelineFlags.AlphaBlend
                                 : basePipelineFlags));
                         sg_apply_uniforms(UB_blinn_phong_vs_params, SG_RANGE(ref vsParams));
-                        BuildFsParams(bpm, cameraPos, out var subFs);
-                        sg_apply_uniforms(UB_blinn_phong_fs_params, SG_RANGE(ref subFs));
                     }
+
+                    // Always apply FS uniforms per sub-mesh: each sub-mesh can have distinct
+                    // Kd/Ks/Ns values from the .mtl file, independent of the group-level material.
+                    BuildFsParams(bpm ?? mat, cameraPos, out var subFs);
+                    sg_apply_uniforms(UB_blinn_phong_fs_params, SG_RANGE(ref subFs));
 
                     sg_view  diffuse  = bpm?.DiffuseMap  ?? _texCache.PlaceholderWhite;
                     sg_view  specular = bpm?.SpecularMap ?? _texCache.PlaceholderWhite;
