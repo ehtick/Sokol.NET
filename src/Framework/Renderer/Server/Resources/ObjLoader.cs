@@ -458,7 +458,11 @@ namespace GameEditor.Framework.Renderer.Server.Resources
                 float f = ParseFloat(tok);
                 switch (i++) { case 0: u = f; break; case 1: v = f; break; }
             }
-            return new Vector2(u, v);
+            // OBJ stores V=0 at the bottom (legacy OpenGL convention). Metal, D3D11
+            // and WebGL2 all sample textures with V=0 at the top (same as stb_image
+            // row-order). Flip V here so the OBJ UVs match the GPU convention on all
+            // platforms.
+            return new Vector2(u, 1f - v);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
