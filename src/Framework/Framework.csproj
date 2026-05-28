@@ -14,11 +14,41 @@
     <NoWarn>$(NoWarn);IL2026;IL2067;IL2070;IL2072;IL2077</NoWarn>
   </PropertyGroup>
 
-  <!-- Exclude shader-dependent renderers — they stay in GameEditor which has the compiled shaders -->
+  <!-- SceneRenderer / GridRenderer stay excluded: they depend on project-specific phong shaders -->
   <ItemGroup>
     <Compile Remove="Renderer/SceneRenderer.cs" />
     <Compile Remove="Renderer/GridRenderer.cs" />
   </ItemGroup>
+
+  <!-- blinn_phong compiled shader is auto-included by the SDK glob (lives under this project directory).
+       The CompileFrameworkShaders target below regenerates it when blinn_phong.glsl changes. -->
+
+  <!-- Derive sokol-shdc path from the repo root (same logic as Directory.Build.props in examples/) -->
+  <PropertyGroup>
+    <_FrameworkDir>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)'))</_FrameworkDir>
+    <_SokolNetRoot>$([MSBuild]::NormalizeDirectory('$(_FrameworkDir)', '..', '..'))</_SokolNetRoot>
+    <IsWindowsHost>$([MSBuild]::IsOSPlatform('Windows'))</IsWindowsHost>
+    <IsLinuxHost>$([MSBuild]::IsOSPlatform('Linux'))</IsLinuxHost>
+    <IsOSXHost>$([MSBuild]::IsOSPlatform('OSX'))</IsOSXHost>
+    <OSArch>$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)</OSArch>
+    <_HostOS Condition="'$(IsWindowsHost)'=='true'">windows</_HostOS>
+    <_HostOS Condition="'$(IsLinuxHost)'=='true'">linux</_HostOS>
+    <_HostOS Condition="'$(IsOSXHost)'=='true'">osx</_HostOS>
+    <_SokolShdcPath>$(_SokolNetRoot)tools/bin/$(_HostOS)/$(OSArch)/sokol-shdc</_SokolShdcPath>
+    <_SokolShdcPath Condition="'$(IsWindowsHost)'=='true'">$(_SokolShdcPath).exe</_SokolShdcPath>
+    <_BlinnPhongGlsl>$(_FrameworkDir)Renderer/Server/shaders/blinn_phong.glsl</_BlinnPhongGlsl>
+    <_BlinnPhongOut>$(_FrameworkDir)Renderer/Server/shaders/blinn_phong_shader.cs</_BlinnPhongOut>
+  </PropertyGroup>
+
+  <!-- Compile blinn_phong.glsl for ALL supported platforms into a single .cs file.
+       Uses all slang targets so the generated file works on Windows/Linux/macOS/iOS/Android/Web
+       without needing per-platform conditional compilation. -->
+  <Target Name="CompileFrameworkShaders" BeforeTargets="BeforeBuild"
+          Inputs="$(_BlinnPhongGlsl)"
+          Outputs="$(_BlinnPhongOut)">
+    <Message Text="Compiling Framework shader: blinn_phong.glsl (all platforms)" Importance="high" />
+    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_BlinnPhongGlsl)&quot; --output &quot;$(_BlinnPhongOut)&quot; --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
+  </Target>
 
   <!-- Sokol bindings (separate DLL, shared by the ALC along with Framework) -->
   <ItemGroup>

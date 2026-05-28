@@ -9,6 +9,7 @@ using static Sokol.Utils;
 using static phong_shader_cs.Shaders;
 using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
+using GameEditor.Framework.Renderer.Server;
 using static Sokol.SGlue;
 
 namespace GameEditor.Framework.Renderer
@@ -169,6 +170,9 @@ namespace GameEditor.Framework.Renderer
 
                 sg_draw(mesh.BaseElement, mesh.NumElements, 1);
             }
+
+            // Render OBJ-based entities through the RenderingServer.
+            RenderingServer.SubmitView(viewProj);
         }
 
         private static void ReleaseUnreferencedMeshes(ECSWorld world)

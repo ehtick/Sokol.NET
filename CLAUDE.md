@@ -93,6 +93,16 @@ Platform graphics APIs (D3D11 / Metal / OpenGL / GLES / WebGL)
 - `src/sokol/generated/` — 26 auto-generated C# files. `SG.cs` (graphics, 178KB) and `SApp.cs` (app, 48KB) are the most important. **Do not edit manually.**
 - `src/GUI/` — Custom immediate-mode GUI framework (Sokol.NET-specific, not Dear ImGui). Has its own widget, layout, binding, and theming systems.
 - `src/imgui/` — Dear ImGui bindings generated from `ext/cimgui`.
+
+### ⛔ MANDATORY: Editor UI uses Sokol.GUI — NOT ImGui
+
+**ImGui is NOT used for GameEditor UI.** All editor panels, inspectors, and overlays use the `Sokol.GUI` retained-mode widget system (`src/GUI/`). Key rules:
+
+- **Never write `ig*` ImGui calls inside GameEditor UI code.** Use Sokol.GUI widget classes: `Panel`, `Label`, `Button`, `CheckBox`, `NumberInput`, `TextBox`, `ComboBox`, `ScrollView`, etc.
+- **`SokolGuiInspector`** (`examples/GameEditor/Source/UI/SokolGuiInspector.cs`) is the **sole owner of the Inspector panel**. All Inspector widget building and per-frame value sync goes here.
+- **`SokolGuiAssets`** owns the Assets panel; **`SokolGuiHierarchy`** owns the Hierarchy panel. Each uses only Sokol.GUI widgets.
+- `ComponentDrawers.cs` (ImGui-based) is **legacy/dead code** — do not add new ImGui drawers to it.
+- When adding a new Inspector field (e.g., for a component property), add it to `SokolGuiInspector.Rebuild()` as a Sokol.GUI widget and wire it in `SokolGuiInspector.SyncValues()`.
 - `tools/SokolApplicationBuilder/` — Cross-platform build orchestrator; handles shader compilation, asset bundling, APK/IPA creation, and WASM packaging.
 - `ext/` — Git submodules for all native C/C++ dependencies. `ext/sokol.c` is the unified C compilation unit.
 - `ext/CMakeLists.txt` — Single CMake file that builds all native libraries per platform.

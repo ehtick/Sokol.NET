@@ -93,6 +93,7 @@ namespace GameEditor.Framework.ECS.Components
     public struct MeshRenderer
     {
         public string MeshPath;
+        public string MaterialPath;   // "mtlFile#materialName" key, or empty for sub-mesh defaults
         public bool Visible;
     }
 
