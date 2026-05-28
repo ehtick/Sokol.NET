@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Numerics;
 using Frent;
+using Sokol;
 using GameEditor.Framework.Renderer;
 using GameEditor.Framework.Core;
 using GameEditor.Framework.ECS;
@@ -109,9 +110,9 @@ namespace GameEditor.Framework.Scene
 
         public static void LoadSceneFromAssetsAsync(string assetPath)
         {
-            GameFileSystem.Instance.LoadFile(assetPath, (path, buffer, status) =>
+            SFilesystem.LoadFileAsync(assetPath, (path, buffer, status) =>
             {
-                if (status == FileLoadStatus.Success)
+                if (status == SFileLoadStatus.Success)
                 {
                     string json = System.Text.Encoding.UTF8.GetString(buffer);
                     EventBus.RaiseSceneUnloaded();

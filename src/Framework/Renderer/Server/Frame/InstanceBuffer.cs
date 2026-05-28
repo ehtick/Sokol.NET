@@ -7,77 +7,73 @@ using static Sokol.Utils;
 namespace GameEditor.Framework.Renderer.Server
 {
     /// <summary>
-    /// Triple-buffered instance data buffer.
+    /// Append-style instance data buffer.
+    /// Uses sg_append_buffer so multiple views can append within the same Sokol frame
+    /// (sg_update_buffer only allows one call per buffer per frame; sg_append_buffer allows many).
     /// Staging memory is allocated once via NativeMemory.Alloc (no GC pin, no LOH pressure).
-    /// On each frame, the active ring slot is updated via sg_update_buffer.
     /// </summary>
     public sealed unsafe class InstanceBuffer : IDisposable
     {
         private static readonly int InstanceSize = Unsafe.SizeOf<InstanceData>();
 
-        private readonly sg_buffer[] _ring = new sg_buffer[RenderingConstants.INSTANCE_RING_FRAMES];
-        private InstanceData*        _stagingPtr;
-        private readonly int         _maxInstancesPerDraw;
-        private int                  _ringIndex;
-        private int                  _stagingCount;
-        private bool                 _disposed;
+        // Single buffer sized for MAX_VIEWS concurrent views per Sokol frame.
+        private sg_buffer     _buf;
+        private InstanceData* _stagingPtr;
+        private readonly int  _maxInstancesPerView;
+        private int           _stagingCount;
+        private bool          _disposed;
 
-        public sg_buffer CurrentBuffer => _ring[_ringIndex];
+        public sg_buffer Buffer => _buf;
 
-        public InstanceBuffer(int maxInstancesPerDraw = RenderingConstants.MAX_INSTANCES_PER_DRAW)
+        public InstanceBuffer(int maxInstancesPerView = RenderingConstants.MAX_INSTANCES_PER_DRAW)
         {
-            _maxInstancesPerDraw = maxInstancesPerDraw;
-            int stagingBytes     = maxInstancesPerDraw * InstanceSize;
+            _maxInstancesPerView = maxInstancesPerView;
+            int stagingBytes     = maxInstancesPerView * InstanceSize;
 
-            // Allocate unmanaged staging memory — survives across frames, never collected.
+            // Allocate unmanaged staging memory — one view's worth, reused each Flush.
             _stagingPtr = (InstanceData*)NativeMemory.Alloc((nuint)stagingBytes);
 
-            // Create ring of dynamic buffers.
-            for (int i = 0; i < RenderingConstants.INSTANCE_RING_FRAMES; i++)
+            // Single buffer large enough for all views in one Sokol frame (MAX_VIEWS × per-view).
+            int gpuBytes = RenderingConstants.MAX_VIEWS * stagingBytes;
+            _buf = sg_make_buffer(new sg_buffer_desc
             {
-                _ring[i] = sg_make_buffer(new sg_buffer_desc
-                {
-                    size   = (nuint)stagingBytes,
-                    usage  = new sg_buffer_usage { vertex_buffer = true, stream_update = true },
-                    label  = $"instance-ring-{i}"
-                });
-            }
+                size  = (nuint)gpuBytes,
+                usage = new sg_buffer_usage { vertex_buffer = true, stream_update = true },
+                label = "instance-append"
+            });
         }
 
-        /// <summary>Advance to the next ring slot at the start of a new frame.</summary>
-        public void BeginFrame()
-        {
-            _ringIndex    = (_ringIndex + 1) % RenderingConstants.INSTANCE_RING_FRAMES;
-            _stagingCount = 0;
-        }
+        /// <summary>Reset staging count at the start of a new CPU frame (no ring rotation needed).</summary>
+        public void BeginFrame() => _stagingCount = 0;
 
-        /// <summary>Write one InstanceData into the staging buffer. Returns the staging offset.</summary>
+        /// <summary>Write one InstanceData into the staging buffer.</summary>
         public bool TryAppend(in InstanceData data)
         {
-            if (_stagingCount >= _maxInstancesPerDraw) return false;
+            if (_stagingCount >= _maxInstancesPerView) return false;
             _stagingPtr[_stagingCount++] = data;
             return true;
         }
 
         /// <summary>
-        /// Upload the staged data (0.._stagingCount) into the current ring buffer and return
-        /// the byte offset of the first instance (always 0 for the simplified M1 path).
+        /// Append the staged data into the GPU buffer via sg_append_buffer.
+        /// Returns the byte offset of the first instance within the buffer.
+        /// Safe to call multiple times per Sokol frame (once per view).
         /// </summary>
-        public void Flush()
+        public int Flush()
         {
-            if (_stagingCount == 0) return;
+            if (_stagingCount == 0) return 0;
             int byteCount = _stagingCount * InstanceSize;
-            sg_update_buffer(_ring[_ringIndex], new sg_range
+            return sg_append_buffer(_buf, new sg_range
             {
                 ptr  = _stagingPtr,
                 size = (nuint)byteCount
             });
         }
 
-        /// <summary>Number of instances staged since last BeginFrame / Reset.</summary>
+        /// <summary>Number of instances staged since last BeginFrame / ResetStaging.</summary>
         public int StagedCount => _stagingCount;
 
-        /// <summary>Reset staged count without advancing the ring (use between draw groups within a frame).</summary>
+        /// <summary>Reset staged count without starting a new frame (use between views).</summary>
         public void ResetStaging() => _stagingCount = 0;
 
         public void Dispose()
@@ -85,13 +81,10 @@ namespace GameEditor.Framework.Renderer.Server
             if (_disposed) return;
             _disposed = true;
 
-            for (int i = 0; i < _ring.Length; i++)
+            if (_buf.id != 0)
             {
-                if (_ring[i].id != 0)
-                {
-                    sg_destroy_buffer(_ring[i]);
-                    _ring[i] = default;
-                }
+                sg_destroy_buffer(_buf);
+                _buf = default;
             }
 
             if (_stagingPtr != null)

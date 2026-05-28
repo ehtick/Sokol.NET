@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using GameEditor.Framework.Core;
 
 namespace GameEditor.Framework.Renderer.Server.Resources
 {
@@ -201,6 +202,27 @@ namespace GameEditor.Framework.Renderer.Server.Resources
             var vertsArray   = verts.ToArray();
             var indicesArray = indices.ToArray();
 
+            // --- DIAGNOSTIC ---
+            Logger.Info($"[ObjLoader] SubMesh '{mat}': {vertsArray.Length} verts, {indicesArray.Length / 3} tris, hasVn={normals.Count > 0}");
+            if (indicesArray.Length >= 3)
+            {
+                uint ia = indicesArray[0], ib = indicesArray[1], ic = indicesArray[2];
+                var va = vertsArray[ia]; var vb = vertsArray[ib]; var vc = vertsArray[ic];
+                Logger.Info($"[ObjLoader]   tri0 idx=({ia},{ib},{ic})");
+                Logger.Info($"[ObjLoader]   tri0 pos: A={va.Position} B={vb.Position} C={vc.Position}");
+                Logger.Info($"[ObjLoader]   tri0 nor: A={va.Normal} B={vb.Normal} C={vc.Normal}");
+                // Cross product A→B × A→C should match face normal direction
+                var ab = vb.Position - va.Position;
+                var ac = vc.Position - va.Position;
+                var cross = Vector3.Normalize(Vector3.Cross(ab, ac));
+                Logger.Info($"[ObjLoader]   tri0 cross(AB,AC)={cross}  (should match face normal)");
+            }
+            // --- END DIAGNOSTIC ---
+
+            // If the OBJ file has no vn normals, compute smooth normals from geometry.
+            if (normals.Count == 0)
+                ComputeSmoothNormals(vertsArray, indicesArray);
+
             // Compute tangents per triangle then accumulate + renormalise.
             ComputeTangents(vertsArray, indicesArray);
 
@@ -232,6 +254,31 @@ namespace GameEditor.Framework.Renderer.Server.Resources
             };
             verts.Add(v);
             return idx;
+        }
+
+        // ── smooth normal generation (used when OBJ has no vn normals) ──────────────
+
+        private static void ComputeSmoothNormals(ObjVertex[] verts, uint[] indices)
+        {
+            if (verts.Length == 0 || indices.Length == 0) return;
+
+            var accum = new Vector3[verts.Length];
+            for (int i = 0; i < indices.Length; i += 3)
+            {
+                uint i0 = indices[i], i1 = indices[i + 1], i2 = indices[i + 2];
+                // Area-weighted face normal: larger triangles contribute more.
+                Vector3 e1       = verts[i1].Position - verts[i0].Position;
+                Vector3 e2       = verts[i2].Position - verts[i0].Position;
+                Vector3 faceNorm = Vector3.Cross(e1, e2);
+                accum[i0] += faceNorm;
+                accum[i1] += faceNorm;
+                accum[i2] += faceNorm;
+            }
+            for (int i = 0; i < verts.Length; i++)
+            {
+                float len = accum[i].Length();
+                verts[i].Normal = len > 1e-6f ? accum[i] / len : Vector3.UnitY;
+            }
         }
 
         // ── tangent computation (MikkTSpace-style approximation) ─────────────────────
@@ -279,8 +326,23 @@ namespace GameEditor.Framework.Renderer.Server.Resources
                 var t = tan1[i];
 
                 // Gram-Schmidt orthogonalise.
-                var tangent = Vector3.Normalize(t - n * Vector3.Dot(n, t));
-                float sign  = Vector3.Dot(Vector3.Cross(n, t), tan2[i]) < 0f ? -1f : 1f;
+                // Guard: if tan1[i] is zero (all UVs degenerate / no UVs in OBJ),
+                // Vector3.Normalize(Zero) = NaN which poisons the fragment shader.
+                // Fall back to any vector perpendicular to the normal instead.
+                Vector3 tangent;
+                float tsq = t.LengthSquared();
+                if (tsq > 1e-12f)
+                {
+                    tangent = Vector3.Normalize(t - n * Vector3.Dot(n, t));
+                }
+                else
+                {
+                    // Pick a stable perpendicular to n (Frisvad / Duff et al. approach).
+                    var perp = MathF.Abs(n.X) < 0.9f ? Vector3.UnitX : Vector3.UnitY;
+                    tangent  = Vector3.Normalize(perp - n * Vector3.Dot(n, perp));
+                }
+
+                float sign = Vector3.Dot(Vector3.Cross(n, t), tan2[i]) < 0f ? -1f : 1f;
 
                 verts[i].Tangent = new Vector4(tangent, sign);
             }

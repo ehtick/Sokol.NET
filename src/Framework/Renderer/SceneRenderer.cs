@@ -81,6 +81,10 @@ namespace GameEditor.Framework.Renderer
             });
 
             _initialized = true;
+
+            // RenderingServer handles OBJ-based entities and must always be initialised
+            // alongside SceneRenderer (this covers standalone apps that only call SceneRenderer.Init).
+            RenderingServer.Init();
         }
 
         public static void DrawScene(Matrix4x4 viewProj)
@@ -149,9 +153,8 @@ namespace GameEditor.Framework.Renderer
                 if (!world.TryGetComponent<Transform>(id, out var transform))
                     continue;
 
-                PrimitiveMeshSpec spec = PrimitiveMeshSpec.Default(PrimitiveKind.Box);
-                if (!PrimitiveMeshSpec.TryParse(meshRenderer.MeshPath, out spec))
-                    spec = PrimitiveMeshSpec.Default(PrimitiveKind.Box);
+                if (!PrimitiveMeshSpec.TryParse(meshRenderer.MeshPath, out PrimitiveMeshSpec spec))
+                    continue; // non-primitive mesh (e.g. OBJ) — handled by RenderingServer
 
                 MeshResource mesh = GetOrCreateMesh(spec);
                 if (mesh.NumElements == 0 || mesh.VertexBuffer.id == 0 || mesh.IndexBuffer.id == 0)
@@ -172,7 +175,14 @@ namespace GameEditor.Framework.Renderer
             }
 
             // Render OBJ-based entities through the RenderingServer.
-            RenderingServer.SubmitView(viewProj);
+            // In the editor the pass is always an offscreen render target (RGBA8, no MSAA).
+            // In standalone the pass is the swapchain, so use PipelineFlags.None so the
+            // pipeline matches the swapchain's formats (format/MSAA inherited from pass).
+#if GAME_EDITOR
+            RenderingServer.SubmitView(viewProj, PipelineFlags.OffscreenRt);
+#else
+            RenderingServer.SubmitView(viewProj, PipelineFlags.None);
+#endif
         }
 
         private static void ReleaseUnreferencedMeshes(ECSWorld world)

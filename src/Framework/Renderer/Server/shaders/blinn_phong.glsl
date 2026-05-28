@@ -151,8 +151,8 @@ void main() {
         float atten = 1.0;
 
         if (lt == 0) {
-            // Directional — d0.xyz = travel direction (away from source)
-            L = normalize(-d0.xyz);
+            // Directional — d1.xyz = travel direction (away from source)
+            L = normalize(-d1.xyz);
 
         } else if (lt == 1) {
             // Point

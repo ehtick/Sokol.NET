@@ -63,6 +63,7 @@ namespace GameEditor.Framework.Renderer.Server.Resources
                 };
             }
 
+            System.Console.WriteLine($"[MeshRegistry] Loaded '{path}': {obj.SubMeshes.Length} sub-mesh(es), bounds={obj.Bounds}");
             ushort id = _nextId++;
             var res = new MeshResource
             {

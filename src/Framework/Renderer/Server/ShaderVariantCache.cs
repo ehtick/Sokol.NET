@@ -20,7 +20,9 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using static Sokol.SG;
 using static Sokol.SG.sg_pixel_format;
+using static Sokol.SGlue;
 using static blinn_phong_shader_cs.Shaders;
+using GameEditor.Framework.Core;
 using GameEditor.Framework.Renderer.Server.Materials;
 
 namespace GameEditor.Framework.Renderer.Server
@@ -73,13 +75,16 @@ namespace GameEditor.Framework.Renderer.Server
 
         private static sg_pipeline BuildPipeline(sg_shader shader, bool alpha, bool doubleSide, bool offscreen)
         {
+            var cullMode    = doubleSide ? sg_cull_mode.SG_CULLMODE_NONE : sg_cull_mode.SG_CULLMODE_BACK;
+            var faceWinding = sg_face_winding.SG_FACEWINDING_CCW; // Sokol default
+            Logger.Info($"[ShaderVariantCache] Building pipeline: alpha={alpha} doubleSide={doubleSide} offscreen={offscreen}");
+            Logger.Info($"[ShaderVariantCache]   cull_mode={cullMode} face_winding={faceWinding}");
             var desc = new sg_pipeline_desc
             {
-                shader     = shader,
-                index_type = sg_index_type.SG_INDEXTYPE_UINT32,
-                cull_mode  = doubleSide
-                             ? sg_cull_mode.SG_CULLMODE_NONE
-                             : sg_cull_mode.SG_CULLMODE_BACK,
+                shader       = shader,
+                index_type   = sg_index_type.SG_INDEXTYPE_UINT32,
+                cull_mode    = cullMode,
+                face_winding = faceWinding,
                 depth = new sg_depth_state
                 {
                     pixel_format  = SG_PIXELFORMAT_DEPTH,
@@ -166,10 +171,11 @@ namespace GameEditor.Framework.Renderer.Server
             }
             else
             {
-                // Swapchain — use the same settings as SceneRenderer.
-                desc.colors[0].pixel_format = SG_PIXELFORMAT_RGBA8;
-                desc.depth.pixel_format     = SG_PIXELFORMAT_DEPTH;
-                desc.sample_count           = 1;
+                // Swapchain: match the real swapchain formats so Sokol validation passes.
+                var sc = sglue_swapchain();
+                desc.colors[0].pixel_format = sc.color_format;
+                desc.depth.pixel_format     = sc.depth_format;
+                desc.sample_count           = sc.sample_count;
             }
 
             return sg_make_pipeline(desc);

@@ -14,9 +14,11 @@ using System;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using Frent;
+using Sokol;
 using static Sokol.SG;
 using static Sokol.Utils;
 using static blinn_phong_shader_cs.Shaders;
+using GameEditor.Framework.Core;
 using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
 using GameEditor.Framework.Renderer.Server.Lighting;
@@ -36,6 +38,9 @@ namespace GameEditor.Framework.Renderer.Server
         private static readonly InstanceBuffer     _instanceBuf = new();
         private static readonly ShaderVariantCache _shaderCache = new();
         private static readonly RenderView?[]      _views       = new RenderView[RenderingConstants.MAX_VIEWS];
+
+        // ── Pending async mesh loads (keyed by MeshPath) ──────────────────────────────────
+        private static readonly System.Collections.Generic.HashSet<string> _pendingMeshPaths = new();
 
         // ── Per-frame scratch (pre-allocated – zero hot-path allocations) ────────────────
 
@@ -108,7 +113,22 @@ namespace GameEditor.Framework.Renderer.Server
             _drawCount = 0;
         }
 
-        public static void SubmitView(in Matrix4x4 viewProj, int viewIndex = 0)
+        /// <summary>
+        /// Extracts the Assets-relative portion of an absolute mesh path so it can be
+        /// fed to <see cref="SFilesystem"/> on web (sokol_fetch only knows about paths
+        /// relative to the Assets root).
+        /// e.g. "/foo/bar/Assets/Models/mesh.obj" → "Models/mesh.obj"
+        /// Returns <c>null</c> when "Assets/" is not present in the path.
+        /// </summary>
+        private static string? ToAssetsRelativePath(string path)
+        {
+            const string marker = "/Assets/";
+            string normalised = path.Replace('\\', '/');
+            int idx = normalised.IndexOf(marker, StringComparison.Ordinal);
+            return idx >= 0 ? normalised.Substring(idx + marker.Length) : null;
+        }
+
+        public static void SubmitView(in Matrix4x4 viewProj, PipelineFlags basePipelineFlags = PipelineFlags.OffscreenRt, int viewIndex = 0)
         {
             if (!_initialized) return;
             var world = ECSWorld.Instance;
@@ -149,8 +169,43 @@ namespace GameEditor.Framework.Renderer.Server
                 if (!world.TryGetComponent<MeshRenderer>(id, out var mr) || !mr.Visible) continue;
                 if (!world.TryGetComponent<Transform>(id, out var tf)) continue;
 
+                // Primitive-spec meshes are handled by SceneRenderer — skip them here.
+                if (mr.MeshPath.StartsWith("prim:", StringComparison.Ordinal)) continue;
+
                 MeshResource? meshRes = _meshReg.GetByPath(mr.MeshPath);
-                if (meshRes == null) continue;
+                if (meshRes == null)
+                {
+                    if (System.IO.File.Exists(mr.MeshPath))
+                    {
+                        // Desktop: synchronous load directly from the absolute path.
+                        _meshReg.Load(mr.MeshPath, System.IO.File.ReadAllBytes(mr.MeshPath));
+                        meshRes = _meshReg.GetByPath(mr.MeshPath);
+                    }
+                    else if (!_pendingMeshPaths.Contains(mr.MeshPath))
+                    {
+                        // Web / file not on disk: derive an Assets-relative path and
+                        // kick off one async load via SFilesystem (sokol_fetch).
+                        string? relPath = ToAssetsRelativePath(mr.MeshPath);
+                        if (relPath != null)
+                        {
+                            _pendingMeshPaths.Add(mr.MeshPath);
+                            string capturedPath = mr.MeshPath;
+                            SFilesystem.LoadFileAsync(relPath, (_, buffer, status) =>
+                            {
+                                _pendingMeshPaths.Remove(capturedPath);
+                                if (status == SFileLoadStatus.Success && buffer != null)
+                                    _meshReg.Load(capturedPath, buffer);
+                                else
+                                    Logger.Warning($"[RenderingServer] Failed to load mesh from assets: '{relPath}'");
+                            });
+                        }
+                        else
+                        {
+                            Logger.Warning($"[RenderingServer] Mesh not found: '{mr.MeshPath}'");
+                        }
+                    }
+                    if (meshRes == null) continue;
+                }
 
                 ushort matId = string.IsNullOrEmpty(mr.MaterialPath)
                     ? (ushort)0
@@ -174,12 +229,12 @@ namespace GameEditor.Framework.Renderer.Server
             }
             Array.Sort(_sortOrder, 0, _drawCount, _drawSorter);
 
-            // ── 4. Write instance data in sorted order; ONE sg_update_buffer ─────────────
+            // ── 4. Write instance data in sorted order; ONE sg_append_buffer per view ──────
 
             _instanceBuf.ResetStaging();
             for (int j = 0; j < _drawCount; j++)
                 _instanceBuf.TryAppend(in _cpuInst[_sortOrder[j]]);
-            _instanceBuf.Flush();
+            int instanceBaseByteOffset = _instanceBuf.Flush();
             _stats.InstancesSubmitted += _drawCount;
 
             // ── 5. Camera position from inverse VP ────────────────────────────────────────
@@ -223,8 +278,8 @@ namespace GameEditor.Framework.Renderer.Server
                 bool groupAlpha = mat is BlinnPhongMaterial bpmG && bpmG.HasAlpha;
                 sg_apply_pipeline(_shaderCache.GetPipeline(
                     groupAlpha
-                        ? PipelineFlags.OffscreenRt | PipelineFlags.AlphaBlend
-                        : PipelineFlags.OffscreenRt));
+                        ? basePipelineFlags | PipelineFlags.AlphaBlend
+                        : basePipelineFlags));
 
                 // Apply VS uniforms after pipeline (required by sokol validation).
                 sg_apply_uniforms(UB_blinn_phong_vs_params, SG_RANGE(ref vsParams));
@@ -247,8 +302,8 @@ namespace GameEditor.Framework.Renderer.Server
                     {
                         sg_apply_pipeline(_shaderCache.GetPipeline(
                             bpm.HasAlpha
-                                ? PipelineFlags.OffscreenRt | PipelineFlags.AlphaBlend
-                                : PipelineFlags.OffscreenRt));
+                                ? basePipelineFlags | PipelineFlags.AlphaBlend
+                                : basePipelineFlags));
                         sg_apply_uniforms(UB_blinn_phong_vs_params, SG_RANGE(ref vsParams));
                         BuildFsParams(bpm, cameraPos, out var subFs);
                         sg_apply_uniforms(UB_blinn_phong_fs_params, SG_RANGE(ref subFs));
@@ -264,8 +319,8 @@ namespace GameEditor.Framework.Renderer.Server
 
                     sg_apply_bindings(new sg_bindings
                     {
-                        vertex_buffers        = { [0] = sub.VertexBuffer, [1] = _instanceBuf.CurrentBuffer },
-                        vertex_buffer_offsets = { [1] = instByteOffset },
+                        vertex_buffers        = { [0] = sub.VertexBuffer, [1] = _instanceBuf.Buffer },
+                        vertex_buffer_offsets = { [1] = instanceBaseByteOffset + instByteOffset },
                         index_buffer          = sub.IndexBuffer,
                         views = {
                             [VIEW_diffuse_map]  = diffuse,

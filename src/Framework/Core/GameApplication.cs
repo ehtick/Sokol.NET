@@ -1,12 +1,13 @@
 using System;
 using System.IO;
-using GameEditor.Framework.Scene;
-using GameEditor.Framework.Scripting;
-using GameEditor.Framework.ECS;
+using Sokol;
 using Sokol.GUI;
 using static Sokol.SApp;
 using static Sokol.NanoVG;
 using static Sokol.STM;
+using GameEditor.Framework.Scene;
+using GameEditor.Framework.Scripting;
+using GameEditor.Framework.ECS;
 
 namespace GameEditor.Framework.Core
 {
@@ -18,7 +19,6 @@ namespace GameEditor.Framework.Core
     /// [UnmanagedCallersOnly] static void Init()
     /// {
     ///     // Set up Sokol (sg_setup, simgui_setup, …);
-    ///     GameFileSystem.Instance.Initialize();
     ///
     ///     // Register all your GameBehaviour subclasses:
     ///     ScriptSystem.RegisterType&lt;MyBehaviour&gt;();
@@ -30,7 +30,6 @@ namespace GameEditor.Framework.Core
     ///
     /// [UnmanagedCallersOnly] static void Frame()
     /// {
-    ///     GameFileSystem.Instance.Update();          // pump sokol_fetch
     ///     GameApplication.Update(sapp_frame_duration());
     ///     // render …
     /// }
@@ -78,7 +77,7 @@ namespace GameEditor.Framework.Core
 
         /// <summary>
         /// Reads config.json, loads the default scene and wires the Logger to stdout.
-        /// Call from your Sokol Init() callback after <see cref="GameFileSystem.Instance.Initialize"/>.
+        /// Call from your Sokol Init() callback; it initialises the file system internally.
         /// </summary>
         public static void Init(ProjectConfig? projectConfig = null,bool LoadFromassets = false)
         {
@@ -87,7 +86,7 @@ namespace GameEditor.Framework.Core
             RegisterAvailableGameBehaviours();
 #endif
 
-            // Wire logger to stdout so the user sees messages in the console
+            SFilesystem.Initialize();
             Logger.OnLog -= ConsoleLog;
             Logger.OnLog += ConsoleLog;
 
@@ -132,14 +131,16 @@ namespace GameEditor.Framework.Core
         /// Fetches config.json via sokol_fetch, then fetches the default scene,
         /// then fires <see cref="EventBus.SceneLoaded"/> so the caller can start play.
         /// Call from your Sokol Init() callback after
-        /// <see cref="GameFileSystem.Instance.Initialize"/> and after all script
-        /// types are registered.
+        /// Call from your Sokol Init() callback; it initialises the file system and
+        /// all script types registered before this call.
         /// </summary>
         public static void InitFromAssetsAsync()
         {
 #if !GAME_EDITOR
             RegisterAvailableGameBehaviours();
 #endif
+
+            SFilesystem.Initialize();
 
             if (_screen == null)
             {
@@ -151,9 +152,9 @@ namespace GameEditor.Framework.Core
             Logger.OnLog -= ConsoleLog;
             Logger.OnLog += ConsoleLog;
 
-            GameFileSystem.Instance.LoadFile(ConfigManager.ConfigFileName, (_, buffer, status) =>
+            SFilesystem.LoadFileAsync(ConfigManager.ConfigFileName, (_, buffer, status) =>
             {
-                if (status != FileLoadStatus.Success)
+                if (status != SFileLoadStatus.Success)
                 {
                     Logger.Warning("[GameApplication] config.json not found in assets — using defaults.");
                     return;
@@ -204,6 +205,8 @@ namespace GameEditor.Framework.Core
         /// </summary>
         public static void Update(float deltaTime)
         {
+            SFilesystem.Update();
+
             if (_screen != null)
             {
                 float dpi = sapp_dpi_scale();
@@ -242,6 +245,7 @@ namespace GameEditor.Framework.Core
         /// </summary>
         public static void Cleanup()
         {
+            SFilesystem.Shutdown();
             ScriptSystem.StopAll();
             Screen.Shutdown();
             if (_nvgCtx != IntPtr.Zero)
