@@ -39,9 +39,6 @@ namespace GameEditor.Framework.Renderer.Server
         private static readonly ShaderVariantCache _shaderCache = new();
         private static readonly RenderView?[]      _views       = new RenderView[RenderingConstants.MAX_VIEWS];
 
-        // ── Pending async mesh loads (keyed by MeshPath) ──────────────────────────────────
-        private static readonly System.Collections.Generic.HashSet<string> _pendingMeshPaths = new();
-
         // ── Per-frame scratch (pre-allocated – zero hot-path allocations) ────────────────
 
         private static readonly DrawCommand[]  _cmds      = new DrawCommand[RenderingConstants.MAX_DRAWS];
@@ -113,21 +110,6 @@ namespace GameEditor.Framework.Renderer.Server
             _drawCount = 0;
         }
 
-        /// <summary>
-        /// Extracts the Assets-relative portion of an absolute mesh path so it can be
-        /// fed to <see cref="SFilesystem"/> on web (sokol_fetch only knows about paths
-        /// relative to the Assets root).
-        /// e.g. "/foo/bar/Assets/Models/mesh.obj" → "Models/mesh.obj"
-        /// Returns <c>null</c> when "Assets/" is not present in the path.
-        /// </summary>
-        private static string? ToAssetsRelativePath(string path)
-        {
-            const string marker = "/Assets/";
-            string normalised = path.Replace('\\', '/');
-            int idx = normalised.IndexOf(marker, StringComparison.Ordinal);
-            return idx >= 0 ? normalised.Substring(idx + marker.Length) : null;
-        }
-
         public static void SubmitView(in Matrix4x4 viewProj, PipelineFlags basePipelineFlags = PipelineFlags.OffscreenRt, int viewIndex = 0)
         {
             if (!_initialized) return;
@@ -173,39 +155,7 @@ namespace GameEditor.Framework.Renderer.Server
                 if (mr.MeshPath.StartsWith("prim:", StringComparison.Ordinal)) continue;
 
                 MeshResource? meshRes = _meshReg.GetByPath(mr.MeshPath);
-                if (meshRes == null)
-                {
-                    if (System.IO.File.Exists(mr.MeshPath))
-                    {
-                        // Desktop: synchronous load directly from the absolute path.
-                        _meshReg.Load(mr.MeshPath, System.IO.File.ReadAllBytes(mr.MeshPath));
-                        meshRes = _meshReg.GetByPath(mr.MeshPath);
-                    }
-                    else if (!_pendingMeshPaths.Contains(mr.MeshPath))
-                    {
-                        // Web / file not on disk: derive an Assets-relative path and
-                        // kick off one async load via SFilesystem (sokol_fetch).
-                        string? relPath = ToAssetsRelativePath(mr.MeshPath);
-                        if (relPath != null)
-                        {
-                            _pendingMeshPaths.Add(mr.MeshPath);
-                            string capturedPath = mr.MeshPath;
-                            SFilesystem.LoadFileAsync(relPath, (_, buffer, status) =>
-                            {
-                                _pendingMeshPaths.Remove(capturedPath);
-                                if (status == SFileLoadStatus.Success && buffer != null)
-                                    _meshReg.Load(capturedPath, buffer);
-                                else
-                                    Logger.Warning($"[RenderingServer] Failed to load mesh from assets: '{relPath}'");
-                            });
-                        }
-                        else
-                        {
-                            Logger.Warning($"[RenderingServer] Mesh not found: '{mr.MeshPath}'");
-                        }
-                    }
-                    if (meshRes == null) continue;
-                }
+                if (meshRes == null) continue;
 
                 ushort matId = string.IsNullOrEmpty(mr.MaterialPath)
                     ? (ushort)0

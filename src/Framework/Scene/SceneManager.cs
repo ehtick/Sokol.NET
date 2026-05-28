@@ -3,6 +3,7 @@ using System.Numerics;
 using Frent;
 using Sokol;
 using GameEditor.Framework.Renderer;
+using GameEditor.Framework.Renderer.Server;
 using GameEditor.Framework.Core;
 using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
@@ -18,6 +19,9 @@ namespace GameEditor.Framework.Scene
 
         // JSON snapshot of the scene captured when Play() is called; restored on Stop().
         private static string? _playSnapshot;
+
+        // Async mesh loads in flight (keyed by MeshPath); avoids duplicate SFilesystem requests.
+        private static readonly HashSet<string> _pendingMeshLoads = new(StringComparer.Ordinal);
 
         // ---- Physics -------------------------------------------------------
         private static IPhysicsWorld? _physics;
@@ -103,6 +107,7 @@ namespace GameEditor.Framework.Scene
             SceneSerializer.Deserialize(json, ActiveScene);
             ActiveScene.FilePath = path;
             ActiveScene.IsDirty = false;
+            PreloadSceneMeshes();
             EventBus.RaiseSceneLoaded();
             UndoStack.Clear();
             Logger.Info($"Scene loaded from {path}");
@@ -120,6 +125,7 @@ namespace GameEditor.Framework.Scene
                     SceneSerializer.Deserialize(json, ActiveScene);
                     ActiveScene.FilePath = null; // Loaded from assets, not a file path
                     ActiveScene.IsDirty = false;
+                    PreloadSceneMeshes();
                     EventBus.RaiseSceneLoaded();
                     UndoStack.Clear();
                     Logger.Info($"Scene loaded from assets: {assetPath}");
@@ -210,11 +216,67 @@ namespace GameEditor.Framework.Scene
                 SceneSerializer.Deserialize(_playSnapshot, ActiveScene);
                 ActiveScene.IsDirty = false;
                 _playSnapshot = null;
+                PreloadSceneMeshes();
                 EventBus.RaiseSceneLoaded();
                 Logger.Info("[SceneManager] Scene restored from play snapshot.");
             }
 
             UndoStack.Clear();
+        }
+
+        /// <summary>
+        /// Pre-loads all OBJ meshes referenced by MeshRenderer components in the current scene.
+        /// Desktop: synchronous via File.ReadAllBytes.
+        /// Web / asset bundle: async via SFilesystem.LoadFileAsync.
+        /// Must be called after scene deserialization, on the main thread.
+        /// </summary>
+        private static void PreloadSceneMeshes()
+        {
+            var world = ECSWorld.Instance;
+            foreach (Entity id in world.Entities)
+            {
+                if (!world.TryGetComponent<MeshRenderer>(id, out var mr)) continue;
+                if (string.IsNullOrEmpty(mr.MeshPath)) continue;
+                if (mr.MeshPath.StartsWith("prim:", StringComparison.Ordinal)) continue;
+
+                string path = mr.MeshPath;
+                if (RenderingServer.Meshes.GetByPath(path) != null) continue;
+                if (_pendingMeshLoads.Contains(path)) continue;
+
+                if (System.IO.File.Exists(path))
+                {
+                    // Desktop: synchronous load from absolute path.
+                    RenderingServer.Meshes.Load(path, System.IO.File.ReadAllBytes(path));
+                }
+                else
+                {
+                    // Web / asset bundle: derive Assets-relative path and load async.
+                    string? relPath = ToAssetsRelativePath(path);
+                    if (relPath == null)
+                    {
+                        Logger.Warning($"[SceneManager] Mesh not found: '{path}'");
+                        continue;
+                    }
+                    _pendingMeshLoads.Add(path);
+                    string captured = path;
+                    SFilesystem.LoadFileAsync(relPath, (_, buffer, status) =>
+                    {
+                        _pendingMeshLoads.Remove(captured);
+                        if (status == SFileLoadStatus.Success && buffer != null)
+                            RenderingServer.Meshes.Load(captured, buffer);
+                        else
+                            Logger.Warning($"[SceneManager] Failed to load mesh: '{relPath}'");
+                    });
+                }
+            }
+        }
+
+        private static string? ToAssetsRelativePath(string path)
+        {
+            const string marker = "/Assets/";
+            string normalised = path.Replace('\\', '/');
+            int idx = normalised.IndexOf(marker, StringComparison.Ordinal);
+            return idx >= 0 ? normalised.Substring(idx + marker.Length) : null;
         }
 
         public static bool GetMainCameraMatrices(int width, int height,out Matrix4x4 viewProj, out Vector3 eyePos)
