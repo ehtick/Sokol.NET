@@ -236,9 +236,41 @@ namespace GameEditor.Framework.Scene
             EventBus.ComponentChanged += OnComponentChanged;
         }
 
+        // ── Path helpers ─────────────────────────────────────────────────────────────────
+
         /// <summary>
-        /// Reacts to Inspector changes on MeshRenderer: if MaterialPath points to a .mtl file
-        /// that has not been loaded yet, load and register it now.
+        /// Normalizes a path to Assets-relative (e.g. "Models/duck.obj").
+        /// Already-relative paths are returned unchanged.
+        /// Absolute paths are stripped at the "/Assets/" marker.
+        /// Returns null if an absolute path has no "/Assets/" component.
+        /// </summary>
+        public static string? ToAssetsRelativePath(string path)
+        {
+            if (!System.IO.Path.IsPathRooted(path)) return path; // already relative
+            const string marker = "/Assets/";
+            string normalised = path.Replace('\\', '/');
+            int idx = normalised.IndexOf(marker, StringComparison.Ordinal);
+            return idx >= 0 ? normalised.Substring(idx + marker.Length) : null;
+        }
+
+        /// <summary>
+        /// Resolves an Assets-relative path to an absolute filesystem path on desktop
+        /// using <see cref="ConfigManager.ProjectFolder"/>. Returns null when no project
+        /// is loaded or when the input is already absolute.
+        /// </summary>
+        private static string? ToAbsoluteDesktopPath(string relPath)
+        {
+            if (System.IO.Path.IsPathRooted(relPath)) return relPath; // already absolute
+            if (!ConfigManager.HasProject) return null;
+            return System.IO.Path.Combine(ConfigManager.ProjectFolder!, "Assets", relPath);
+        }
+
+        // ── Event handler ─────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Reacts to Inspector changes on MeshRenderer: normalizes MaterialPath to
+        /// Assets-relative and loads the referenced .mtl file into MaterialRegistry.
+        /// Works on desktop (sync File I/O) and web/mobile (async SFilesystem).
         /// </summary>
         private static void OnComponentChanged(Entity id, string componentName)
         {
@@ -246,25 +278,52 @@ namespace GameEditor.Framework.Scene
             if (!ECSWorld.Instance.TryGetComponent<MeshRenderer>(id, out var mr)) return;
             if (string.IsNullOrEmpty(mr.MaterialPath)) return;
             if (!mr.MaterialPath.EndsWith(".mtl", StringComparison.OrdinalIgnoreCase)) return;
-            if (!System.IO.File.Exists(mr.MaterialPath)) return;
 
-            // Use just the filename as the registry key prefix so it matches sub.MaterialKey
-            // (which is built as "mtlLib#materialName" using the OBJ's raw mtllib filename).
-            string mtlFileName = System.IO.Path.GetFileName(mr.MaterialPath);
-            string basePath    = System.IO.Path.GetDirectoryName(mr.MaterialPath) ?? string.Empty;
-            byte[] mtlBytes    = System.IO.File.ReadAllBytes(mr.MaterialPath);
-            RenderingServer.Materials.LoadMtl(
-                mtlFileName,
-                mtlBytes,
-                basePath,
-                relPath =>
+            // Normalize to Assets-relative so the path is portable across platforms.
+            string? relPath = ToAssetsRelativePath(mr.MaterialPath);
+            if (relPath == null)
+            {
+                Logger.Warning($"[SceneManager] Cannot resolve material path: '{mr.MaterialPath}'");
+                return;
+            }
+
+            if (mr.MaterialPath != relPath)
+            {
+                mr.MaterialPath = relPath;
+                ECSWorld.Instance.AddComponent(id, mr);
+            }
+
+            // The registry key must be just the filename so it matches sub.MaterialKey
+            // ("mtllib#materialName" where mtllib is the OBJ's raw mtllib filename).
+            string mtlFileName = System.IO.Path.GetFileName(relPath);
+
+            // Desktop: synchronous load.
+            string? absPath = ToAbsoluteDesktopPath(relPath);
+            if (absPath != null && System.IO.File.Exists(absPath))
+            {
+                string basePath = System.IO.Path.GetDirectoryName(absPath) ?? string.Empty;
+                byte[] bytes    = System.IO.File.ReadAllBytes(absPath);
+                RenderingServer.Materials.LoadMtl(mtlFileName, bytes, basePath, rp =>
                 {
-                    string abs = System.IO.Path.IsPathRooted(relPath)
-                        ? relPath
-                        : System.IO.Path.Combine(basePath, relPath);
+                    string abs = System.IO.Path.IsPathRooted(rp) ? rp : System.IO.Path.Combine(basePath, rp);
                     return System.IO.File.Exists(abs) ? System.IO.File.ReadAllBytes(abs) : null;
                 });
+                return;
+            }
+
+            // Web / mobile: async load. Textures fall back to placeholders; colors/shininess apply.
+            string capturedKey = mtlFileName;
+            string capturedDir = System.IO.Path.GetDirectoryName(relPath)?.Replace('\\', '/') ?? string.Empty;
+            SFilesystem.LoadFileAsync(relPath, (_, buffer, status) =>
+            {
+                if (status == SFileLoadStatus.Success && buffer != null)
+                    RenderingServer.Materials.LoadMtl(capturedKey, buffer, capturedDir, null);
+                else
+                    Logger.Warning($"[SceneManager] Failed to load MTL: '{relPath}'");
+            });
         }
+
+        // ── Scene mesh preloading ──────────────────────────────────────────────────────────
 
         private static void PreloadSceneMeshes()
         {
@@ -275,74 +334,109 @@ namespace GameEditor.Framework.Scene
                 if (string.IsNullOrEmpty(mr.MeshPath)) continue;
                 if (mr.MeshPath.StartsWith("prim:", StringComparison.Ordinal)) continue;
 
-                string path = mr.MeshPath;
+                // Normalize to Assets-relative so the stored path is portable.
+                string? relPath = ToAssetsRelativePath(mr.MeshPath);
+                if (relPath == null)
+                {
+                    Logger.Warning($"[SceneManager] Cannot resolve mesh path: '{mr.MeshPath}'");
+                    continue;
+                }
+
+                if (mr.MeshPath != relPath)
+                {
+                    mr.MeshPath = relPath;
+                    world.AddComponent(id, mr);
+                }
+
+                string path = relPath;
                 if (RenderingServer.Meshes.GetByPath(path) != null) continue;
                 if (_pendingMeshLoads.Contains(path)) continue;
 
-                if (System.IO.File.Exists(path))
+                // Try desktop sync path first (resolves relative → absolute via ProjectFolder).
+                string? absPath = ToAbsoluteDesktopPath(path);
+                if (absPath != null && System.IO.File.Exists(absPath))
                 {
-                    // Desktop: synchronous load from absolute path.
-                    RenderingServer.Meshes.Load(path, System.IO.File.ReadAllBytes(path));
-                    // Auto-load the co-located .mtl file (if the OBJ references one).
+                    RenderingServer.Meshes.Load(path, System.IO.File.ReadAllBytes(absPath));
                     TryLoadMeshMtlDesktop(path);
                 }
                 else
                 {
-                    // Web / asset bundle: derive Assets-relative path and load async.
-                    string? relPath = ToAssetsRelativePath(path);
-                    if (relPath == null)
-                    {
-                        Logger.Warning($"[SceneManager] Mesh not found: '{path}'");
-                        continue;
-                    }
+                    // Web / mobile: async load using the Assets-relative path.
                     _pendingMeshLoads.Add(path);
                     string captured = path;
-                    SFilesystem.LoadFileAsync(relPath, (_, buffer, status) =>
+                    SFilesystem.LoadFileAsync(path, (_, buffer, status) =>
                     {
                         _pendingMeshLoads.Remove(captured);
                         if (status == SFileLoadStatus.Success && buffer != null)
+                        {
                             RenderingServer.Meshes.Load(captured, buffer);
+                            TryLoadMeshMtlAsync(captured);
+                        }
                         else
-                            Logger.Warning($"[SceneManager] Failed to load mesh: '{relPath}'");
+                            Logger.Warning($"[SceneManager] Failed to load mesh: '{captured}'");
                     });
                 }
             }
         }
 
         /// <summary>
-        /// After an OBJ mesh has been loaded into MeshRegistry, look up its MtlLib filename,
-        /// find the co-located .mtl file on disk, and register all materials from it.
-        /// Desktop-only (synchronous File I/O). No-op if MtlLib is empty or file not found.
+        /// After an OBJ mesh has been loaded into MeshRegistry, load its co-located .mtl.
+        /// Selects sync (desktop) or async (web/mobile) path automatically.
+        /// <paramref name="meshRelPath"/> must be Assets-relative (e.g. "Models/duck.obj").
         /// </summary>
-        private static void TryLoadMeshMtlDesktop(string meshPath)
+        public static void TryLoadMeshMtl(string meshRelPath)
         {
-            var meshRes = RenderingServer.Meshes.GetByPath(meshPath);
-            if (meshRes == null || string.IsNullOrEmpty(meshRes.MtlLib)) return;
-
-            string basePath   = System.IO.Path.GetDirectoryName(meshPath) ?? string.Empty;
-            string mtlAbsPath = System.IO.Path.Combine(basePath, meshRes.MtlLib);
-            if (!System.IO.File.Exists(mtlAbsPath)) return;
-
-            byte[] mtlBytes = System.IO.File.ReadAllBytes(mtlAbsPath);
-            RenderingServer.Materials.LoadMtl(
-                meshRes.MtlLib,   // key prefix matches sub.MaterialKey ("mtllib#matName")
-                mtlBytes,
-                basePath,
-                relPath =>
-                {
-                    string abs = System.IO.Path.IsPathRooted(relPath)
-                        ? relPath
-                        : System.IO.Path.Combine(basePath, relPath);
-                    return System.IO.File.Exists(abs) ? System.IO.File.ReadAllBytes(abs) : null;
-                });
+            string? absPath = ToAbsoluteDesktopPath(meshRelPath);
+            if (absPath != null && System.IO.File.Exists(absPath))
+                TryLoadMeshMtlDesktop(meshRelPath);
+            else
+                TryLoadMeshMtlAsync(meshRelPath);
         }
 
-        private static string? ToAssetsRelativePath(string path)
+        /// <summary>
+        /// After an OBJ mesh has been loaded, load its co-located .mtl file synchronously.
+        /// <paramref name="meshRelPath"/> is Assets-relative (e.g. "Models/duck.obj").
+        /// </summary>
+        private static void TryLoadMeshMtlDesktop(string meshRelPath)
         {
-            const string marker = "/Assets/";
-            string normalised = path.Replace('\\', '/');
-            int idx = normalised.IndexOf(marker, StringComparison.Ordinal);
-            return idx >= 0 ? normalised.Substring(idx + marker.Length) : null;
+            var meshRes = RenderingServer.Meshes.GetByPath(meshRelPath);
+            if (meshRes == null || string.IsNullOrEmpty(meshRes.MtlLib)) return;
+
+            string meshDir    = System.IO.Path.GetDirectoryName(meshRelPath)?.Replace('\\', '/') ?? string.Empty;
+            string mtlRelPath = string.IsNullOrEmpty(meshDir) ? meshRes.MtlLib : meshDir + "/" + meshRes.MtlLib;
+            string? mtlAbs    = ToAbsoluteDesktopPath(mtlRelPath);
+            if (mtlAbs == null || !System.IO.File.Exists(mtlAbs)) return;
+
+            string basePath = System.IO.Path.GetDirectoryName(mtlAbs) ?? string.Empty;
+            byte[] bytes    = System.IO.File.ReadAllBytes(mtlAbs);
+            RenderingServer.Materials.LoadMtl(meshRes.MtlLib, bytes, basePath, relPath =>
+            {
+                string abs = System.IO.Path.IsPathRooted(relPath) ? relPath : System.IO.Path.Combine(basePath, relPath);
+                return System.IO.File.Exists(abs) ? System.IO.File.ReadAllBytes(abs) : null;
+            });
+        }
+
+        /// <summary>
+        /// After an OBJ mesh has been loaded async, load its co-located .mtl file async.
+        /// <paramref name="meshRelPath"/> is Assets-relative (e.g. "Models/duck.obj").
+        /// Textures fall back to placeholders on web; material colors and shininess apply.
+        /// </summary>
+        private static void TryLoadMeshMtlAsync(string meshRelPath)
+        {
+            var meshRes = RenderingServer.Meshes.GetByPath(meshRelPath);
+            if (meshRes == null || string.IsNullOrEmpty(meshRes.MtlLib)) return;
+
+            string meshDir    = System.IO.Path.GetDirectoryName(meshRelPath)?.Replace('\\', '/') ?? string.Empty;
+            string mtlRelPath = string.IsNullOrEmpty(meshDir) ? meshRes.MtlLib : meshDir + "/" + meshRes.MtlLib;
+            string capturedKey = meshRes.MtlLib;
+            string capturedDir = meshDir;
+            SFilesystem.LoadFileAsync(mtlRelPath, (_, buffer, status) =>
+            {
+                if (status == SFileLoadStatus.Success && buffer != null)
+                    RenderingServer.Materials.LoadMtl(capturedKey, buffer, capturedDir, null);
+                else
+                    Logger.Warning($"[SceneManager] Failed to load MTL: '{mtlRelPath}'");
+            });
         }
 
         public static bool GetMainCameraMatrices(int width, int height,out Matrix4x4 viewProj, out Vector3 eyePos)
