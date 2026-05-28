@@ -80,6 +80,45 @@ namespace GameEditor.Framework.Renderer.Server.Materials
         public ushort GetIdByKey(string key)
             => _byPath.TryGetValue(key, out var m) ? m.Id : (ushort)0;
 
+        /// <summary>
+        /// Returns the unique set of texture paths (Assets-relative or absolute) that were
+        /// referenced by materials registered under <paramref name="mtlFilePath"/>.  These may
+        /// have been left as GPU placeholders when LoadMtl was called without a fileLoader.
+        /// </summary>
+        public HashSet<string> GetTexturePaths(string mtlFilePath)
+        {
+            var result = new HashSet<string>(StringComparer.Ordinal);
+            string prefix = mtlFilePath + "#";
+            foreach (var (key, mat) in _byPath)
+            {
+                if (!key.StartsWith(prefix, StringComparison.Ordinal)) continue;
+                if (mat is not BlinnPhongMaterial bp) continue;
+                if (!string.IsNullOrEmpty(bp.DiffuseMapPath))  result.Add(bp.DiffuseMapPath);
+                if (!string.IsNullOrEmpty(bp.SpecularMapPath)) result.Add(bp.SpecularMapPath);
+                if (!string.IsNullOrEmpty(bp.NormalMapPath))   result.Add(bp.NormalMapPath);
+                if (!string.IsNullOrEmpty(bp.OpacityMapPath))  result.Add(bp.OpacityMapPath);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Upload <paramref name="data"/> to the GPU under key <paramref name="texKey"/> and
+        /// patch every material that references it so it uses the real texture view.
+        /// Call this after an async file load delivers bytes for a texture path.
+        /// </summary>
+        public void ApplyTextureBytes(string texKey, byte[] data)
+        {
+            sg_view view = _textures.LoadFromBytes(texKey, data);
+            foreach (var mat in _byPath.Values)
+            {
+                if (mat is not BlinnPhongMaterial bp) continue;
+                if (bp.DiffuseMapPath  == texKey) bp.DiffuseMap  = view;
+                if (bp.SpecularMapPath == texKey) bp.SpecularMap = view;
+                if (bp.NormalMapPath   == texKey) bp.NormalMap   = view;
+                if (bp.OpacityMapPath  == texKey) bp.OpacityMap  = view;
+            }
+        }
+
         // ── builder ──────────────────────────────────────────────────────────────────
 
         private BlinnPhongMaterial BuildBlinnPhong(

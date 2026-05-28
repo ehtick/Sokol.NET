@@ -311,13 +311,16 @@ namespace GameEditor.Framework.Scene
                 return;
             }
 
-            // Web / mobile: async load. Textures fall back to placeholders; colors/shininess apply.
+            // Web / mobile: async load, then async-load any textures referenced by the MTL.
             string capturedKey = mtlFileName;
             string capturedDir = System.IO.Path.GetDirectoryName(relPath)?.Replace('\\', '/') ?? string.Empty;
             SFilesystem.LoadFileAsync(relPath, (_, buffer, status) =>
             {
                 if (status == SFileLoadStatus.Success && buffer != null)
+                {
                     RenderingServer.Materials.LoadMtl(capturedKey, buffer, capturedDir, null);
+                    LoadMaterialTexturesAsync(capturedKey);
+                }
                 else
                     Logger.Warning($"[SceneManager] Failed to load MTL: '{relPath}'");
             });
@@ -433,10 +436,33 @@ namespace GameEditor.Framework.Scene
             SFilesystem.LoadFileAsync(mtlRelPath, (_, buffer, status) =>
             {
                 if (status == SFileLoadStatus.Success && buffer != null)
+                {
                     RenderingServer.Materials.LoadMtl(capturedKey, buffer, capturedDir, null);
+                    LoadMaterialTexturesAsync(capturedKey);
+                }
                 else
                     Logger.Warning($"[SceneManager] Failed to load MTL: '{mtlRelPath}'");
             });
+        }
+
+        /// <summary>
+        /// After materials have been registered for <paramref name="mtlKey"/>, async-load every
+        /// texture path they reference via SFilesystem and patch the GPU views on arrival.
+        /// </summary>
+        private static void LoadMaterialTexturesAsync(string mtlKey)
+        {
+            var texPaths = RenderingServer.Materials.GetTexturePaths(mtlKey);
+            foreach (string texPath in texPaths)
+            {
+                string captured = texPath;
+                SFilesystem.LoadFileAsync(texPath, (_, buffer, status) =>
+                {
+                    if (status == SFileLoadStatus.Success && buffer != null)
+                        RenderingServer.Materials.ApplyTextureBytes(captured, buffer);
+                    else
+                        Logger.Warning($"[SceneManager] Failed to load texture: '{captured}'");
+                });
+            }
         }
 
         public static bool GetMainCameraMatrices(int width, int height,out Matrix4x4 viewProj, out Vector3 eyePos)
