@@ -417,6 +417,7 @@ namespace GameEditor.Framework.Scene
                 string abs = System.IO.Path.IsPathRooted(relPath) ? relPath : System.IO.Path.Combine(basePath, relPath);
                 return System.IO.File.Exists(abs) ? System.IO.File.ReadAllBytes(abs) : null;
             });
+            BackfillMaterialPath(meshRelPath, mtlRelPath);
         }
 
         /// <summary>
@@ -431,18 +432,39 @@ namespace GameEditor.Framework.Scene
 
             string meshDir    = System.IO.Path.GetDirectoryName(meshRelPath)?.Replace('\\', '/') ?? string.Empty;
             string mtlRelPath = string.IsNullOrEmpty(meshDir) ? meshRes.MtlLib : meshDir + "/" + meshRes.MtlLib;
-            string capturedKey = meshRes.MtlLib;
-            string capturedDir = meshDir;
+            string capturedKey          = meshRes.MtlLib;
+            string capturedDir          = meshDir;
+            string capturedMeshRelPath  = meshRelPath;
+            string capturedMtlRelPath   = mtlRelPath;
             SFilesystem.LoadFileAsync(mtlRelPath, (_, buffer, status) =>
             {
                 if (status == SFileLoadStatus.Success && buffer != null)
                 {
                     RenderingServer.Materials.LoadMtl(capturedKey, buffer, capturedDir, null);
                     LoadMaterialTexturesAsync(capturedKey);
+                    BackfillMaterialPath(capturedMeshRelPath, capturedMtlRelPath);
                 }
                 else
                     Logger.Warning($"[SceneManager] Failed to load MTL: '{mtlRelPath}'");
             });
+        }
+
+        /// <summary>
+        /// For every entity whose MeshPath == <paramref name="meshRelPath"/> and whose
+        /// MaterialPath is empty, fills in <paramref name="mtlRelPath"/> so the Inspector
+        /// shows the auto-discovered material file.
+        /// </summary>
+        private static void BackfillMaterialPath(string meshRelPath, string mtlRelPath)
+        {
+            var world = ECSWorld.Instance;
+            foreach (Entity e in world.Entities)
+            {
+                if (!world.TryGetComponent<MeshRenderer>(e, out var mr)) continue;
+                if (mr.MeshPath != meshRelPath) continue;
+                if (!string.IsNullOrEmpty(mr.MaterialPath)) continue;
+                mr.MaterialPath = mtlRelPath;
+                world.AddComponent(e, mr);
+            }
         }
 
         /// <summary>
