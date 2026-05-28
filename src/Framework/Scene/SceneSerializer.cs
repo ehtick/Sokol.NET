@@ -58,6 +58,7 @@ namespace GameEditor.Framework.Scene
                 {
                     Comma(sb, ref fc);
                     sb.Append("\"MeshRenderer\":{\"Path\":\"").Append(Esc(mr.MeshPath ?? ""))
+                        .Append("\",\"Mat\":\"").Append(Esc(mr.MaterialPath ?? ""))
                       .Append("\",\"Vis\":").Append(mr.Visible ? "true" : "false").Append('}');
                 }
 
@@ -313,8 +314,9 @@ namespace GameEditor.Framework.Scene
                 if (c.TryGetProperty("MeshRenderer", out var mrEl))
                     world.AddComponent(newId, new MeshRenderer
                     {
-                        MeshPath = mrEl.GetProperty("Path").GetString() ?? "",
-                        Visible  = mrEl.GetProperty("Vis").GetBoolean()
+                        MeshPath     = mrEl.GetProperty("Path").GetString() ?? "",
+                        MaterialPath = mrEl.TryGetProperty("Mat", out var matEl) ? (matEl.GetString() ?? "") : "",
+                        Visible      = mrEl.GetProperty("Vis").GetBoolean()
                     });
 
                 if (c.TryGetProperty("Camera", out var camEl))

@@ -31,6 +31,8 @@ namespace GameEditor.Framework.Renderer.Server
 {
     public static unsafe class RenderingServer
     {
+        private const ushort DrawFlagDisableSubMeshMaterial = 1 << 15;
+
         // ── Sub-systems ──────────────────────────────────────────────────────────────────
 
         private static readonly TextureCache       _texCache    = new();
@@ -159,13 +161,19 @@ namespace GameEditor.Framework.Renderer.Server
                 MeshResource? meshRes = _meshReg.GetByPath(mr.MeshPath);
                 if (meshRes == null) continue;
 
-                ushort matId = string.IsNullOrEmpty(mr.MaterialPath)
+                bool disableSubMeshMaterial = string.Equals(
+                    mr.MaterialPath,
+                    MeshRenderer.NoMaterialSentinel,
+                    StringComparison.Ordinal);
+
+                ushort matId = (string.IsNullOrEmpty(mr.MaterialPath) || disableSubMeshMaterial)
                     ? (ushort)0
                     : _matReg.GetIdByKey(mr.MaterialPath);
+                ushort drawFlags = disableSubMeshMaterial ? DrawFlagDisableSubMeshMaterial : (ushort)0;
 
                 Matrix4x4 model = Transform.GetWorldMatrix(world, tf);
 
-                _cmds[_drawCount]    = new DrawCommand(meshRes.Id, matId, 0, 0, 0u, tf.Position, 1f);
+                _cmds[_drawCount]    = new DrawCommand(meshRes.Id, matId, drawFlags, 0, 0u, tf.Position, 1f);
                 _cpuInst[_drawCount] = new InstanceData(in model, Vector4.One);
                 _drawCount++;
             }
@@ -176,7 +184,8 @@ namespace GameEditor.Framework.Renderer.Server
 
             for (int j = 0; j < _drawCount; j++)
             {
-                _sortKeys[j]  = (uint)(_cmds[j].MaterialId << 16 | _cmds[j].MeshId);
+                uint noMatBit = (_cmds[j].LodMask & DrawFlagDisableSubMeshMaterial) != 0 ? 1u : 0u;
+                _sortKeys[j]  = (uint)(_cmds[j].MaterialId << 17 | noMatBit << 16 | _cmds[j].MeshId);
                 _sortOrder[j] = j;
             }
             Array.Sort(_sortOrder, 0, _drawCount, _drawSorter);
@@ -220,11 +229,13 @@ namespace GameEditor.Framework.Renderer.Server
                 int firstIdx = _sortOrder[i];
                 ushort curMat  = _cmds[firstIdx].MaterialId;
                 ushort curMesh = _cmds[firstIdx].MeshId;
+                  bool disableSubMeshMaterial = (_cmds[firstIdx].LodMask & DrawFlagDisableSubMeshMaterial) != 0;
 
                 int groupSize = 0;
                 while (i + groupSize < _drawCount
                        && _cmds[_sortOrder[i + groupSize]].MaterialId == curMat
-                       && _cmds[_sortOrder[i + groupSize]].MeshId     == curMesh)
+                      && _cmds[_sortOrder[i + groupSize]].MeshId     == curMesh
+                      && ((_cmds[_sortOrder[i + groupSize]].LodMask & DrawFlagDisableSubMeshMaterial) != 0) == disableSubMeshMaterial)
                     groupSize++;
 
                 Material?     mat  = _matReg.GetById(curMat);
@@ -254,7 +265,7 @@ namespace GameEditor.Framework.Renderer.Server
                         continue;
 
                     // Per-sub-mesh material override (from .mtl material name).
-                    BlinnPhongMaterial? bpm = ResolveSubMeshMaterial(mat, mesh, sub);
+                    BlinnPhongMaterial? bpm = ResolveSubMeshMaterial(mat, mesh, sub, disableSubMeshMaterial);
                     bool subAlpha = bpm?.HasAlpha ?? groupAlpha;
 
                     // If alpha state differs from group, re-apply pipeline then VS uniforms.
@@ -344,9 +355,11 @@ namespace GameEditor.Framework.Renderer.Server
         }
 
         private static BlinnPhongMaterial? ResolveSubMeshMaterial(
-            Material? entityMat, MeshResource mesh, MeshSubResource sub)
+            Material? entityMat, MeshResource mesh, MeshSubResource sub, bool disableSubMeshMaterial)
         {
-            if (sub.MaterialKey.Length > 0 && _matReg.GetByKey(sub.MaterialKey) is BlinnPhongMaterial subBpm)
+            if (!disableSubMeshMaterial
+                && sub.MaterialKey.Length > 0
+                && _matReg.GetByKey(sub.MaterialKey) is BlinnPhongMaterial subBpm)
                 return subBpm;
             return entityMat as BlinnPhongMaterial;
         }

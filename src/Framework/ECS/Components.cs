@@ -92,8 +92,10 @@ namespace GameEditor.Framework.ECS.Components
 
     public struct MeshRenderer
     {
+        public const string NoMaterialSentinel = "__none__";
+
         public string MeshPath;
-        public string MaterialPath;   // "mtlFile#materialName" key, or empty for sub-mesh defaults
+        public string MaterialPath;   // "mtlFile#materialName" key, empty for sub-mesh defaults, "__none__" to force no material
         public bool Visible;
     }
 
