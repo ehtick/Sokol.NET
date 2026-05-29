@@ -145,18 +145,30 @@ float sample_dir_shadow(float atlas_slice, float bias)
 #endif
     vec2 texel = 1.0 / vec2(textureSize(sampler2DArray(shadow_atlas, shadow_atlas_smp), 0).xy);
 
-    // 5x5 PCF with 1.5-texel spacing — 25 samples, smooth soft shadow edges
-    const float spread = 1.5;
-    float vis = 0.0;
-    for (int y = -2; y <= 2; y++) {
-        for (int x = -2; x <= 2; x++) {
-            vec2 suv = uv + vec2(float(x), float(y)) * texel * spread;
-            vis += texture(
-                sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
-                vec4(suv, atlas_slice, receiver_depth - bias));
-        }
+    // shadow_quality (cam_pos_pad.w): 0=1-tap sharp, 1=3x3 PCF medium, 2=5x5 PCF soft
+    float shadow_q = cam_pos_pad.w;
+    if (shadow_q >= 2.0) {
+        float vis = 0.0;
+        for (int y = -2; y <= 2; y++)
+            for (int x = -2; x <= 2; x++) {
+                vec2 suv = uv + vec2(float(x), float(y)) * texel * 1.5;
+                vis += texture(sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
+                               vec4(suv, atlas_slice, receiver_depth - bias));
+            }
+        return vis / 25.0;
+    } else if (shadow_q >= 1.0) {
+        float vis = 0.0;
+        for (int y = -1; y <= 1; y++)
+            for (int x = -1; x <= 1; x++) {
+                vec2 suv = uv + vec2(float(x), float(y)) * texel;
+                vis += texture(sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
+                               vec4(suv, atlas_slice, receiver_depth - bias));
+            }
+        return vis / 9.0;
+    } else {
+        return texture(sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
+                       vec4(uv, atlas_slice, receiver_depth - bias));
     }
-    return vis / 25.0;
 }
 
 float sample_spot_shadow(float atlas_slice, float bias)
@@ -190,33 +202,30 @@ float sample_spot_shadow(float atlas_slice, float bias)
 #endif
     vec2 texel = 1.0 / vec2(textureSize(sampler2DArray(shadow_atlas, shadow_atlas_smp), 0).xy);
 
-#if defined(SHADOWS_HIGH)
-    float vis = 0.0;
-    for (int y = -1; y <= 1; y++) {
-        for (int x = -1; x <= 1; x++) {
-            vec2 suv = uv + vec2(float(x), float(y)) * texel;
-            vis += texture(
-                sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
-                vec4(suv, atlas_slice, receiver_depth - bias));
-        }
+    // shadow_quality (cam_pos_pad.w): 0=1-tap sharp, 1=3x3 PCF medium, 2=5x5 PCF soft
+    float shadow_q = cam_pos_pad.w;
+    if (shadow_q >= 2.0) {
+        float vis = 0.0;
+        for (int y = -2; y <= 2; y++)
+            for (int x = -2; x <= 2; x++) {
+                vec2 suv = uv + vec2(float(x), float(y)) * texel * 1.5;
+                vis += texture(sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
+                               vec4(suv, atlas_slice, receiver_depth - bias));
+            }
+        return vis / 25.0;
+    } else if (shadow_q >= 1.0) {
+        float vis = 0.0;
+        for (int y = -1; y <= 1; y++)
+            for (int x = -1; x <= 1; x++) {
+                vec2 suv = uv + vec2(float(x), float(y)) * texel;
+                vis += texture(sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
+                               vec4(suv, atlas_slice, receiver_depth - bias));
+            }
+        return vis / 9.0;
+    } else {
+        return texture(sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
+                       vec4(uv, atlas_slice, receiver_depth - bias));
     }
-    return vis / 9.0;
-#elif defined(SHADOWS_MID)
-    float vis = 0.0;
-    for (int y = 0; y <= 1; y++) {
-        for (int x = 0; x <= 1; x++) {
-            vec2 suv = uv + (vec2(float(x), float(y)) - vec2(0.5)) * texel;
-            vis += texture(
-                sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
-                vec4(suv, atlas_slice, receiver_depth - bias));
-        }
-    }
-    return vis / 4.0;
-#else
-    return texture(
-        sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
-        vec4(uv, atlas_slice, receiver_depth - bias));
-#endif
 }
 
 float sample_point_shadow(int point_slot, vec3 light_pos, float bias, vec3 receiver_pos)
@@ -261,33 +270,30 @@ float sample_point_shadow(int point_slot, vec3 light_pos, float bias, vec3 recei
     float slice = float(point_slot * 6 + face);
     vec2 texel = 1.0 / vec2(textureSize(sampler2DArray(cube_shadow_array, cube_shadow_array_smp), 0).xy);
 
-#if defined(SHADOWS_HIGH)
-    float vis = 0.0;
-    for (int y = -1; y <= 1; y++) {
-        for (int x = -1; x <= 1; x++) {
-            vec2 suv = uv + vec2(float(x), float(y)) * texel;
-            vis += texture(
-                sampler2DArrayShadow(cube_shadow_array, cube_shadow_array_smp),
-                vec4(suv, slice, receiver_depth - bias));
-        }
+    // shadow_quality (cam_pos_pad.w): 0=1-tap sharp, 1=3x3 PCF medium, 2=5x5 PCF soft
+    float shadow_q = cam_pos_pad.w;
+    if (shadow_q >= 2.0) {
+        float vis = 0.0;
+        for (int y = -2; y <= 2; y++)
+            for (int x = -2; x <= 2; x++) {
+                vec2 suv = uv + vec2(float(x), float(y)) * texel * 1.5;
+                vis += texture(sampler2DArrayShadow(cube_shadow_array, cube_shadow_array_smp),
+                               vec4(suv, slice, receiver_depth - bias));
+            }
+        return vis / 25.0;
+    } else if (shadow_q >= 1.0) {
+        float vis = 0.0;
+        for (int y = -1; y <= 1; y++)
+            for (int x = -1; x <= 1; x++) {
+                vec2 suv = uv + vec2(float(x), float(y)) * texel;
+                vis += texture(sampler2DArrayShadow(cube_shadow_array, cube_shadow_array_smp),
+                               vec4(suv, slice, receiver_depth - bias));
+            }
+        return vis / 9.0;
+    } else {
+        return texture(sampler2DArrayShadow(cube_shadow_array, cube_shadow_array_smp),
+                       vec4(uv, slice, receiver_depth - bias));
     }
-    return vis / 9.0;
-#elif defined(SHADOWS_MID)
-    float vis = 0.0;
-    for (int y = 0; y <= 1; y++) {
-        for (int x = 0; x <= 1; x++) {
-            vec2 suv = uv + (vec2(float(x), float(y)) - vec2(0.5)) * texel;
-            vis += texture(
-                sampler2DArrayShadow(cube_shadow_array, cube_shadow_array_smp),
-                vec4(suv, slice, receiver_depth - bias));
-        }
-    }
-    return vis / 4.0;
-#else
-    return texture(
-        sampler2DArrayShadow(cube_shadow_array, cube_shadow_array_smp),
-        vec4(uv, slice, receiver_depth - bias));
-#endif
 }
 
 void main() {

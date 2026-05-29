@@ -71,6 +71,9 @@ namespace GameEditor.Framework.Renderer.Server
 
         private static bool _initialized;
         private static bool _hasDirectionalShadow;
+
+        // Shadow quality: 0 = 1-tap sharp, 1 = 3×3 PCF medium (default), 2 = 5×5 PCF soft.
+        public static int ShadowQuality { get; set; } = 1;
         private static Matrix4x4 _directionalShadowViewProj;
         private static readonly int[] _spotShadowTopIndices = new int[ShadowAtlas.SpotSlices];
         private static readonly float[] _spotShadowTopScores = new float[ShadowAtlas.SpotSlices];
@@ -565,7 +568,7 @@ namespace GameEditor.Framework.Renderer.Server
             }
 
             fs.ambient_num = new Vector4(0.1f, 0.1f, 0.1f, _lightBuf.Count);
-            fs.cam_pos_pad = new Vector4(cameraPos, 0f);
+            fs.cam_pos_pad = new Vector4(cameraPos, (float)ShadowQuality);
 
             int n      = _lightBuf.Count;
             var lights = _lightBuf.ActiveSpan;
