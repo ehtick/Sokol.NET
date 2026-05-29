@@ -59,7 +59,9 @@ namespace GameEditor.Framework.Scene
                     Comma(sb, ref fc);
                     sb.Append("\"MeshRenderer\":{\"Path\":\"").Append(Esc(mr.MeshPath ?? ""))
                         .Append("\",\"Mat\":\"").Append(Esc(mr.MaterialPath ?? ""))
-                      .Append("\",\"Vis\":").Append(mr.Visible ? "true" : "false").Append('}');
+                                            .Append("\",\"Vis\":").Append(mr.Visible ? "true" : "false")
+                                            .Append(",\"RecvSh\":").Append(mr.ReceivesShadows ? "true" : "false")
+                                            .Append(",\"CastSh\":").Append(mr.CastsShadows ? "true" : "false").Append('}');
                 }
 
                 if (world.TryGetComponent<CameraComponent>(id, out var cam))
@@ -81,7 +83,8 @@ namespace GameEditor.Framework.Scene
                       .Append(",\"Int\":").Append(F(lt.Intensity))
                       .Append(",\"Range\":").Append(F(lt.Range))
                       .Append(",\"Inner\":").Append(F(lt.InnerAngle))
-                      .Append(",\"Outer\":").Append(F(lt.OuterAngle)).Append('}');
+                        .Append(",\"Outer\":").Append(F(lt.OuterAngle))
+                        .Append(",\"CastSh\":").Append(lt.CastsShadows ? "true" : "false").Append('}');
                 }
 
                 if (world.TryGetComponent<RigidbodyComponent>(id, out var rb))
@@ -316,7 +319,9 @@ namespace GameEditor.Framework.Scene
                     {
                         MeshPath     = mrEl.GetProperty("Path").GetString() ?? "",
                         MaterialPath = mrEl.TryGetProperty("Mat", out var matEl) ? (matEl.GetString() ?? "") : "",
-                        Visible      = mrEl.GetProperty("Vis").GetBoolean()
+                        Visible      = mrEl.GetProperty("Vis").GetBoolean(),
+                        ReceivesShadows = !mrEl.TryGetProperty("RecvSh", out var recvShEl) || recvShEl.GetBoolean(),
+                        CastsShadows = !mrEl.TryGetProperty("CastSh", out var castShEl) || castShEl.GetBoolean(),
                     });
 
                 if (c.TryGetProperty("Camera", out var camEl))
@@ -338,7 +343,8 @@ namespace GameEditor.Framework.Scene
                         Intensity  = ltEl.GetProperty("Int").GetSingle(),
                         Range      = ltEl.GetProperty("Range").GetSingle(),
                         InnerAngle = ltEl.TryGetProperty("Inner", out var innerEl) ? innerEl.GetSingle() : 25f,
-                        OuterAngle = ltEl.TryGetProperty("Outer", out var outerEl) ? outerEl.GetSingle() : 35f
+                        OuterAngle = ltEl.TryGetProperty("Outer", out var outerEl) ? outerEl.GetSingle() : 35f,
+                        CastsShadows = !ltEl.TryGetProperty("CastSh", out var castShEl) || castShEl.GetBoolean(),
                     });
 
                 if (c.TryGetProperty("Rigidbody", out var rbEl))

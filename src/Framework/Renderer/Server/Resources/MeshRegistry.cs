@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using GameEditor.Framework.Renderer;
 using static Sokol.SG;
 using static Sokol.Utils;
 
@@ -103,7 +104,123 @@ namespace GameEditor.Framework.Renderer.Server.Resources
         /// <summary>Look up a mesh by file path. Returns null if not loaded.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public MeshResource? GetByPath(string path)
-            => _byPath.TryGetValue(path, out var r) ? r : null;
+        {
+            if (_byPath.TryGetValue(path, out var r))
+                return r;
+
+            if (!path.StartsWith("prim:", StringComparison.Ordinal))
+                return null;
+
+            return TryCreatePrimitive(path, out var primRes) ? primRes : null;
+        }
+
+        private bool TryCreatePrimitive(string path, out MeshResource resource)
+        {
+            resource = default!;
+
+            if (!PrimitiveMeshSpec.TryParse(path, out PrimitiveMeshSpec spec))
+                return false;
+
+            var (positions, indices) = PrimitiveMeshGeometry.GetMeshTriangles(spec);
+            if (positions.Length == 0 || indices.Length == 0)
+                return false;
+
+            // PrimitiveMeshGeometry is shared with physics generation and uses opposite
+            // winding for render-facing triangles. Flip winding here so raster culling,
+            // lighting normals, and shadow casting are consistent with OBJ meshes.
+            var renderIndices = new uint[indices.Length];
+            for (int i = 0; i + 2 < indices.Length; i += 3)
+            {
+                renderIndices[i + 0] = indices[i + 0];
+                renderIndices[i + 1] = indices[i + 2];
+                renderIndices[i + 2] = indices[i + 1];
+            }
+
+            var vertices = new ObjVertex[positions.Length];
+            var normals = new Vector3[positions.Length];
+
+            for (int i = 0; i + 2 < renderIndices.Length; i += 3)
+            {
+                int ia = (int)renderIndices[i + 0];
+                int ib = (int)renderIndices[i + 1];
+                int ic = (int)renderIndices[i + 2];
+                if ((uint)ia >= (uint)positions.Length || (uint)ib >= (uint)positions.Length || (uint)ic >= (uint)positions.Length)
+                    continue;
+
+                Vector3 e1 = positions[ib] - positions[ia];
+                Vector3 e2 = positions[ic] - positions[ia];
+                Vector3 n = Vector3.Cross(e1, e2);
+                if (n.LengthSquared() <= 1e-12f)
+                    continue;
+                n = Vector3.Normalize(n);
+                normals[ia] += n;
+                normals[ib] += n;
+                normals[ic] += n;
+            }
+
+            Vector3 bmin = new(float.MaxValue);
+            Vector3 bmax = new(float.MinValue);
+
+            for (int i = 0; i < positions.Length; i++)
+            {
+                Vector3 p = positions[i];
+                Vector3 n = normals[i];
+                if (n.LengthSquared() <= 1e-12f)
+                    n = Vector3.UnitY;
+                else
+                    n = Vector3.Normalize(n);
+
+                Vector3 tangentAxis = MathF.Abs(n.Y) < 0.99f ? Vector3.UnitY : Vector3.UnitX;
+                Vector3 t = Vector3.Normalize(Vector3.Cross(tangentAxis, n));
+                Vector2 uv = new(p.X, p.Z);
+
+                vertices[i] = new ObjVertex
+                {
+                    Position = p,
+                    Normal = n,
+                    Uv = uv,
+                    Tangent = new Vector4(t, 1f)
+                };
+
+                bmin = Vector3.Min(bmin, p);
+                bmax = Vector3.Max(bmax, p);
+            }
+
+            var sub = new ObjSubMesh
+            {
+                MaterialName = "",
+                Vertices = vertices,
+                Indices = renderIndices
+            };
+
+            ushort id = _nextId++;
+            if (id == 0 || id >= _byId.Length)
+                return false;
+
+            var subResources = new MeshSubResource[1];
+            subResources[0] = new MeshSubResource
+            {
+                VertexBuffer = UploadVertexBuffer(sub, path, 0),
+                IndexBuffer = UploadIndexBuffer(sub, path, 0),
+                IndexCount = sub.Indices.Length,
+                MaterialName = "",
+                MaterialKey = ""
+            };
+
+            resource = new MeshResource
+            {
+                Id = id,
+                SourcePath = path,
+                MtlLib = "",
+                SubMeshes = subResources,
+                LocalBounds = new Aabb(bmin, bmax),
+                RefCount = 1
+            };
+
+            _byPath[path] = resource;
+            _byId[id] = resource;
+            return true;
+        }
 
         // ── upload helpers ───────────────────────────────────────────────────────────
 

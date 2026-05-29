@@ -38,6 +38,8 @@
     <_SokolShdcPath Condition="'$(IsWindowsHost)'=='true'">$(_SokolShdcPath).exe</_SokolShdcPath>
     <_BlinnPhongGlsl>$(_FrameworkDir)Renderer/Server/shaders/blinn_phong.glsl</_BlinnPhongGlsl>
     <_BlinnPhongOut>$(_FrameworkDir)Renderer/Server/shaders/blinn_phong_shader.cs</_BlinnPhongOut>
+    <_ShadowCasterGlsl>$(_FrameworkDir)Renderer/Server/shaders/shadow_caster.glsl</_ShadowCasterGlsl>
+    <_ShadowCasterOut>$(_FrameworkDir)Renderer/Server/shaders/shadow_caster_shader.cs</_ShadowCasterOut>
   </PropertyGroup>
 
   <!-- Compile blinn_phong.glsl for ALL supported platforms into a single .cs file.
@@ -48,6 +50,13 @@
           Outputs="$(_BlinnPhongOut)">
     <Message Text="Compiling Framework shader: blinn_phong.glsl (all platforms)" Importance="high" />
     <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_BlinnPhongGlsl)&quot; --output &quot;$(_BlinnPhongOut)&quot; --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
+  </Target>
+
+  <Target Name="CompileFrameworkShadowCasterShader" BeforeTargets="BeforeBuild"
+          Inputs="$(_ShadowCasterGlsl)"
+          Outputs="$(_ShadowCasterOut)">
+    <Message Text="Compiling Framework shader: shadow_caster.glsl (all platforms)" Importance="high" />
+    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_ShadowCasterGlsl)&quot; --output &quot;$(_ShadowCasterOut)&quot; --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
   </Target>
 
   <!-- Sokol bindings (separate DLL, shared by the ALC along with Framework) -->

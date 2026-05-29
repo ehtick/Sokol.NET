@@ -94,94 +94,14 @@ namespace GameEditor.Framework.Renderer
             var world = ECSWorld.Instance;
             if (world.Entities.Count == 0) return;
 
-            // Aggressively release cached primitive meshes that are no longer referenced
-            // by any entity, so replaced meshes free GPU buffers quickly.
-            ReleaseUnreferencedMeshes(world);
-
-            sg_apply_pipeline(_pip);
-
-            // Gather up to 16 active lights from ECS (directional / point / spot).
-            const int MaxLights = 16;
-            var fsParams = new phong_fs_params_t();
-            int lightCount = 0;
-
-            foreach (Entity lid in world.Entities)
-            {
-                if (lightCount >= MaxLights) break;
-                if (!world.TryGetComponent<ActiveFlag>(lid, out var la) || !la.Active) continue;
-                if (!world.TryGetComponent<LightComponent>(lid, out var lc)) continue;
-                if (!world.TryGetComponent<Transform>(lid, out var lt)) continue;
-
-                var rot = Matrix4x4.CreateFromQuaternion(lt.Rotation);
-                var fwd = new Vector3(rot.M31, rot.M32, rot.M33);
-
-                int b = lightCount * 4;
-
-                if (lc.Type == LightType.Directional)
-                {
-                    fsParams.lights_data[b + 0] = new Vector4(fwd, 0f);
-                    fsParams.lights_data[b + 1] = Vector4.Zero;
-                }
-                else
-                {
-                    float typeW = lc.Type == LightType.Point ? 1f : 2f;
-                    fsParams.lights_data[b + 0] = new Vector4(lt.Position, typeW);
-                    fsParams.lights_data[b + 1] = new Vector4(fwd, lc.Range);
-                }
-
-                fsParams.lights_data[b + 2] = new Vector4(lc.Color, lc.Intensity);
-
-                float inner = lc.InnerAngle > 0f ? lc.InnerAngle : 25f;
-                float outer = lc.OuterAngle > inner ? lc.OuterAngle : inner + 5f;
-                fsParams.lights_data[b + 3] = new Vector4(
-                    MathF.Cos(inner * MathF.PI / 180f),
-                    MathF.Cos(outer * MathF.PI / 180f),
-                    0f, 0f);
-
-                lightCount++;
-            }
-
-            fsParams.ambient_and_count = new Vector4(AmbientColor, (float)lightCount);
-            sg_apply_uniforms(UB_phong_fs_params, SG_RANGE(ref fsParams));
-
-            foreach (Entity id in world.Entities)
-            {
-                if (!world.TryGetComponent<ActiveFlag>(id, out var active) || !active.Active)
-                    continue;
-                if (!world.TryGetComponent<MeshRenderer>(id, out var meshRenderer) || !meshRenderer.Visible)
-                    continue;
-                if (!world.TryGetComponent<Transform>(id, out var transform))
-                    continue;
-
-                if (!PrimitiveMeshSpec.TryParse(meshRenderer.MeshPath, out PrimitiveMeshSpec spec))
-                    continue; // non-primitive mesh (e.g. OBJ) — handled by RenderingServer
-
-                MeshResource mesh = GetOrCreateMesh(spec);
-                if (mesh.NumElements == 0 || mesh.VertexBuffer.id == 0 || mesh.IndexBuffer.id == 0)
-                    continue;
-
-                Matrix4x4 model = Transform.GetWorldMatrix(world, transform);
-                Matrix4x4 mvp = model * viewProj;
-                var vsParams = new phong_vs_params_t { mvp = mvp, model = model };
-                sg_apply_uniforms(UB_phong_vs_params, SG_RANGE(ref vsParams));
-
-                sg_apply_bindings(new sg_bindings
-                {
-                    vertex_buffers = { [0] = mesh.VertexBuffer },
-                    index_buffer = mesh.IndexBuffer
-                });
-
-                sg_draw(mesh.BaseElement, mesh.NumElements, 1);
-            }
-
-            // Render OBJ-based entities through the RenderingServer.
+            // Render all mesh entities through the RenderingServer (OBJ + prim:*).
             // In the editor the pass is always an offscreen render target (RGBA8, no MSAA).
             // In standalone the pass is the swapchain, so use PipelineFlags.None so the
             // pipeline matches the swapchain's formats (format/MSAA inherited from pass).
 #if GAME_EDITOR
-            RenderingServer.SubmitView(viewProj, PipelineFlags.OffscreenRt);
+        RenderingServer.SubmitView(viewProj, PipelineFlags.OffscreenRt, allowShadowPassRendering: false);
 #else
-            RenderingServer.SubmitView(viewProj, PipelineFlags.None);
+        RenderingServer.SubmitView(viewProj, PipelineFlags.None, allowShadowPassRendering: false);
 #endif
         }
 

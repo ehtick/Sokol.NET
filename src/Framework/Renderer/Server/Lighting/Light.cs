@@ -27,10 +27,12 @@ namespace GameEditor.Framework.Renderer.Server.Lighting
         public readonly float     Range;        // attenuation radius
         public readonly float     InnerAngle;   // spot: inner cone half-angle (radians)
         public readonly float     OuterAngle;   // spot: outer cone half-angle (radians)
+        public readonly int       ShadowIndex;  // -1 = no shadow, otherwise atlas/cube slot
 
         public Light(LightType type, Vector3 position, Vector3 direction,
                      Vector3 color, float intensity, float range,
-                     float innerAngle = 0f, float outerAngle = 0f)
+                     float innerAngle = 0f, float outerAngle = 0f,
+                     int shadowIndex = -1)
         {
             Type       = type;
             Position   = position;
@@ -40,6 +42,7 @@ namespace GameEditor.Framework.Renderer.Server.Lighting
             Range      = range;
             InnerAngle = innerAngle;
             OuterAngle = outerAngle;
+            ShadowIndex = shadowIndex;
         }
     }
 
@@ -64,7 +67,7 @@ namespace GameEditor.Framework.Renderer.Server.Lighting
             SpotShadow     = new Vector4(
                 MathF.Cos(l.InnerAngle),
                 MathF.Cos(l.OuterAngle),
-                -1f,  // no shadow index in M1
+                l.ShadowIndex,
                 0f);
         }
     }

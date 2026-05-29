@@ -97,6 +97,8 @@ namespace GameEditor.Framework.ECS.Components
         public string MeshPath;
         public string MaterialPath;   // "mtlFile#materialName" key, empty for sub-mesh defaults, "__none__" to force no material
         public bool Visible;
+        public bool ReceivesShadows;
+        public bool CastsShadows;
     }
 
     public struct CameraComponent
@@ -119,6 +121,7 @@ namespace GameEditor.Framework.ECS.Components
         public float Range;
         public float InnerAngle;  // spot only — half-angle of inner cone, degrees (default 25)
         public float OuterAngle;  // spot only — half-angle of outer cone, degrees (default 35)
+        public bool CastsShadows;
     }
 
     public struct RigidbodyComponent
