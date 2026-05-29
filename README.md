@@ -25,6 +25,10 @@ The **Sokol.NET Sample Browser** is now available on Google Play! Experience 11 
 
 All powered by **.NET NativeAOT** for near-native performance on Android devices.
 
+### 🍓 Game Made with Sokol.NET on Google Play
+
+**[🎮 Smiling Fruits on Google Play](https://play.google.com/store/apps/details?id=com.sokol.SmilingFruits&pcampaignid=web_share)** — A satisfying physics-based fruit merge puzzle where matching fruits combine into bigger tiers.
+
 ## 🎯 Features
 
 - **Cross-Platform**: Deploy to Windows, macOS, Linux, Android, iOS, and WebAssembly from a single codebase
