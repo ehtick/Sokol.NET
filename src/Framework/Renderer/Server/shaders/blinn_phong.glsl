@@ -32,6 +32,7 @@
 layout(binding=0) uniform blinn_phong_vs_params {
     mat4 view_proj;
     vec4 camera_pos;   // xyz = world-space camera position
+    mat4 dir_shadow_vp;
 };
 
 // Per-vertex (buffer slot 0)
@@ -53,6 +54,7 @@ out vec3 fs_world_tangent;
 out vec3 fs_world_bitangent;
 out vec2 fs_uv;
 out vec4 fs_custom;
+out vec4 fs_shadow_pos;
 
 void main() {
     mat4 model = mat4(in_model_0, in_model_1, in_model_2, in_model_3);
@@ -71,6 +73,7 @@ void main() {
     fs_world_bitangent = normalize(cross(fs_world_normal, wt) * in_tangent.w);
     fs_uv              = in_uv;
     fs_custom          = in_custom;
+    fs_shadow_pos      = dir_shadow_vp * wpos;
 }
 @end
 
@@ -86,6 +89,8 @@ layout(binding=1) uniform blinn_phong_fs_params {
     vec4 ambient_num;         // xyz = ambient colour, w = float(numLights)
     vec4 cam_pos_pad;         // xyz = camera world position (for spec), w = pad
     vec4 lights_data[128];    // 32 lights × 4 vec4s
+    vec4 spot_shadow_vp[32];  // 8 spot matrices × 4 rows (slices 4..11)
+    vec4 point_shadow_vp[96]; // 4 point lights × 6 faces × 4 rows
 };
 
 // Textures + separate samplers (sokol-shdc's cross-compilation model).
@@ -93,11 +98,15 @@ layout(binding=0) uniform texture2D diffuse_map;
 layout(binding=1) uniform texture2D specular_map;
 layout(binding=2) uniform texture2D normal_map;
 layout(binding=3) uniform texture2D opacity_map;
+layout(binding=4) uniform texture2DArray shadow_atlas;
+layout(binding=5) uniform texture2DArray cube_shadow_array;
 
 layout(binding=0) uniform sampler diffuse_smp;
 layout(binding=1) uniform sampler specular_smp;
 layout(binding=2) uniform sampler normal_smp;
 layout(binding=3) uniform sampler opacity_smp;
+layout(binding=4) uniform samplerShadow shadow_atlas_smp;
+layout(binding=5) uniform samplerShadow cube_shadow_array_smp;
 
 in vec3 fs_world_pos;
 in vec3 fs_world_normal;
@@ -105,6 +114,7 @@ in vec3 fs_world_tangent;
 in vec3 fs_world_bitangent;
 in vec2 fs_uv;
 in vec4 fs_custom;
+in vec4 fs_shadow_pos;
 
 out vec4 frag_color;
 
@@ -113,6 +123,189 @@ vec3 sample_normal(vec2 uv, vec3 N, vec3 T, vec3 B) {
     vec3 n_ts = texture(sampler2D(normal_map, normal_smp), uv).xyz * 2.0 - 1.0;
     // Transform from tangent space to world space.
     return normalize(T * n_ts.x + B * n_ts.y + N * n_ts.z);
+}
+
+float sample_dir_shadow(float atlas_slice, float bias)
+{
+    vec3 ndc = fs_shadow_pos.xyz / max(fs_shadow_pos.w, 0.00001);
+#if !SOKOL_GLSL
+    ndc.y = -ndc.y;
+    if (ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0)
+        return 1.0;
+#else
+    if (ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 || ndc.z < -1.0 || ndc.z > 1.0)
+        return 1.0;
+#endif
+
+    vec2 uv = ndc.xy * 0.5 + 0.5;
+#if SOKOL_GLSL
+    float receiver_depth = ndc.z * 0.5 + 0.5;
+#else
+    float receiver_depth = ndc.z;
+#endif
+    vec2 texel = 1.0 / vec2(textureSize(sampler2DArray(shadow_atlas, shadow_atlas_smp), 0).xy);
+
+#if defined(SHADOWS_HIGH)
+    // 3x3 PCF
+    float vis = 0.0;
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 suv = uv + vec2(float(x), float(y)) * texel;
+            vis += texture(
+                sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
+                vec4(suv, atlas_slice, receiver_depth - bias));
+        }
+    }
+    return vis / 9.0;
+#elif defined(SHADOWS_MID)
+    // 2x2 PCF
+    float vis = 0.0;
+    for (int y = 0; y <= 1; y++) {
+        for (int x = 0; x <= 1; x++) {
+            vec2 suv = uv + (vec2(float(x), float(y)) - vec2(0.5)) * texel;
+            vis += texture(
+                sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
+                vec4(suv, atlas_slice, receiver_depth - bias));
+        }
+    }
+    return vis / 4.0;
+#else
+    // 1-tap fallback
+    return texture(
+        sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
+        vec4(uv, atlas_slice, receiver_depth - bias));
+#endif
+}
+
+float sample_spot_shadow(float atlas_slice, float bias)
+{
+    int local = int(atlas_slice) - 4;
+    if (local < 0 || local >= 8) return 1.0;
+
+    int b = local * 4;
+    mat4 spot_vp = mat4(
+        spot_shadow_vp[b + 0],
+        spot_shadow_vp[b + 1],
+        spot_shadow_vp[b + 2],
+        spot_shadow_vp[b + 3]);
+
+    vec4 clip = spot_vp * vec4(fs_world_pos, 1.0);
+    vec3 ndc = clip.xyz / max(clip.w, 0.00001);
+#if !SOKOL_GLSL
+    ndc.y = -ndc.y;
+    if (ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0)
+        return 1.0;
+#else
+    if (ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 || ndc.z < -1.0 || ndc.z > 1.0)
+        return 1.0;
+#endif
+
+    vec2 uv = ndc.xy * 0.5 + 0.5;
+#if SOKOL_GLSL
+    float receiver_depth = ndc.z * 0.5 + 0.5;
+#else
+    float receiver_depth = ndc.z;
+#endif
+    vec2 texel = 1.0 / vec2(textureSize(sampler2DArray(shadow_atlas, shadow_atlas_smp), 0).xy);
+
+#if defined(SHADOWS_HIGH)
+    float vis = 0.0;
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 suv = uv + vec2(float(x), float(y)) * texel;
+            vis += texture(
+                sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
+                vec4(suv, atlas_slice, receiver_depth - bias));
+        }
+    }
+    return vis / 9.0;
+#elif defined(SHADOWS_MID)
+    float vis = 0.0;
+    for (int y = 0; y <= 1; y++) {
+        for (int x = 0; x <= 1; x++) {
+            vec2 suv = uv + (vec2(float(x), float(y)) - vec2(0.5)) * texel;
+            vis += texture(
+                sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
+                vec4(suv, atlas_slice, receiver_depth - bias));
+        }
+    }
+    return vis / 4.0;
+#else
+    return texture(
+        sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
+        vec4(uv, atlas_slice, receiver_depth - bias));
+#endif
+}
+
+float sample_point_shadow(int point_slot, vec3 light_pos, float bias, vec3 receiver_pos)
+{
+    if (point_slot < 0 || point_slot >= 4) return 1.0;
+
+    vec3 to_frag = receiver_pos - light_pos;
+    vec3 at = abs(to_frag);
+    int face = 0;
+    if (at.x >= at.y && at.x >= at.z) {
+        face = to_frag.x > 0.0 ? 0 : 1;
+    } else if (at.y >= at.x && at.y >= at.z) {
+        face = to_frag.y > 0.0 ? 2 : 3;
+    } else {
+        face = to_frag.z > 0.0 ? 4 : 5;
+    }
+
+    int local = point_slot * 24 + face * 4;
+    mat4 face_vp = mat4(
+        point_shadow_vp[local + 0],
+        point_shadow_vp[local + 1],
+        point_shadow_vp[local + 2],
+        point_shadow_vp[local + 3]);
+
+    vec4 clip = face_vp * vec4(receiver_pos, 1.0);
+    vec3 ndc = clip.xyz / max(clip.w, 0.00001);
+#if !SOKOL_GLSL
+    ndc.y = -ndc.y;
+    if (ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0)
+        return 1.0;
+#else
+    if (ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 || ndc.z < -1.0 || ndc.z > 1.0)
+        return 1.0;
+#endif
+
+    vec2 uv = ndc.xy * 0.5 + 0.5;
+#if SOKOL_GLSL
+    float receiver_depth = ndc.z * 0.5 + 0.5;
+#else
+    float receiver_depth = ndc.z;
+#endif
+    float slice = float(point_slot * 6 + face);
+    vec2 texel = 1.0 / vec2(textureSize(sampler2DArray(cube_shadow_array, cube_shadow_array_smp), 0).xy);
+
+#if defined(SHADOWS_HIGH)
+    float vis = 0.0;
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 suv = uv + vec2(float(x), float(y)) * texel;
+            vis += texture(
+                sampler2DArrayShadow(cube_shadow_array, cube_shadow_array_smp),
+                vec4(suv, slice, receiver_depth - bias));
+        }
+    }
+    return vis / 9.0;
+#elif defined(SHADOWS_MID)
+    float vis = 0.0;
+    for (int y = 0; y <= 1; y++) {
+        for (int x = 0; x <= 1; x++) {
+            vec2 suv = uv + (vec2(float(x), float(y)) - vec2(0.5)) * texel;
+            vis += texture(
+                sampler2DArrayShadow(cube_shadow_array, cube_shadow_array_smp),
+                vec4(suv, slice, receiver_depth - bias));
+        }
+    }
+    return vis / 4.0;
+#else
+    return texture(
+        sampler2DArrayShadow(cube_shadow_array, cube_shadow_array_smp),
+        vec4(uv, slice, receiver_depth - bias));
+#endif
 }
 
 void main() {
@@ -149,10 +342,15 @@ void main() {
 
         vec3 L = vec3(0.0);
         float atten = 1.0;
+        float shadow = 1.0;
 
         if (lt == 0) {
             // Directional — d1.xyz = travel direction (away from source)
             L = normalize(-d1.xyz);
+            if (d3.z >= 0.0 && fs_custom.a > 0.5) {
+                float slopeBias = max(0.002, 0.012 * (1.0 - max(dot(N, L), 0.0)));
+                shadow = sample_dir_shadow(d3.z, slopeBias);
+            }
 
         } else if (lt == 1) {
             // Point
@@ -163,6 +361,14 @@ void main() {
             L     = normalize(toL);
             float t = dist / rng;
             atten = max(1.0 - t * t, 0.0);
+            float nl = max(dot(N, L), 0.0);
+
+            if (d3.z >= 0.0 && fs_custom.a > 0.5 && nl > 0.0) {
+                float slopeBias = max(0.002, 0.01 * (1.0 - nl));
+                float normalOffset = max(0.0003, 0.001 * (1.0 - nl));
+                vec3 receiverPos = fs_world_pos + N * normalOffset;
+                shadow = sample_point_shadow(int(d3.z), d0.xyz, slopeBias, receiverPos);
+            }
 
         } else {
             // Spot
@@ -177,6 +383,11 @@ void main() {
             float cosA = dot(-L, sd);
             float sf   = clamp((cosA - d3.y) / max(d3.x - d3.y, 0.0001), 0.0, 1.0);
             atten *= sf;
+
+            if (d3.z >= 0.0 && fs_custom.a > 0.5) {
+                float slopeBias = max(0.0025, 0.014 * (1.0 - max(dot(N, L), 0.0)));
+                shadow = sample_spot_shadow(d3.z, slopeBias);
+            }
         }
 
         // Diffuse (Lambert)
@@ -187,7 +398,7 @@ void main() {
         float NdotH = max(dot(N, H), 0.0);
         float spec  = pow(NdotH, Ns);
 
-        accum += lc * atten * (Kd * NdotL + Ks * spec);
+        accum += lc * (atten * shadow) * (Kd * NdotL + Ks * spec);
     }
 
     frag_color = vec4(accum, opacity);

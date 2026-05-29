@@ -25,6 +25,7 @@ using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
 using GameEditor.Framework.Renderer.Server.Lighting;
 using GameEditor.Framework.Renderer.Server.Materials;
+using GameEditor.Framework.Renderer.Server.Passes;
 using GameEditor.Framework.Renderer.Server.Resources;
 
 namespace GameEditor.Framework.Renderer.Server
@@ -41,7 +42,12 @@ namespace GameEditor.Framework.Renderer.Server
         private static readonly LightBuffer        _lightBuf    = new();
         private static readonly InstanceBuffer     _instanceBuf = new();
         private static readonly ShaderVariantCache _shaderCache = new();
+        private static readonly ShadowAtlas        _shadowAtlas = new();
+        private static readonly CubeShadowArray    _cubeShadows = new();
+        private static readonly ShadowPass         _shadowPass  = new();
         private static readonly RenderView?[]      _views       = new RenderView[RenderingConstants.MAX_VIEWS];
+        private static sg_sampler _shadowSampler;
+        private static sg_sampler _cubeShadowSampler;
 
         // ── Per-frame scratch (pre-allocated – zero hot-path allocations) ────────────────
 
@@ -53,12 +59,27 @@ namespace GameEditor.Framework.Renderer.Server
         private static readonly int[]      _sortOrder  = new int[RenderingConstants.MAX_DRAWS];
         private static readonly DrawSorter _drawSorter = new();
 
+        // Top-N light selection scratch (M2): keep the highest-importance lights only.
+        private static readonly Light[] _topLights = new Light[RenderingConstants.MAX_LIGHTS];
+        private static readonly float[] _topLightScores = new float[RenderingConstants.MAX_LIGHTS];
+        private static int _topLightCount;
+
         // ── Frame stats ──────────────────────────────────────────────────────────────────
 
         private static FrameStats _stats;
         public static ref readonly FrameStats Stats => ref _stats;
 
         private static bool _initialized;
+        private static bool _hasDirectionalShadow;
+        private static Matrix4x4 _directionalShadowViewProj;
+        private static readonly int[] _spotShadowTopIndices = new int[ShadowAtlas.SpotSlices];
+        private static readonly float[] _spotShadowTopScores = new float[ShadowAtlas.SpotSlices];
+        private static readonly Matrix4x4[] _spotShadowViewProj = new Matrix4x4[ShadowAtlas.SpotSlices];
+        private static int _spotShadowTopCount;
+        private static readonly int[] _pointShadowTopIndices = new int[CubeShadowArray.MaxPointShadowLights];
+        private static readonly float[] _pointShadowTopScores = new float[CubeShadowArray.MaxPointShadowLights];
+        private static readonly Matrix4x4[] _pointShadowViewProj = new Matrix4x4[CubeShadowArray.MaxPointShadowLights * CubeShadowArray.FacesPerLight];
+        private static int _pointShadowTopCount;
 
         // ── Lifecycle ────────────────────────────────────────────────────────────────────
 
@@ -67,6 +88,27 @@ namespace GameEditor.Framework.Renderer.Server
             if (_initialized) return;
             _texCache.Init();
             _shaderCache.Init();
+            _shadowAtlas.Init();
+            _cubeShadows.Init();
+            _shadowPass.Init();
+            _shadowSampler = sg_make_sampler(new sg_sampler_desc
+            {
+                min_filter = sg_filter.SG_FILTER_NEAREST,
+                mag_filter = sg_filter.SG_FILTER_NEAREST,
+                compare = sg_compare_func.SG_COMPAREFUNC_LESS_EQUAL,
+                wrap_u = sg_wrap.SG_WRAP_CLAMP_TO_EDGE,
+                wrap_v = sg_wrap.SG_WRAP_CLAMP_TO_EDGE,
+                label = "shadow-atlas-sampler"
+            });
+            _cubeShadowSampler = sg_make_sampler(new sg_sampler_desc
+            {
+                min_filter = sg_filter.SG_FILTER_NEAREST,
+                mag_filter = sg_filter.SG_FILTER_NEAREST,
+                compare = sg_compare_func.SG_COMPAREFUNC_LESS_EQUAL,
+                wrap_u = sg_wrap.SG_WRAP_CLAMP_TO_EDGE,
+                wrap_v = sg_wrap.SG_WRAP_CLAMP_TO_EDGE,
+                label = "cube-shadow-array-sampler"
+            });
             _initialized = true;
         }
 
@@ -78,6 +120,19 @@ namespace GameEditor.Framework.Renderer.Server
             _matReg.Shutdown();
             _meshReg.Shutdown();
             _texCache.Shutdown();
+            _shadowPass.Shutdown();
+            _cubeShadows.Shutdown();
+            _shadowAtlas.Shutdown();
+            if (_shadowSampler.id != 0)
+            {
+                sg_destroy_sampler(_shadowSampler);
+                _shadowSampler = default;
+            }
+            if (_cubeShadowSampler.id != 0)
+            {
+                sg_destroy_sampler(_cubeShadowSampler);
+                _cubeShadowSampler = default;
+            }
             _shaderCache.Dispose();
         }
 
@@ -112,37 +167,31 @@ namespace GameEditor.Framework.Renderer.Server
             _drawCount = 0;
         }
 
-        public static void SubmitView(in Matrix4x4 viewProj, PipelineFlags basePipelineFlags = PipelineFlags.OffscreenRt, int viewIndex = 0)
+        public static void RenderShadowMaps(in Matrix4x4 viewProj)
+        {
+            if (!_initialized) return;
+
+            Matrix4x4.Invert(viewProj, out var invVP);
+            var cameraPos = new Vector3(invVP.M41, invVP.M42, invVP.M43);
+            CollectLightsAndShadows(ECSWorld.Instance, cameraPos, renderShadowPasses: true);
+        }
+
+        public static void SubmitView(
+            in Matrix4x4 viewProj,
+            PipelineFlags basePipelineFlags = PipelineFlags.OffscreenRt,
+            int viewIndex = 0,
+            bool allowShadowPassRendering = true)
         {
             if (!_initialized) return;
             var world = ECSWorld.Instance;
 
-            // ── 1. Collect lights ─────────────────────────────────────────────────────────
+            // Camera position is required for light importance ranking.
+            Matrix4x4.Invert(viewProj, out var invVP);
+            var cameraPos = new Vector3(invVP.M41, invVP.M42, invVP.M43);
 
-            _lightBuf.Reset();
-            for (int li = 0; li < world.Entities.Count; li++)
-            {
-                if (_lightBuf.Count >= RenderingConstants.MAX_LIGHTS) break;
-                Entity lid = world.Entities[li];
-                if (!world.TryGetComponent<ActiveFlag>(lid, out var la) || !la.Active) continue;
-                if (!world.TryGetComponent<LightComponent>(lid, out var lc)) continue;
-                if (!world.TryGetComponent<Transform>(lid, out var lt)) continue;
+            // ── 1. Collect lights and shadow matrices ───────────────────────────────────
 
-                var rot = Matrix4x4.CreateFromQuaternion(lt.Rotation);
-                var fwd = new Vector3(rot.M31, rot.M32, rot.M33);
-
-                var l = new Light(
-                    (Lighting.LightType)(int)lc.Type,
-                    lt.Position,
-                    fwd,
-                    lc.Color,
-                    lc.Intensity,
-                    lc.Range,
-                    lc.InnerAngle,
-                    lc.OuterAngle
-                );
-                _lightBuf.Add(in l);
-            }
+            CollectLightsAndShadows(world, cameraPos, allowShadowPassRendering);
 
             // ── 2. Extract draw commands ──────────────────────────────────────────────────
 
@@ -154,9 +203,6 @@ namespace GameEditor.Framework.Renderer.Server
                 if (!world.TryGetComponent<ActiveFlag>(id, out var active) || !active.Active) continue;
                 if (!world.TryGetComponent<MeshRenderer>(id, out var mr) || !mr.Visible) continue;
                 if (!world.TryGetComponent<Transform>(id, out var tf)) continue;
-
-                // Primitive-spec meshes are handled by SceneRenderer — skip them here.
-                if (mr.MeshPath.StartsWith("prim:", StringComparison.Ordinal)) continue;
 
                 MeshResource? meshRes = _meshReg.GetByPath(mr.MeshPath);
                 if (meshRes == null) continue;
@@ -174,7 +220,9 @@ namespace GameEditor.Framework.Renderer.Server
                 Matrix4x4 model = Transform.GetWorldMatrix(world, tf);
 
                 _cmds[_drawCount]    = new DrawCommand(meshRes.Id, matId, drawFlags, 0, 0u, tf.Position, 1f);
-                _cpuInst[_drawCount] = new InstanceData(in model, Vector4.One);
+                _cpuInst[_drawCount] = new InstanceData(
+                    in model,
+                    new Vector4(1f, 1f, 1f, mr.ReceivesShadows ? 1f : 0f));
                 _drawCount++;
             }
 
@@ -210,13 +258,11 @@ namespace GameEditor.Framework.Renderer.Server
 
             // ── 5. Camera position from inverse VP ────────────────────────────────────────
 
-            Matrix4x4.Invert(viewProj, out var invVP);
-            var cameraPos = new Vector3(invVP.M41, invVP.M42, invVP.M43);
-
             var vsParams = new blinn_phong_vs_params_t
             {
                 view_proj  = viewProj,
                 camera_pos = new Vector4(cameraPos, 1f),
+                dir_shadow_vp = _hasDirectionalShadow ? _directionalShadowViewProj : Matrix4x4.Identity,
             };
 
             // ── 6. Walk sorted groups ─────────────────────────────────────────────────────
@@ -301,12 +347,16 @@ namespace GameEditor.Framework.Renderer.Server
                             [VIEW_specular_map] = specular,
                             [VIEW_normal_map]   = normal,
                             [VIEW_opacity_map]  = opacity,
+                            [VIEW_shadow_atlas] = _shadowAtlas.TextureView,
+                            [VIEW_cube_shadow_array] = _cubeShadows.TextureView,
                         },
                         samplers = {
                             [SMP_diffuse_smp]  = smp,
                             [SMP_specular_smp] = smp,
                             [SMP_normal_smp]   = smp,
                             [SMP_opacity_smp]  = smp,
+                            [SMP_shadow_atlas_smp] = _shadowSampler,
+                            [SMP_cube_shadow_array_smp] = _cubeShadowSampler,
                         },
                     });
 
@@ -322,6 +372,181 @@ namespace GameEditor.Framework.Renderer.Server
         public static void EndFrame() { }
 
         // ── Helpers ──────────────────────────────────────────────────────────────────────
+
+        private static void CollectLightsAndShadows(ECSWorld world, Vector3 cameraPos, bool renderShadowPasses)
+        {
+            _lightBuf.Reset();
+            _topLightCount = 0;
+            _spotShadowTopCount = 0;
+            _pointShadowTopCount = 0;
+            _hasDirectionalShadow = false;
+            _directionalShadowViewProj = Matrix4x4.Identity;
+            for (int si = 0; si < _spotShadowViewProj.Length; si++)
+                _spotShadowViewProj[si] = Matrix4x4.Identity;
+            for (int pi = 0; pi < _pointShadowViewProj.Length; pi++)
+                _pointShadowViewProj[pi] = Matrix4x4.Identity;
+
+            Light bestDirectionalShadowLight = default;
+            float bestDirectionalShadowScore = float.NegativeInfinity;
+            bool hasDirectionalShadowLight = false;
+
+            for (int li = 0; li < world.Entities.Count; li++)
+            {
+                Entity lid = world.Entities[li];
+                if (!world.TryGetComponent<ActiveFlag>(lid, out var la) || !la.Active) continue;
+                if (!world.TryGetComponent<LightComponent>(lid, out var lc)) continue;
+                if (!world.TryGetComponent<Transform>(lid, out var lt)) continue;
+
+                Matrix4x4 lightWorld = Transform.GetWorldMatrix(world, lt);
+                var worldPos = new Vector3(lightWorld.M41, lightWorld.M42, lightWorld.M43);
+                var fwd = Vector3.Normalize(new Vector3(lightWorld.M31, lightWorld.M32, lightWorld.M33));
+
+                float importance = MathF.Max(lc.Intensity, 0f);
+                if (lc.Type != GameEditor.Framework.ECS.Components.LightType.Directional)
+                {
+                    float distSq = Vector3.DistanceSquared(cameraPos, worldPos);
+                    importance *= 1f / MathF.Max(distSq, 0.01f);
+                }
+
+                float innerRad = lc.InnerAngle * (MathF.PI / 180f);
+                float outerRad = lc.OuterAngle * (MathF.PI / 180f);
+
+                var l = new Light(
+                    (Lighting.LightType)(int)lc.Type,
+                    worldPos,
+                    fwd,
+                    lc.Color,
+                    lc.Intensity,
+                    lc.Range,
+                    innerRad,
+                    outerRad
+                );
+                TryInsertTopLight(in l, importance);
+
+                if (lc.CastsShadows && lc.Type == GameEditor.Framework.ECS.Components.LightType.Directional && importance > bestDirectionalShadowScore)
+                {
+                    bestDirectionalShadowScore = importance;
+                    bestDirectionalShadowLight = l;
+                    hasDirectionalShadowLight = true;
+                }
+
+                if (lc.CastsShadows && lc.Type == GameEditor.Framework.ECS.Components.LightType.Spot)
+                {
+                    TryInsertTopSpotShadowIndex(li, importance);
+                }
+                else if (lc.CastsShadows && lc.Type == GameEditor.Framework.ECS.Components.LightType.Point)
+                {
+                    TryInsertTopPointShadowIndex(li, importance);
+                }
+            }
+
+            for (int li = 0; li < _topLightCount; li++)
+            {
+                if (hasDirectionalShadowLight && IsSameLight(in _topLights[li], in bestDirectionalShadowLight))
+                {
+                    _topLights[li] = new Light(
+                        _topLights[li].Type,
+                        _topLights[li].Position,
+                        _topLights[li].Direction,
+                        _topLights[li].Color,
+                        _topLights[li].Intensity,
+                        _topLights[li].Range,
+                        _topLights[li].InnerAngle,
+                        _topLights[li].OuterAngle,
+                        0);
+                }
+            }
+
+            if (hasDirectionalShadowLight)
+            {
+                _directionalShadowViewProj = BuildDirectionalShadowViewProj(in bestDirectionalShadowLight, cameraPos);
+                _hasDirectionalShadow = true;
+                if (renderShadowPasses)
+                    _shadowPass.RenderDirectional(world, _meshReg, _shadowAtlas, 0, in _directionalShadowViewProj);
+            }
+
+            for (int si = 0; si < _spotShadowTopCount; si++)
+            {
+                int lightEntityListIndex = _spotShadowTopIndices[si];
+                Entity sid = world.Entities[lightEntityListIndex];
+                if (!world.TryGetComponent<ActiveFlag>(sid, out var sa) || !sa.Active) continue;
+                if (!world.TryGetComponent<LightComponent>(sid, out var slc) || slc.Type != GameEditor.Framework.ECS.Components.LightType.Spot || !slc.CastsShadows) continue;
+                if (!world.TryGetComponent<Transform>(sid, out var slt)) continue;
+
+                Matrix4x4 lightWorld = Transform.GetWorldMatrix(world, slt);
+                var spotPos = new Vector3(lightWorld.M41, lightWorld.M42, lightWorld.M43);
+                var spotFwd = Vector3.Normalize(new Vector3(lightWorld.M31, lightWorld.M32, lightWorld.M33));
+                float outerRad = slc.OuterAngle * (MathF.PI / 180f);
+
+                Matrix4x4 spotVp = BuildSpotShadowViewProj(spotPos, spotFwd, slc.Range, outerRad);
+                int atlasSlice = ShadowAtlas.DirectionalCascades + si;
+                if (renderShadowPasses)
+                    _shadowPass.RenderSpot(world, _meshReg, _shadowAtlas, atlasSlice, in spotVp);
+                _spotShadowViewProj[si] = spotVp;
+
+                for (int li = 0; li < _topLightCount; li++)
+                {
+                    if (_topLights[li].Type != Lighting.LightType.Spot) continue;
+                    if (Vector3.DistanceSquared(_topLights[li].Position, spotPos) > 0.0001f) continue;
+
+                    _topLights[li] = new Light(
+                        _topLights[li].Type,
+                        _topLights[li].Position,
+                        _topLights[li].Direction,
+                        _topLights[li].Color,
+                        _topLights[li].Intensity,
+                        _topLights[li].Range,
+                        _topLights[li].InnerAngle,
+                        _topLights[li].OuterAngle,
+                        atlasSlice);
+                    break;
+                }
+            }
+
+            for (int pi = 0; pi < _pointShadowTopCount; pi++)
+            {
+                int lightEntityListIndex = _pointShadowTopIndices[pi];
+                Entity pid = world.Entities[lightEntityListIndex];
+                if (!world.TryGetComponent<ActiveFlag>(pid, out var pa) || !pa.Active) continue;
+                if (!world.TryGetComponent<LightComponent>(pid, out var plc) || plc.Type != GameEditor.Framework.ECS.Components.LightType.Point || !plc.CastsShadows) continue;
+                if (!world.TryGetComponent<Transform>(pid, out var plt)) continue;
+
+                Matrix4x4 lightWorld = Transform.GetWorldMatrix(world, plt);
+                var pointPos = new Vector3(lightWorld.M41, lightWorld.M42, lightWorld.M43);
+
+                for (int face = 0; face < CubeShadowArray.FacesPerLight; face++)
+                {
+                    Matrix4x4 pointFaceVp = BuildPointShadowFaceViewProj(pointPos, face, plc.Range);
+                    if (renderShadowPasses)
+                        _shadowPass.RenderPointFace(world, _meshReg, _cubeShadows, pi, face, in pointFaceVp);
+                    _pointShadowViewProj[pi * CubeShadowArray.FacesPerLight + face] = pointFaceVp;
+                }
+
+                for (int li = 0; li < _topLightCount; li++)
+                {
+                    if (_topLights[li].Type != Lighting.LightType.Point) continue;
+                    if (Vector3.DistanceSquared(_topLights[li].Position, pointPos) > 0.0001f) continue;
+
+                    _topLights[li] = new Light(
+                        _topLights[li].Type,
+                        _topLights[li].Position,
+                        _topLights[li].Direction,
+                        _topLights[li].Color,
+                        _topLights[li].Intensity,
+                        _topLights[li].Range,
+                        _topLights[li].InnerAngle,
+                        _topLights[li].OuterAngle,
+                        pi);
+                    break;
+                }
+            }
+
+            _lightBuf.Reset();
+            for (int li = 0; li < _topLightCount; li++)
+            {
+                _lightBuf.Add(in _topLights[li]);
+            }
+        }
 
         private static void BuildFsParams(Material? mat, Vector3 cameraPos,
                                           out blinn_phong_fs_params_t fs)
@@ -352,6 +577,26 @@ namespace GameEditor.Framework.Renderer.Server
                 fs.lights_data[b + 2] = lights[l].ColorIntensity;
                 fs.lights_data[b + 3] = lights[l].SpotShadow;
             }
+
+            for (int si = 0; si < ShadowAtlas.SpotSlices; si++)
+            {
+                int b = si * 4;
+                var m = _spotShadowViewProj[si];
+                fs.spot_shadow_vp[b + 0] = new Vector4(m.M11, m.M12, m.M13, m.M14);
+                fs.spot_shadow_vp[b + 1] = new Vector4(m.M21, m.M22, m.M23, m.M24);
+                fs.spot_shadow_vp[b + 2] = new Vector4(m.M31, m.M32, m.M33, m.M34);
+                fs.spot_shadow_vp[b + 3] = new Vector4(m.M41, m.M42, m.M43, m.M44);
+            }
+
+            for (int pi = 0; pi < _pointShadowViewProj.Length; pi++)
+            {
+                int b = pi * 4;
+                var m = _pointShadowViewProj[pi];
+                fs.point_shadow_vp[b + 0] = new Vector4(m.M11, m.M12, m.M13, m.M14);
+                fs.point_shadow_vp[b + 1] = new Vector4(m.M21, m.M22, m.M23, m.M24);
+                fs.point_shadow_vp[b + 2] = new Vector4(m.M31, m.M32, m.M33, m.M34);
+                fs.point_shadow_vp[b + 3] = new Vector4(m.M41, m.M42, m.M43, m.M44);
+            }
         }
 
         private static BlinnPhongMaterial? ResolveSubMeshMaterial(
@@ -362,6 +607,160 @@ namespace GameEditor.Framework.Renderer.Server
                 && _matReg.GetByKey(sub.MaterialKey) is BlinnPhongMaterial subBpm)
                 return subBpm;
             return entityMat as BlinnPhongMaterial;
+        }
+
+        private static Matrix4x4 BuildDirectionalShadowViewProj(in Light light, Vector3 cameraPos)
+        {
+            Vector3 toLight = Vector3.Normalize(-light.Direction);
+            Vector3 target = cameraPos;
+            Vector3 eye = target + toLight * 40f;
+
+            Vector3 up = Vector3.UnitY;
+            if (MathF.Abs(Vector3.Dot(up, toLight)) > 0.98f)
+                up = Vector3.UnitZ;
+
+            Matrix4x4 view = Matrix4x4.CreateLookAt(eye, target, up);
+            Matrix4x4 proj = Matrix4x4.CreateOrthographicOffCenter(-35f, 35f, -35f, 35f, 0.1f, 120f);
+            return view * proj;
+        }
+
+        private static Matrix4x4 BuildSpotShadowViewProj(Vector3 position, Vector3 direction, float range, float outerAngleRad)
+        {
+            Vector3 target = position + direction;
+            Vector3 up = Vector3.UnitY;
+            if (MathF.Abs(Vector3.Dot(up, direction)) > 0.98f)
+                up = Vector3.UnitZ;
+
+            float fov = MathF.Max(outerAngleRad * 2f, 0.1f);
+            Matrix4x4 view = Matrix4x4.CreateLookAt(position, target, up);
+            Matrix4x4 proj = Matrix4x4.CreatePerspectiveFieldOfView(fov, 1f, 0.05f, MathF.Max(range, 0.1f));
+            return view * proj;
+        }
+
+        private static Matrix4x4 BuildPointShadowFaceViewProj(Vector3 position, int faceIndex, float range)
+        {
+            Vector3 dir;
+            Vector3 up;
+            switch (faceIndex)
+            {
+                case 0: dir = Vector3.UnitX; up = -Vector3.UnitY; break;
+                case 1: dir = -Vector3.UnitX; up = -Vector3.UnitY; break;
+                case 2: dir = Vector3.UnitY; up = Vector3.UnitZ; break;
+                case 3: dir = -Vector3.UnitY; up = -Vector3.UnitZ; break;
+                case 4: dir = Vector3.UnitZ; up = -Vector3.UnitY; break;
+                default: dir = -Vector3.UnitZ; up = -Vector3.UnitY; break;
+            }
+
+            Matrix4x4 view = Matrix4x4.CreateLookAt(position, position + dir, up);
+            Matrix4x4 proj = Matrix4x4.CreatePerspectiveFieldOfView(MathF.PI * 0.5f, 1f, 0.05f, MathF.Max(range, 0.1f));
+            return view * proj;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void TryInsertTopLight(in Light light, float score)
+        {
+            if (_topLightCount < RenderingConstants.MAX_LIGHTS)
+            {
+                int insert = _topLightCount;
+                while (insert > 0 && score > _topLightScores[insert - 1]) insert--;
+                for (int i = _topLightCount; i > insert; i--)
+                {
+                    _topLights[i] = _topLights[i - 1];
+                    _topLightScores[i] = _topLightScores[i - 1];
+                }
+                _topLights[insert] = light;
+                _topLightScores[insert] = score;
+                _topLightCount++;
+                return;
+            }
+
+            // Already full: drop low-priority light immediately.
+            if (score <= _topLightScores[RenderingConstants.MAX_LIGHTS - 1]) return;
+
+            int at = RenderingConstants.MAX_LIGHTS - 1;
+            while (at > 0 && score > _topLightScores[at - 1]) at--;
+            for (int i = RenderingConstants.MAX_LIGHTS - 1; i > at; i--)
+            {
+                _topLights[i] = _topLights[i - 1];
+                _topLightScores[i] = _topLightScores[i - 1];
+            }
+            _topLights[at] = light;
+            _topLightScores[at] = score;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool IsSameLight(in Light a, in Light b)
+        {
+            return a.Type == b.Type
+                && a.Position == b.Position
+                && a.Direction == b.Direction
+                && a.Color == b.Color
+                && a.Intensity == b.Intensity
+                && a.Range == b.Range
+                && a.InnerAngle == b.InnerAngle
+                && a.OuterAngle == b.OuterAngle;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void TryInsertTopSpotShadowIndex(int entityListIndex, float score)
+        {
+            if (_spotShadowTopCount < ShadowAtlas.SpotSlices)
+            {
+                int insert = _spotShadowTopCount;
+                while (insert > 0 && score > _spotShadowTopScores[insert - 1])
+                {
+                    _spotShadowTopIndices[insert] = _spotShadowTopIndices[insert - 1];
+                    _spotShadowTopScores[insert] = _spotShadowTopScores[insert - 1];
+                    insert--;
+                }
+                _spotShadowTopIndices[insert] = entityListIndex;
+                _spotShadowTopScores[insert] = score;
+                _spotShadowTopCount++;
+                return;
+            }
+
+            if (score <= _spotShadowTopScores[ShadowAtlas.SpotSlices - 1]) return;
+
+            int at = ShadowAtlas.SpotSlices - 1;
+            while (at > 0 && score > _spotShadowTopScores[at - 1])
+            {
+                _spotShadowTopIndices[at] = _spotShadowTopIndices[at - 1];
+                _spotShadowTopScores[at] = _spotShadowTopScores[at - 1];
+                at--;
+            }
+            _spotShadowTopIndices[at] = entityListIndex;
+            _spotShadowTopScores[at] = score;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void TryInsertTopPointShadowIndex(int entityListIndex, float score)
+        {
+            if (_pointShadowTopCount < CubeShadowArray.MaxPointShadowLights)
+            {
+                int insert = _pointShadowTopCount;
+                while (insert > 0 && score > _pointShadowTopScores[insert - 1])
+                {
+                    _pointShadowTopIndices[insert] = _pointShadowTopIndices[insert - 1];
+                    _pointShadowTopScores[insert] = _pointShadowTopScores[insert - 1];
+                    insert--;
+                }
+                _pointShadowTopIndices[insert] = entityListIndex;
+                _pointShadowTopScores[insert] = score;
+                _pointShadowTopCount++;
+                return;
+            }
+
+            if (score <= _pointShadowTopScores[CubeShadowArray.MaxPointShadowLights - 1]) return;
+
+            int at = CubeShadowArray.MaxPointShadowLights - 1;
+            while (at > 0 && score > _pointShadowTopScores[at - 1])
+            {
+                _pointShadowTopIndices[at] = _pointShadowTopIndices[at - 1];
+                _pointShadowTopScores[at] = _pointShadowTopScores[at - 1];
+                at--;
+            }
+            _pointShadowTopIndices[at] = entityListIndex;
+            _pointShadowTopScores[at] = score;
         }
 
         private sealed class DrawSorter : System.Collections.Generic.IComparer<int>
