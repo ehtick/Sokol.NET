@@ -171,9 +171,7 @@ namespace GameEditor.Framework.Renderer.Server
         {
             if (!_initialized) return;
 
-            Matrix4x4.Invert(viewProj, out var invVP);
-            var cameraPos = new Vector3(invVP.M41, invVP.M42, invVP.M43);
-            CollectLightsAndShadows(ECSWorld.Instance, cameraPos, renderShadowPasses: true);
+            CollectLightsAndShadows(ECSWorld.Instance, in viewProj, renderShadowPasses: true);
         }
 
         public static void SubmitView(
@@ -191,7 +189,7 @@ namespace GameEditor.Framework.Renderer.Server
 
             // ── 1. Collect lights and shadow matrices ───────────────────────────────────
 
-            CollectLightsAndShadows(world, cameraPos, allowShadowPassRendering);
+            CollectLightsAndShadows(world, in viewProj, allowShadowPassRendering);
 
             // ── 2. Extract draw commands ──────────────────────────────────────────────────
 
@@ -373,8 +371,10 @@ namespace GameEditor.Framework.Renderer.Server
 
         // ── Helpers ──────────────────────────────────────────────────────────────────────
 
-        private static void CollectLightsAndShadows(ECSWorld world, Vector3 cameraPos, bool renderShadowPasses)
+        private static void CollectLightsAndShadows(ECSWorld world, in Matrix4x4 cameraViewProj, bool renderShadowPasses)
         {
+            Matrix4x4.Invert(cameraViewProj, out var _invCamVP);
+            Vector3 cameraPos = new Vector3(_invCamVP.M41, _invCamVP.M42, _invCamVP.M43);
             _lightBuf.Reset();
             _topLightCount = 0;
             _spotShadowTopCount = 0;
@@ -459,7 +459,7 @@ namespace GameEditor.Framework.Renderer.Server
 
             if (hasDirectionalShadowLight)
             {
-                _directionalShadowViewProj = BuildDirectionalShadowViewProj(in bestDirectionalShadowLight, cameraPos);
+                _directionalShadowViewProj = BuildDirectionalShadowViewProj(in bestDirectionalShadowLight, in cameraViewProj);
                 _hasDirectionalShadow = true;
                 if (renderShadowPasses)
                     _shadowPass.RenderDirectional(world, _meshReg, _shadowAtlas, 0, in _directionalShadowViewProj);
@@ -609,19 +609,75 @@ namespace GameEditor.Framework.Renderer.Server
             return entityMat as BlinnPhongMaterial;
         }
 
-        private static Matrix4x4 BuildDirectionalShadowViewProj(in Light light, Vector3 cameraPos)
+        private static Matrix4x4 BuildDirectionalShadowViewProj(in Light light, in Matrix4x4 cameraViewProj)
         {
-            Vector3 toLight = Vector3.Normalize(-light.Direction);
-            Vector3 target = cameraPos;
-            Vector3 eye = target + toLight * 40f;
+            const float ShadowDistance = 120f; // max shadow render distance from camera
+            const float DepthExtension  = 50f;  // extra depth behind scene for off-screen casters
 
+            Vector3 toLight = Vector3.Normalize(-light.Direction);
             Vector3 up = Vector3.UnitY;
             if (MathF.Abs(Vector3.Dot(up, toLight)) > 0.98f)
                 up = Vector3.UnitZ;
 
-            Matrix4x4 view = Matrix4x4.CreateLookAt(eye, target, up);
-            Matrix4x4 proj = Matrix4x4.CreateOrthographicOffCenter(-35f, 35f, -35f, 35f, 0.1f, 120f);
-            return view * proj;
+            // Un-project the 8 camera NDC frustum corners to world space.
+            // Metal NDC: x,y ∈ [-1,1], z ∈ [0,1]
+            Matrix4x4.Invert(cameraViewProj, out var invVP);
+            Span<Vector3> corners = stackalloc Vector3[8];
+            int ci = 0;
+            for (int zi = 0; zi <= 1; zi++)
+                for (int yi = -1; yi <= 1; yi += 2)
+                    for (int xi = -1; xi <= 1; xi += 2)
+                    {
+                        var clip = new Vector4(xi, yi, zi, 1f);
+                        var w = Vector4.Transform(clip, invVP);
+                        corners[ci++] = new Vector3(w.X, w.Y, w.Z) / w.W;
+                    }
+
+            // Camera eye position from inverse view-projection
+            Vector3 cameraEye = new Vector3(invVP.M41, invVP.M42, invVP.M43);
+
+            // Clamp far corners to ShadowDistance from the camera eye so the
+            // shadow atlas covers nearby geometry regardless of camera distance.
+            for (int i = 0; i < 8; i++)
+            {
+                Vector3 d = corners[i] - cameraEye;
+                float len = d.Length();
+                if (len > ShadowDistance)
+                    corners[i] = cameraEye + d * (ShadowDistance / len);
+            }
+
+            // Scene centroid used to anchor the light eye
+            Vector3 sceneCenter = Vector3.Zero;
+            for (int i = 0; i < 8; i++) sceneCenter += corners[i];
+            sceneCenter /= 8f;
+
+            // Light view: camera above scene looking toward scene center
+            Vector3 lightEye = sceneCenter + toLight * ShadowDistance;
+            Matrix4x4 lightView = Matrix4x4.CreateLookAt(lightEye, sceneCenter, up);
+
+            // Compute tight AABB of clamped frustum corners in light view space
+            float minX = float.MaxValue, maxX = float.MinValue;
+            float minY = float.MaxValue, maxY = float.MinValue;
+            float minZ = float.MaxValue, maxZ = float.MinValue;
+            for (int i = 0; i < 8; i++)
+            {
+                var lv = Vector3.Transform(corners[i], lightView);
+                if (lv.X < minX) minX = lv.X; if (lv.X > maxX) maxX = lv.X;
+                if (lv.Y < minY) minY = lv.Y; if (lv.Y > maxY) maxY = lv.Y;
+                if (lv.Z < minZ) minZ = lv.Z; if (lv.Z > maxZ) maxZ = lv.Z;
+            }
+
+            const float Pad = 5f;
+            minX -= Pad; maxX += Pad;
+            minY -= Pad; maxY += Pad;
+
+            // Right-handed view: objects in front have negative Z.
+            // near = distance to closest frustum face, far = farthest + extra for off-screen casters.
+            float near = MathF.Max(0.1f, -maxZ);
+            float far  = -minZ + DepthExtension;
+
+            Matrix4x4 proj = Matrix4x4.CreateOrthographicOffCenter(minX, maxX, minY, maxY, near, far);
+            return lightView * proj;
         }
 
         private static Matrix4x4 BuildSpotShadowViewProj(Vector3 position, Vector3 direction, float range, float outerAngleRad)
