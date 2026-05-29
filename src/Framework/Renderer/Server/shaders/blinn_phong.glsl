@@ -145,36 +145,18 @@ float sample_dir_shadow(float atlas_slice, float bias)
 #endif
     vec2 texel = 1.0 / vec2(textureSize(sampler2DArray(shadow_atlas, shadow_atlas_smp), 0).xy);
 
-#if defined(SHADOWS_HIGH)
-    // 3x3 PCF
+    // 5x5 PCF with 1.5-texel spacing — 25 samples, smooth soft shadow edges
+    const float spread = 1.5;
     float vis = 0.0;
-    for (int y = -1; y <= 1; y++) {
-        for (int x = -1; x <= 1; x++) {
-            vec2 suv = uv + vec2(float(x), float(y)) * texel;
+    for (int y = -2; y <= 2; y++) {
+        for (int x = -2; x <= 2; x++) {
+            vec2 suv = uv + vec2(float(x), float(y)) * texel * spread;
             vis += texture(
                 sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
                 vec4(suv, atlas_slice, receiver_depth - bias));
         }
     }
-    return vis / 9.0;
-#elif defined(SHADOWS_MID)
-    // 2x2 PCF
-    float vis = 0.0;
-    for (int y = 0; y <= 1; y++) {
-        for (int x = 0; x <= 1; x++) {
-            vec2 suv = uv + (vec2(float(x), float(y)) - vec2(0.5)) * texel;
-            vis += texture(
-                sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
-                vec4(suv, atlas_slice, receiver_depth - bias));
-        }
-    }
-    return vis / 4.0;
-#else
-    // 1-tap fallback
-    return texture(
-        sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
-        vec4(uv, atlas_slice, receiver_depth - bias));
-#endif
+    return vis / 25.0;
 }
 
 float sample_spot_shadow(float atlas_slice, float bias)
