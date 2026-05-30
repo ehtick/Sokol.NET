@@ -45,6 +45,7 @@ namespace GameEditor.Framework.Renderer.Server
         private static readonly ShadowAtlas        _shadowAtlas = new();
         private static readonly CubeShadowArray    _cubeShadows = new();
         private static readonly ShadowPass         _shadowPass  = new();
+        private static readonly ShadowDebugPass     _shadowDebugPass = new();
         private static readonly RenderView?[]      _views       = new RenderView[RenderingConstants.MAX_VIEWS];
         private static sg_sampler _shadowSampler;
         private static sg_sampler _cubeShadowSampler;
@@ -74,6 +75,15 @@ namespace GameEditor.Framework.Renderer.Server
 
         // Shadow quality: 0 = 1-tap sharp, 1 = 3×3 PCF medium (default), 2 = 5×5 PCF soft.
         public static int ShadowQuality { get; set; } = 1;
+
+        /// <summary>
+        /// When true, draws a debug overlay showing one shadow atlas slice in the scene view.
+        /// Toggle from code or via the editor debug toolbar.
+        /// </summary>
+        public static bool ShowShadowAtlasDebug { get; set; } = true;
+
+        /// <summary>Atlas slice to visualise (0–3 directional cascades, 4–11 spot lights).</summary>
+        public static int ShadowAtlasDebugSlice { get; set; } = 4;
         private static Matrix4x4 _directionalShadowViewProj;
         private static readonly int[] _spotShadowTopIndices = new int[ShadowAtlas.SpotSlices];
         private static readonly float[] _spotShadowTopScores = new float[ShadowAtlas.SpotSlices];
@@ -94,6 +104,7 @@ namespace GameEditor.Framework.Renderer.Server
             _shadowAtlas.Init();
             _cubeShadows.Init();
             _shadowPass.Init();
+            _shadowDebugPass.Init();
             _shadowSampler = sg_make_sampler(new sg_sampler_desc
             {
                 min_filter = sg_filter.SG_FILTER_NEAREST,
@@ -124,6 +135,7 @@ namespace GameEditor.Framework.Renderer.Server
             _meshReg.Shutdown();
             _texCache.Shutdown();
             _shadowPass.Shutdown();
+            _shadowDebugPass.Shutdown();
             _cubeShadows.Shutdown();
             _shadowAtlas.Shutdown();
             if (_shadowSampler.id != 0)
@@ -371,6 +383,20 @@ namespace GameEditor.Framework.Renderer.Server
         }
 
         public static void EndFrame() { }
+
+        /// <summary>
+        /// Draws a shadow atlas debug overlay in the bottom-right corner.
+        /// Must be called inside an active <c>sg_begin_pass / sg_end_pass</c>.
+        /// </summary>
+        public static void DrawShadowAtlasDebug(int rtWidth, int rtHeight)
+        {
+            if (!_initialized || !ShowShadowAtlasDebug) return;
+            int size = System.Math.Min(rtWidth, rtHeight) / 4;
+            int x    = rtWidth  - size - 8;
+            int y    = rtHeight - size - 8;
+            _shadowDebugPass.Draw(_shadowAtlas.TextureView,
+                ShadowAtlasDebugSlice, x, y, size, rtWidth, rtHeight);
+        }
 
         // ── Helpers ──────────────────────────────────────────────────────────────────────
 
@@ -691,8 +717,16 @@ namespace GameEditor.Framework.Renderer.Server
                 up = Vector3.UnitZ;
 
             float fov = MathF.Max(outerAngleRad * 2f, 0.1f);
+            float farPlane  = MathF.Max(range, 0.1f);
+            // Perspective shadow depth is highly non-linear: a tiny near plane pushes
+            // nearly the whole [0,1] depth range into the first few percent of distance,
+            // which inflates the effective world-space depth bias near the far plane and
+            // makes short occluders (e.g. a cube on the floor) stop casting shadows.
+            // Keep the near plane as large as the range allows to preserve precision.
+            // (Orthographic directional shadows have linear depth and don't need this.)
+            float nearPlane = MathF.Max(0.5f, farPlane * 0.1f);
             Matrix4x4 view = Matrix4x4.CreateLookAt(position, target, up);
-            Matrix4x4 proj = Matrix4x4.CreatePerspectiveFieldOfView(fov, 1f, 0.05f, MathF.Max(range, 0.1f));
+            Matrix4x4 proj = Matrix4x4.CreatePerspectiveFieldOfView(fov, 1f, nearPlane, farPlane);
             return view * proj;
         }
 
@@ -710,8 +744,12 @@ namespace GameEditor.Framework.Renderer.Server
                 default: dir = -Vector3.UnitZ; up = -Vector3.UnitY; break;
             }
 
+            // See BuildSpotShadowViewProj: a larger near plane preserves perspective
+            // depth precision so the constant shader bias stays small in world space.
+            float farPlane  = MathF.Max(range, 0.1f);
+            float nearPlane = MathF.Max(0.5f, farPlane * 0.1f);
             Matrix4x4 view = Matrix4x4.CreateLookAt(position, position + dir, up);
-            Matrix4x4 proj = Matrix4x4.CreatePerspectiveFieldOfView(MathF.PI * 0.5f, 1f, 0.05f, MathF.Max(range, 0.1f));
+            Matrix4x4 proj = Matrix4x4.CreatePerspectiveFieldOfView(MathF.PI * 0.5f, 1f, nearPlane, farPlane);
             return view * proj;
         }
 
