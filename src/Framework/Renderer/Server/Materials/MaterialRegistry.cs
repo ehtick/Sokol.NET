@@ -81,6 +81,22 @@ namespace GameEditor.Framework.Renderer.Server.Materials
             => _byPath.TryGetValue(key, out var m) ? m.Id : (ushort)0;
 
         /// <summary>
+        /// Returns the id of the first material registered from the given MTL file.
+        /// <paramref name="mtlPath"/> may be a full/relative path or just a filename —
+        /// only the filename part is compared against the "filename#materialName" registry keys.
+        /// Returns 0 if no material from that file is registered.
+        /// </summary>
+        public ushort GetFirstIdByMtlFile(string mtlPath)
+        {
+            string fname  = System.IO.Path.GetFileName(mtlPath);
+            string prefix = fname + "#";
+            foreach (var (key, mat) in _byPath)
+                if (key.StartsWith(prefix, StringComparison.Ordinal))
+                    return mat.Id;
+            return 0;
+        }
+
+        /// <summary>
         /// Returns the unique set of texture paths (Assets-relative or absolute) that were
         /// referenced by materials registered under <paramref name="mtlFilePath"/>.  These may
         /// have been left as GPU placeholders when LoadMtl was called without a fileLoader.

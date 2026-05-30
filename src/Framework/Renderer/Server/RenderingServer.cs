@@ -225,9 +225,17 @@ namespace GameEditor.Framework.Renderer.Server
                     MeshRenderer.NoMaterialSentinel,
                     StringComparison.Ordinal);
 
-                ushort matId = (string.IsNullOrEmpty(mr.MaterialPath) || disableSubMeshMaterial)
-                    ? (ushort)0
-                    : _matReg.GetIdByKey(mr.MaterialPath);
+                ushort matId;
+                if (string.IsNullOrEmpty(mr.MaterialPath) || disableSubMeshMaterial)
+                {
+                    matId = 0;
+                }
+                else
+                {
+                    matId = _matReg.GetIdByKey(mr.MaterialPath);
+                    if (matId == 0)
+                        matId = _matReg.GetFirstIdByMtlFile(mr.MaterialPath);
+                }
                 ushort drawFlags = disableSubMeshMaterial ? DrawFlagDisableSubMeshMaterial : (ushort)0;
 
                 Matrix4x4 model = Transform.GetWorldMatrix(world, tf);
