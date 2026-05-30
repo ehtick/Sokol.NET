@@ -57,7 +57,8 @@ public sealed class FocusManager
 
     private static void Flatten(Widget w, System.Collections.Generic.List<Widget> list)
     {
-        if (w.Enabled && w.Visible && w.AcceptsFocus) list.Add(w);
+        if (!w.Visible || !w.Enabled) return;   // don't traverse hidden/disabled subtrees
+        if (w.AcceptsFocus) list.Add(w);
         foreach (var c in w.FocusTraversalChildren) Flatten(c, list);
     }
 }

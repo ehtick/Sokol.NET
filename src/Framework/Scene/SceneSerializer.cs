@@ -72,7 +72,8 @@ namespace GameEditor.Framework.Scene
                       .Append(",\"Far\":").Append(F(cam.FarZ))
                       .Append(",\"Main\":").Append(cam.IsMain ? "true" : "false")
                       .Append(",\"Ortho\":").Append(cam.IsOrthographic ? "true" : "false")
-                      .Append(",\"OrthoSize\":").Append(F(cam.OrthoSize)).Append('}');
+                      .Append(",\"OrthoSize\":").Append(F(cam.OrthoSize))
+                      .Append(",\"Enabled\":").Append(cam.Enabled ? "true" : "false").Append('}');
                 }
 
                 if (world.TryGetComponent<LightComponent>(id, out var lt))
@@ -84,7 +85,8 @@ namespace GameEditor.Framework.Scene
                       .Append(",\"Range\":").Append(F(lt.Range))
                       .Append(",\"Inner\":").Append(F(lt.InnerAngle))
                         .Append(",\"Outer\":").Append(F(lt.OuterAngle))
-                        .Append(",\"CastSh\":").Append(lt.CastsShadows ? "true" : "false").Append('}');
+                      .Append(",\"CastSh\":").Append(lt.CastsShadows ? "true" : "false")
+                        .Append(",\"Enabled\":").Append(lt.Enabled ? "true" : "false").Append('}');
                 }
 
                 if (world.TryGetComponent<RigidbodyComponent>(id, out var rb))
@@ -332,7 +334,8 @@ namespace GameEditor.Framework.Scene
                         FarZ           = camEl.GetProperty("Far").GetSingle(),
                         IsMain         = camEl.GetProperty("Main").GetBoolean(),
                         IsOrthographic = camEl.TryGetProperty("Ortho", out var orthoEl) && orthoEl.GetBoolean(),
-                        OrthoSize      = camEl.TryGetProperty("OrthoSize", out var osEl) ? osEl.GetSingle() : 5f
+                        OrthoSize      = camEl.TryGetProperty("OrthoSize", out var osEl) ? osEl.GetSingle() : 5f,
+                        Enabled        = !camEl.TryGetProperty("Enabled", out var camEnEl) || camEnEl.GetBoolean(),
                     });
 
                 if (c.TryGetProperty("Light", out var ltEl))
@@ -345,6 +348,7 @@ namespace GameEditor.Framework.Scene
                         InnerAngle = ltEl.TryGetProperty("Inner", out var innerEl) ? innerEl.GetSingle() : 25f,
                         OuterAngle = ltEl.TryGetProperty("Outer", out var outerEl) ? outerEl.GetSingle() : 35f,
                         CastsShadows = !ltEl.TryGetProperty("CastSh", out var castShEl) || castShEl.GetBoolean(),
+                        Enabled      = !ltEl.TryGetProperty("Enabled", out var ltEnEl) || ltEnEl.GetBoolean(),
                     });
 
                 if (c.TryGetProperty("Rigidbody", out var rbEl))

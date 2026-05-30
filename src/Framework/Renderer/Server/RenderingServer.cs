@@ -424,6 +424,7 @@ namespace GameEditor.Framework.Renderer.Server
                 Entity lid = world.Entities[li];
                 if (!world.TryGetComponent<ActiveFlag>(lid, out var la) || !la.Active) continue;
                 if (!world.TryGetComponent<LightComponent>(lid, out var lc)) continue;
+                if (!lc.Enabled) continue;
                 if (!world.TryGetComponent<Transform>(lid, out var lt)) continue;
 
                 Matrix4x4 lightWorld = Transform.GetWorldMatrix(world, lt);

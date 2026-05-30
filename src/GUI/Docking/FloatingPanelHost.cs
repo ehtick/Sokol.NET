@@ -42,6 +42,16 @@ public sealed class FloatingPanelHost : Widget
         return ok;
     }
 
+    // Expose floating panel content widgets so FocusManager can Tab-traverse into them.
+    public override IEnumerable<Widget> FocusTraversalChildren
+    {
+        get
+        {
+            foreach (var c in base.FocusTraversalChildren) yield return c;
+            foreach (var p in _panels) yield return p.Content;
+        }
+    }
+
     public DockPanel? HitTestPanel(Vector2 screenPoint)
     {
         for (int i = _panels.Count - 1; i >= 0; i--)

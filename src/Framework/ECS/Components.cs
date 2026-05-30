@@ -109,6 +109,7 @@ namespace GameEditor.Framework.ECS.Components
         public bool IsMain;
         public bool IsOrthographic;
         public float OrthoSize;   // half-height in world units (ortho mode only)
+        public bool Enabled;      // when false the camera does not render
     }
 
     public enum LightType { Directional, Point, Spot }
@@ -122,6 +123,7 @@ namespace GameEditor.Framework.ECS.Components
         public float InnerAngle;  // spot only — half-angle of inner cone, degrees (default 25)
         public float OuterAngle;  // spot only — half-angle of outer cone, degrees (default 35)
         public bool CastsShadows;
+        public bool Enabled;      // when false the light does not contribute to scene lighting
     }
 
     public struct RigidbodyComponent

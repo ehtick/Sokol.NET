@@ -52,6 +52,21 @@ public sealed class DockSpace : Widget
 
     internal void RaiseTreeChanged() => TreeChanged?.Invoke();
 
+    // Expose active panel content widgets so FocusManager can Tab-traverse into them.
+    public override IEnumerable<Widget> FocusTraversalChildren
+    {
+        get
+        {
+            foreach (var c in base.FocusTraversalChildren) yield return c;
+            foreach (var leaf in Root.EnumerateLeaves())
+            {
+                int idx = leaf.ActivePanelIndex;
+                if (idx >= 0 && idx < leaf.Panels.Count)
+                    yield return leaf.Panels[idx].Content;
+            }
+        }
+    }
+
     // ─── Public tree operations ──────────────────────────────────────────────
 
     public DockNode AddPanel(DockPanel panel, DockNode? target = null, DockDropZone zone = DockDropZone.Center)
