@@ -203,12 +203,15 @@ float sample_spot_shadow(float atlas_slice, float bias)
     vec2 texel = 1.0 / vec2(textureSize(sampler2DArray(shadow_atlas, shadow_atlas_smp), 0).xy);
 
     // shadow_quality (cam_pos_pad.w): 0=1-tap sharp, 1=3x3 PCF medium, 2=5x5 PCF soft
+    // Spot atlas slices pack a tight cone into 2048px, so each texel covers far less
+    // world space than a directional cascade — the directional kernel spacing produces
+    // a sub-pixel (invisible) penumbra here. Widen it so the quality levels are visible.
     float shadow_q = cam_pos_pad.w;
     if (shadow_q >= 2.0) {
         float vis = 0.0;
         for (int y = -2; y <= 2; y++)
             for (int x = -2; x <= 2; x++) {
-                vec2 suv = uv + vec2(float(x), float(y)) * texel * 1.5;
+                vec2 suv = uv + vec2(float(x), float(y)) * texel * 4.0;
                 vis += texture(sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
                                vec4(suv, atlas_slice, receiver_depth - bias));
             }
@@ -217,7 +220,7 @@ float sample_spot_shadow(float atlas_slice, float bias)
         float vis = 0.0;
         for (int y = -1; y <= 1; y++)
             for (int x = -1; x <= 1; x++) {
-                vec2 suv = uv + vec2(float(x), float(y)) * texel;
+                vec2 suv = uv + vec2(float(x), float(y)) * texel * 2.5;
                 vis += texture(sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
                                vec4(suv, atlas_slice, receiver_depth - bias));
             }
