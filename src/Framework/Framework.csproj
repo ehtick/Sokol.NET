@@ -14,9 +14,8 @@
     <NoWarn>$(NoWarn);IL2026;IL2067;IL2070;IL2072;IL2077</NoWarn>
   </PropertyGroup>
 
-  <!-- SceneRenderer / GridRenderer stay excluded: they depend on project-specific phong shaders -->
+  <!-- GridRenderer stays excluded: depends on project-specific phong shaders -->
   <ItemGroup>
-    <Compile Remove="Renderer/SceneRenderer.cs" />
     <Compile Remove="Renderer/GridRenderer.cs" />
   </ItemGroup>
 

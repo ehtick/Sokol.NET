@@ -26,6 +26,10 @@ using GameEditor.Framework.ECS.Components;
 using GameEditor.Framework.Renderer.Server.Lighting;
 using GameEditor.Framework.Renderer.Server.Materials;
 using GameEditor.Framework.Renderer.Server.Passes;
+using GameEditor.Framework.Renderer.Server.Concurrency;
+using GameEditor.Framework.Renderer.Server.Culling;
+using GameEditor.Framework.Renderer.Server.Lod;
+using GameEditor.Framework.Renderer.Server.Profiling;
 using GameEditor.Framework.Renderer.Server.Resources;
 
 namespace GameEditor.Framework.Renderer.Server
@@ -59,6 +63,9 @@ namespace GameEditor.Framework.Renderer.Server
         private static readonly uint[]     _sortKeys   = new uint[RenderingConstants.MAX_DRAWS];
         private static readonly int[]      _sortOrder  = new int[RenderingConstants.MAX_DRAWS];
         private static readonly DrawSorter _drawSorter = new();
+
+        // ── M3: frustum culling ───────────────────────────────────────────────────────────
+        private static readonly int[]  _visible = new int[RenderingConstants.MAX_DRAWS];
 
         // Top-N light selection scratch (M2): keep the highest-importance lights only.
         private static readonly Light[] _topLights = new Light[RenderingConstants.MAX_LIGHTS];
@@ -180,13 +187,16 @@ namespace GameEditor.Framework.Renderer.Server
             _lightBuf.Reset();
             _stats.Reset();
             _drawCount = 0;
+            FrameProfiler.BeginFrame();
         }
 
         public static void RenderShadowMaps(in Matrix4x4 viewProj)
         {
             if (!_initialized) return;
 
+            FrameProfiler.Begin(FrameProfiler.Zone.ShadowPass);
             CollectLightsAndShadows(ECSWorld.Instance, in viewProj, renderShadowPasses: true);
+            FrameProfiler.End(FrameProfiler.Zone.ShadowPass);
         }
 
         public static void SubmitView(
@@ -208,6 +218,7 @@ namespace GameEditor.Framework.Renderer.Server
 
             // ── 2. Extract draw commands ──────────────────────────────────────────────────
 
+            FrameProfiler.Begin(FrameProfiler.Zone.EcsExtract);
             _drawCount = 0;
             for (int ei = 0; ei < world.Entities.Count; ei++)
             {
@@ -238,44 +249,66 @@ namespace GameEditor.Framework.Renderer.Server
                 }
                 ushort drawFlags = disableSubMeshMaterial ? DrawFlagDisableSubMeshMaterial : (ushort)0;
 
-                Matrix4x4 model = Transform.GetWorldMatrix(world, tf);
+                Matrix4x4 model    = Transform.GetWorldMatrix(world, tf);
+                Aabb worldAabb      = meshRes.LocalBounds.Transform(model);
+                float worldRadius   = worldAabb.Extents.Length();
+                float dist          = Vector3.Distance(cameraPos, worldAabb.Center);
+                int lodIndex        = LodSelector.Pick(worldRadius, dist, 0);
+                if (lodIndex == LodSelector.Skip) { _stats.Culled++; continue; }
 
-                _cmds[_drawCount]    = new DrawCommand(meshRes.Id, matId, drawFlags, 0, 0u, tf.Position, 1f);
+                ushort lodMask = (ushort)(drawFlags | (ushort)lodIndex);
+                _cmds[_drawCount]    = new DrawCommand(meshRes.Id, matId, lodMask, 0, 0u, worldAabb.Center, worldRadius);
                 _cpuInst[_drawCount] = new InstanceData(
                     in model,
                     new Vector4(1f, 1f, 1f, mr.ReceivesShadows ? 1f : 0f));
                 _drawCount++;
             }
 
+            FrameProfiler.End(FrameProfiler.Zone.EcsExtract);
             if (_drawCount == 0) return;
 
-            // ── 3. Sort by (MaterialId << 16 | MeshId) ───────────────────────────────────
+            // ── 2b. Frustum cull (parallel on non-WASM) ───────────────────────────────────
 
-            for (int j = 0; j < _drawCount; j++)
+            var frustum = Frustum.ExtractFromViewProj(in viewProj);
+            FrameProfiler.Begin(FrameProfiler.Zone.ParallelCull);
+            ParallelCuller.Run(in frustum, _cmds, _drawCount, _visible, out int visibleCount);
+            FrameProfiler.End(FrameProfiler.Zone.ParallelCull);
+            _stats.Culled += _drawCount - visibleCount;
+            if (visibleCount == 0) return;
+
+            // ── 3. Sort visible commands by (MaterialId | MeshId) ─────────────────────────
+
+            FrameProfiler.Begin(FrameProfiler.Zone.Sort);
+            for (int j = 0; j < visibleCount; j++)
             {
-                uint noMatBit = (_cmds[j].LodMask & DrawFlagDisableSubMeshMaterial) != 0 ? 1u : 0u;
-                _sortKeys[j]  = (uint)(_cmds[j].MaterialId << 17 | noMatBit << 16 | _cmds[j].MeshId);
-                _sortOrder[j] = j;
+                int idx = _visible[j];
+                uint noMatBit = (_cmds[idx].LodMask & DrawFlagDisableSubMeshMaterial) != 0 ? 1u : 0u;
+                _sortKeys[idx]  = (uint)(_cmds[idx].MaterialId << 17 | noMatBit << 16 | _cmds[idx].MeshId);
+                _sortOrder[j] = idx;
             }
-            Array.Sort(_sortOrder, 0, _drawCount, _drawSorter);
+            Array.Sort(_sortOrder, 0, visibleCount, _drawSorter);
+            FrameProfiler.End(FrameProfiler.Zone.Sort);
 
             // ── 4. Write instance data in sorted order; ONE sg_append_buffer per view ──────
 
+            FrameProfiler.Begin(FrameProfiler.Zone.InstanceWrite);
             _instanceBuf.ResetStaging();
-            for (int j = 0; j < _drawCount; j++)
+            int submitCount = visibleCount;
+            for (int j = 0; j < visibleCount; j++)
             {
                 if (!_instanceBuf.TryAppend(in _cpuInst[_sortOrder[j]]))
                 {
 #if DEBUG
-                    _stats.InstancesDropped += _drawCount - j;
+                    _stats.InstancesDropped += visibleCount - j;
 #endif
-                    _drawCount = j;  // clamp: group-walking loop must not exceed staged range
+                    submitCount = j;  // clamp: group-walking loop must not exceed staged range
                     break;
                 }
             }
-            if (_drawCount == 0) return;
+            if (submitCount == 0) { FrameProfiler.End(FrameProfiler.Zone.InstanceWrite); return; }
             int instanceBaseByteOffset = _instanceBuf.Flush();
-            _stats.InstancesSubmitted += _drawCount;
+            _stats.InstancesSubmitted += submitCount;
+            FrameProfiler.End(FrameProfiler.Zone.InstanceWrite);
 
             // ── 5. Camera position from inverse VP ────────────────────────────────────────
 
@@ -288,10 +321,11 @@ namespace GameEditor.Framework.Renderer.Server
 
             // ── 6. Walk sorted groups ─────────────────────────────────────────────────────
 
+            FrameProfiler.Begin(FrameProfiler.Zone.DrawCalls);
             int instanceOffset = 0;
             int i = 0;
 
-            while (i < _drawCount)
+            while (i < submitCount)
             {
                 int firstIdx = _sortOrder[i];
                 ushort curMat  = _cmds[firstIdx].MaterialId;
@@ -299,7 +333,7 @@ namespace GameEditor.Framework.Renderer.Server
                   bool disableSubMeshMaterial = (_cmds[firstIdx].LodMask & DrawFlagDisableSubMeshMaterial) != 0;
 
                 int groupSize = 0;
-                while (i + groupSize < _drawCount
+                while (i + groupSize < submitCount
                        && _cmds[_sortOrder[i + groupSize]].MaterialId == curMat
                       && _cmds[_sortOrder[i + groupSize]].MeshId     == curMesh
                       && ((_cmds[_sortOrder[i + groupSize]].LodMask & DrawFlagDisableSubMeshMaterial) != 0) == disableSubMeshMaterial)
@@ -388,9 +422,10 @@ namespace GameEditor.Framework.Renderer.Server
                 instanceOffset += groupSize;
                 i += groupSize;
             }
+            FrameProfiler.End(FrameProfiler.Zone.DrawCalls);
         }
 
-        public static void EndFrame() { }
+        public static void EndFrame() { FrameProfiler.EndFrame(); }
 
         /// <summary>
         /// Draws a shadow atlas debug overlay in the bottom-right corner.
