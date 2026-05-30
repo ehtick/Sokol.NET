@@ -80,7 +80,7 @@ namespace GameEditor.Framework.Renderer.Server
         /// When true, draws a debug overlay showing one shadow atlas slice in the scene view.
         /// Toggle from code or via the editor debug toolbar.
         /// </summary>
-        public static bool ShowShadowAtlasDebug { get; set; } = true;
+        public static bool ShowShadowAtlasDebug { get; set; } = false;
 
         /// <summary>Atlas slice to visualise (0–3 directional cascades, 4–11 spot lights).</summary>
         public static int ShadowAtlasDebugSlice { get; set; } = 4;
