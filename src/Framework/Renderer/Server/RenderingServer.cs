@@ -486,9 +486,9 @@ namespace GameEditor.Framework.Renderer.Server
                 }
             }
 
-            if (hasDirectionalShadowLight)
+            if (hasDirectionalShadowLight && TryComputeCasterBounds(world, out var casterMin, out var casterMax))
             {
-                _directionalShadowViewProj = BuildDirectionalShadowViewProj(in bestDirectionalShadowLight, in cameraViewProj);
+                _directionalShadowViewProj = BuildDirectionalShadowViewProj(in bestDirectionalShadowLight, casterMin, casterMax);
                 _hasDirectionalShadow = true;
                 if (renderShadowPasses)
                     _shadowPass.RenderDirectional(world, _meshReg, _shadowAtlas, 0, in _directionalShadowViewProj);
@@ -638,75 +638,78 @@ namespace GameEditor.Framework.Renderer.Server
             return entityMat as BlinnPhongMaterial;
         }
 
-        private static Matrix4x4 BuildDirectionalShadowViewProj(in Light light, in Matrix4x4 cameraViewProj)
+        private static Matrix4x4 BuildDirectionalShadowViewProj(in Light light, Vector3 casterMin, Vector3 casterMax)
         {
-            const float ShadowDistance = 120f; // max shadow render distance from camera
-            const float DepthExtension  = 50f;  // extra depth behind scene for off-screen casters
+            const float DepthExtension = 50f; // extra depth behind casters so receivers (e.g. the floor) stay in range
+            const float Pad            = 2f;  // world-space margin so grazing-angle shadows aren't clipped
 
             Vector3 toLight = Vector3.Normalize(-light.Direction);
             Vector3 up = Vector3.UnitY;
             if (MathF.Abs(Vector3.Dot(up, toLight)) > 0.98f)
                 up = Vector3.UnitZ;
 
-            // Un-project the 8 camera NDC frustum corners to world space.
-            // Metal NDC: x,y ∈ [-1,1], z ∈ [0,1]
-            Matrix4x4.Invert(cameraViewProj, out var invVP);
-            Span<Vector3> corners = stackalloc Vector3[8];
-            int ci = 0;
-            for (int zi = 0; zi <= 1; zi++)
-                for (int yi = -1; yi <= 1; yi += 2)
-                    for (int xi = -1; xi <= 1; xi += 2)
-                    {
-                        var clip = new Vector4(xi, yi, zi, 1f);
-                        var w = Vector4.Transform(clip, invVP);
-                        corners[ci++] = new Vector3(w.X, w.Y, w.Z) / w.W;
-                    }
+            // Fit the ortho frustum tightly to the shadow-casting geometry rather than the
+            // camera frustum. The camera frustum can be 100+ units across, which wastes
+            // almost the entire 2048² atlas slice on empty space and leaves the actual
+            // casters only a few dozen texels (pixelated shadows that PCF then smears).
+            // A bounding *sphere* keeps the box size constant as casters rotate, so the
+            // texel-snap below can remove shadow-edge crawl. This is also inherently
+            // camera-independent, so shadows never vanish as the camera pulls away.
+            Vector3 center = (casterMin + casterMax) * 0.5f;
+            float radius   = MathF.Max((casterMax - casterMin).Length() * 0.5f, 0.1f);
+            float boxHalf  = radius + Pad;
 
-            // Camera eye position from inverse view-projection
-            Vector3 cameraEye = new Vector3(invVP.M41, invVP.M42, invVP.M43);
+            Vector3 lightEye = center + toLight * (radius + DepthExtension);
+            Matrix4x4 lightView = Matrix4x4.CreateLookAt(lightEye, center, up);
 
-            // Clamp far corners to ShadowDistance from the camera eye so the
-            // shadow atlas covers nearby geometry regardless of camera distance.
-            for (int i = 0; i < 8; i++)
-            {
-                Vector3 d = corners[i] - cameraEye;
-                float len = d.Length();
-                if (len > ShadowDistance)
-                    corners[i] = cameraEye + d * (ShadowDistance / len);
-            }
+            Vector3 centerLS = Vector3.Transform(center, lightView);
 
-            // Scene centroid used to anchor the light eye
-            Vector3 sceneCenter = Vector3.Zero;
-            for (int i = 0; i < 8; i++) sceneCenter += corners[i];
-            sceneCenter /= 8f;
+            float minX = centerLS.X - boxHalf;
+            float minY = centerLS.Y - boxHalf;
 
-            // Light view: camera above scene looking toward scene center
-            Vector3 lightEye = sceneCenter + toLight * ShadowDistance;
-            Matrix4x4 lightView = Matrix4x4.CreateLookAt(lightEye, sceneCenter, up);
+            // Texel-snap the box origin in light space so edges don't crawl when casters move.
+            float worldPerTexel = (2f * boxHalf) / ShadowAtlas.SliceSize;
+            minX = MathF.Floor(minX / worldPerTexel) * worldPerTexel;
+            minY = MathF.Floor(minY / worldPerTexel) * worldPerTexel;
+            float maxX = minX + 2f * boxHalf;
+            float maxY = minY + 2f * boxHalf;
 
-            // Compute tight AABB of clamped frustum corners in light view space
-            float minX = float.MaxValue, maxX = float.MinValue;
-            float minY = float.MaxValue, maxY = float.MinValue;
-            float minZ = float.MaxValue, maxZ = float.MinValue;
-            for (int i = 0; i < 8; i++)
-            {
-                var lv = Vector3.Transform(corners[i], lightView);
-                if (lv.X < minX) minX = lv.X; if (lv.X > maxX) maxX = lv.X;
-                if (lv.Y < minY) minY = lv.Y; if (lv.Y > maxY) maxY = lv.Y;
-                if (lv.Z < minZ) minZ = lv.Z; if (lv.Z > maxZ) maxZ = lv.Z;
-            }
-
-            const float Pad = 5f;
-            minX -= Pad; maxX += Pad;
-            minY -= Pad; maxY += Pad;
-
-            // Right-handed view: objects in front have negative Z.
-            // near = distance to closest frustum face, far = farthest + extra for off-screen casters.
-            float near = MathF.Max(0.1f, -maxZ);
-            float far  = -minZ + DepthExtension;
+            // Right-handed light view: casters lie in front of the eye at negative Z.
+            float centerDepth = -centerLS.Z;
+            float near = MathF.Max(0.05f, centerDepth - radius - Pad);
+            float far  = centerDepth + radius + DepthExtension;
 
             Matrix4x4 proj = Matrix4x4.CreateOrthographicOffCenter(minX, maxX, minY, maxY, near, far);
             return lightView * proj;
+        }
+
+        /// <summary>
+        /// World-space AABB of all active, visible, shadow-casting meshes.
+        /// Returns false when the scene has no casters (directional shadows are then skipped).
+        /// </summary>
+        private static bool TryComputeCasterBounds(ECSWorld world, out Vector3 min, out Vector3 max)
+        {
+            min = new Vector3(float.MaxValue);
+            max = new Vector3(float.MinValue);
+            bool any = false;
+
+            for (int i = 0; i < world.Entities.Count; i++)
+            {
+                Entity id = world.Entities[i];
+                if (!world.TryGetComponent<ActiveFlag>(id, out var active) || !active.Active) continue;
+                if (!world.TryGetComponent<MeshRenderer>(id, out var mr) || !mr.Visible || !mr.CastsShadows) continue;
+                if (!world.TryGetComponent<Transform>(id, out var tf)) continue;
+
+                MeshResource? mesh = _meshReg.GetByPath(mr.MeshPath);
+                if (mesh == null) continue;
+
+                Aabb worldBounds = mesh.LocalBounds.Transform(Transform.GetWorldMatrix(world, tf));
+                min = Vector3.Min(min, worldBounds.Min);
+                max = Vector3.Max(max, worldBounds.Max);
+                any = true;
+            }
+
+            return any;
         }
 
         private static Matrix4x4 BuildSpotShadowViewProj(Vector3 position, Vector3 direction, float range, float outerAngleRad)
