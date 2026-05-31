@@ -122,6 +122,13 @@ public class TreeView : Widget
 
     // ─── Draw ────────────────────────────────────────────────────────────────
     private readonly List<(TreeNode node, float y, int depth)> _flatRows = [];
+    private TreeNode? _pendingScrollToNode;
+
+    /// <summary>
+    /// Requests that the tree scrolls to make <paramref name="node"/> visible
+    /// on the next Draw pass (safe to call before the flat-row list is built).
+    /// </summary>
+    public void ScrollToNode(TreeNode node) => _pendingScrollToNode = node;
 
     public override void Draw(Renderer renderer)
     {
@@ -136,6 +143,23 @@ public class TreeView : Widget
         float w   = Bounds.Width, h = Bounds.Height;
         float sb  = theme.ScrollBarWidth;
         float totalH = BuildFlatRows() * ItemHeight;
+
+        // Apply deferred scroll-to request (set via ScrollToNode before flat rows were built).
+        if (_pendingScrollToNode != null)
+        {
+            int si = _flatRows.FindIndex(r => r.node == _pendingScrollToNode);
+            if (si >= 0)
+            {
+                float itemY = si * ItemHeight;
+                float viewH = Bounds.Height;
+                float maxScr = MathF.Max(0f, totalH - viewH);
+                if (itemY < _scrollY)                        _scrollY = itemY;
+                else if (itemY + ItemHeight > _scrollY + viewH) _scrollY = itemY + ItemHeight - viewH;
+                _scrollY = Math.Clamp(_scrollY, 0f, maxScr);
+            }
+            _pendingScrollToNode = null;
+        }
+
         bool needSB  = totalH > h;
         bool rtl  = ResolvedFlowDirection == FlowDirection.RightToLeft;
         float sbLeft  = needSB && rtl  ? sb  : 0;   // RTL: scrollbar on the left
