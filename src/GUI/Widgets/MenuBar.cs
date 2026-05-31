@@ -16,6 +16,8 @@ public sealed class MenuItem
     public Action?       OnClick   { get; set; }
     /// <summary>Non-null → this item opens a sub-menu.</summary>
     public List<MenuItem>? SubItems { get; set; }
+    /// <summary>Called once when the sub-menu is about to be shown (populate SubItems here).</summary>
+    public Action?         OnOpen   { get; set; }
 }
 
 /// <summary>
@@ -31,8 +33,10 @@ public class MenuBar : Widget
     }
 
     private readonly List<MenuEntry> _menus   = [];
-    private int        _openIdx   = -1;   // index of open top-level menu
-    private int        _hoveredIdx = -1;  // hovered top-level entry
+    private int        _openIdx        = -1;   // index of open top-level menu
+    private int        _hoveredIdx     = -1;  // hovered top-level entry
+    private int        _openSubItemIdx = -1;  // index (in items list) of item with open sub-menu
+    private int        _subHoveredIdx  = -1;  // index of hovered item within the sub-menu
 
     public const float DefaultHeight = 26f;
 
@@ -117,8 +121,9 @@ public class MenuBar : Widget
 
         ApplyFont(renderer, theme);
         float y = ddY;
-        foreach (var item in items)
+        for (int i = 0; i < items.Count; i++)
         {
+            var item = items[i];
             if (item.IsSep)
             {
                 renderer.DrawLine(ddX + 6, y + sepH * 0.5f, ddX + ddW - 6, y + sepH * 0.5f,
@@ -126,8 +131,9 @@ public class MenuBar : Widget
                 y += sepH;
                 continue;
             }
-            var   rowR   = new Rect(ddX, y, ddW, itemH);
-            bool  isHov  = rowR.Contains(new Vector2(_lastMousePos.X, _lastMousePos.Y));
+            var  rowR       = new Rect(ddX, y, ddW, itemH);
+            bool isSubOpen  = i == _openSubItemIdx;
+            bool isHov      = isSubOpen || rowR.Contains(new Vector2(_lastMousePos.X, _lastMousePos.Y));
             if (isHov && item.Enabled)
                 renderer.FillRoundedRect(new Rect(ddX + 2, y, ddW - 4, itemH), 3f,
                     theme.SelectionColor);
@@ -136,20 +142,75 @@ public class MenuBar : Widget
             renderer.SetTextAlign(TextHAlign.Left);
             renderer.DrawText(ddX + 10, y + itemH * 0.5f, item.Label, textC);
 
-            if (!string.IsNullOrEmpty(item.Shortcut))
+            if (item.SubItems != null && item.SubItems.Count > 0)
             {
                 renderer.SetTextAlign(TextHAlign.Right);
-                renderer.DrawText(ddX + ddW - 10, y + itemH * 0.5f,
-                    item.Shortcut, theme.TextMutedColor);
+                renderer.DrawText(ddX + ddW - 8, y + itemH * 0.5f, "▶", textC);
             }
-
-            if (item.IsChecked)
+            else
             {
-                renderer.SetTextAlign(TextHAlign.Left);
-                renderer.DrawText(ddX + ddW - 18, y + itemH * 0.5f, "✓", theme.AccentColor);
+                if (!string.IsNullOrEmpty(item.Shortcut))
+                {
+                    renderer.SetTextAlign(TextHAlign.Right);
+                    renderer.DrawText(ddX + ddW - 10, y + itemH * 0.5f,
+                        item.Shortcut, theme.TextMutedColor);
+                }
+                if (item.IsChecked)
+                {
+                    renderer.SetTextAlign(TextHAlign.Left);
+                    renderer.DrawText(ddX + ddW - 18, y + itemH * 0.5f, "✓", theme.AccentColor);
+                }
             }
 
             y += itemH;
+        }
+
+        // ── Sub-menu panel ───────────────────────────────────────────────────
+        if (_openSubItemIdx >= 0 && _openSubItemIdx < items.Count)
+        {
+            var subRect = CalcSubMenuRect(_openSubItemIdx, renderer);
+            if (subRect.HasValue)
+            {
+                var  sr       = subRect.Value;
+                var  subItems = items[_openSubItemIdx].SubItems!;
+                float subW    = sr.Width;
+
+                renderer.DrawDropShadow(sr, 4f, new Vector2(2f, 3f), 8f,
+                    new UIColor(0f, 0f, 0f, 0.25f));
+                renderer.FillRoundedRect(sr, 4f, theme.SurfaceVariant);
+                renderer.StrokeRoundedRect(sr, 4f, 1f, theme.BorderColor);
+
+                float sy = sr.Y;
+                for (int j = 0; j < subItems.Count; j++)
+                {
+                    var sit = subItems[j];
+                    if (sit.IsSep)
+                    {
+                        renderer.DrawLine(sr.X + 6, sy + sepH * 0.5f, sr.X + subW - 6, sy + sepH * 0.5f,
+                            1f, theme.BorderColor.WithAlpha(0.5f));
+                        sy += sepH;
+                        continue;
+                    }
+                    var  sRowR = new Rect(sr.X, sy, subW, itemH);
+                    bool sHov  = j == _subHoveredIdx || sRowR.Contains(new Vector2(_lastMousePos.X, _lastMousePos.Y));
+                    if (sHov && sit.Enabled)
+                        renderer.FillRoundedRect(new Rect(sr.X + 2, sy, subW - 4, itemH), 3f,
+                            theme.SelectionColor);
+
+                    var stextC = !sit.Enabled ? theme.TextDisabledColor : theme.TextColor;
+                    renderer.SetTextAlign(TextHAlign.Left);
+                    renderer.DrawText(sr.X + 10, sy + itemH * 0.5f, sit.Label, stextC);
+
+                    if (!string.IsNullOrEmpty(sit.Shortcut))
+                    {
+                        renderer.SetTextAlign(TextHAlign.Right);
+                        renderer.DrawText(sr.X + subW - 10, sy + itemH * 0.5f,
+                            sit.Shortcut, theme.TextMutedColor);
+                    }
+
+                    sy += itemH;
+                }
+            }
         }
     }
 
@@ -157,7 +218,7 @@ public class MenuBar : Widget
     {
         if (_openIdx >= 0)
         {
-            // Extend hit-test to include the drop-down area
+            // Extend hit-test to include the drop-down area (and sub-menu if open)
             var renderer = Screen.Instance?.Renderer;
             if (renderer != null)
             {
@@ -168,6 +229,12 @@ public class MenuBar : Widget
                 float ddX   = MenuHeaderX(_openIdx, renderer);
                 var   ddRect = new Rect(ddX, Bounds.Height, ddW, ddH);
                 if (ddRect.Contains(localPoint)) return true;
+                // Sub-menu area
+                if (_openSubItemIdx >= 0)
+                {
+                    var subRect = CalcSubMenuRect(_openSubItemIdx, renderer);
+                    if (subRect.HasValue && subRect.Value.Contains(localPoint)) return true;
+                }
             }
         }
         return base.HitTest(localPoint);
@@ -175,8 +242,10 @@ public class MenuBar : Widget
 
     public override void OnPopupDismiss()
     {
-        _openIdx    = -1;
-        _hoveredIdx = -1;
+        _openIdx        = -1;
+        _hoveredIdx     = -1;
+        _openSubItemIdx = -1;
+        _subHoveredIdx  = -1;
     }
 
     // ─── Input ───────────────────────────────────────────────────────────────
@@ -199,9 +268,64 @@ public class MenuBar : Widget
         // If a menu is open and user hovers another header → switch to it
         if (_openIdx >= 0 && idx >= 0 && idx != _openIdx)
         {
-            _openIdx    = idx;
-            _hoveredIdx = idx;
+            _openIdx        = idx;
+            _hoveredIdx     = idx;
+            _openSubItemIdx = -1;
+            _subHoveredIdx  = -1;
         }
+
+        // Track sub-menu state when a dropdown is open and no header is hovered
+        if (_openIdx >= 0 && idx < 0)
+        {
+            var renderer = Screen.Instance?.Renderer;
+            if (renderer != null)
+            {
+                var local = _lastMousePos;
+
+                // If in the sub-menu area, track which sub-item is hovered
+                if (_openSubItemIdx >= 0)
+                {
+                    var subRect = CalcSubMenuRect(_openSubItemIdx, renderer);
+                    if (subRect.HasValue && subRect.Value.Contains(local))
+                    {
+                        var   subItems = _menus[_openIdx].Items[_openSubItemIdx].SubItems!;
+                        float itemH = 26f, sepH = 8f;
+                        float sy    = subRect.Value.Y;
+                        _subHoveredIdx = -1;
+                        for (int j = 0; j < subItems.Count; j++)
+                        {
+                            float rowH = subItems[j].IsSep ? sepH : itemH;
+                            if (new Rect(subRect.Value.X, sy, subRect.Value.Width, rowH).Contains(local))
+                            { _subHoveredIdx = j; break; }
+                            sy += rowH;
+                        }
+                        return true;
+                    }
+                }
+
+                // In the main drop-down: update which sub-menu (if any) is open
+                int newSubIdx = GetDropItemIndex(local, renderer);
+                if (newSubIdx >= 0)
+                {
+                    var item = _menus[_openIdx].Items[newSubIdx];
+                    if (item.SubItems != null && item.SubItems.Count > 0)
+                    {
+                        if (_openSubItemIdx != newSubIdx)
+                        {
+                            _openSubItemIdx = newSubIdx;
+                            _subHoveredIdx  = -1;
+                            item.OnOpen?.Invoke();
+                        }
+                    }
+                    else
+                    {
+                        _openSubItemIdx = -1;
+                        _subHoveredIdx  = -1;
+                    }
+                }
+            }
+        }
+
         return true;
     }
 
@@ -217,11 +341,16 @@ public class MenuBar : Widget
             var renderer = Screen.Instance?.Renderer;
             if (renderer != null && HitDropItem(e.Position, renderer, out var item))
             {
+                // Sub-menu parent: keep menu open (sub-menu opens on hover, not click)
+                if (item != null && item.SubItems != null && item.SubItems.Count > 0)
+                    return true;
                 if (item != null && item.Enabled && !item.IsSep)
                     item.OnClick?.Invoke();
             }
-            _openIdx    = -1;
-            _hoveredIdx = -1;
+            _openIdx        = -1;
+            _hoveredIdx     = -1;
+            _openSubItemIdx = -1;
+            _subHoveredIdx  = -1;
             Screen.SetActivePopup(null);
             return true;
         }
@@ -272,17 +401,37 @@ public class MenuBar : Widget
     {
         item = null;
         if (_openIdx < 0) return false;
-        var local  = ToLocal(screenPos);
-        var items  = _menus[_openIdx].Items;
-        float itemH = 26f, sepH = 8f;
-        float ddW  = CalcDropWidth(items, renderer, ThemeManager.Current);
-        float ddX  = MenuHeaderX(_openIdx, renderer);
-        float ddY  = Bounds.Height;
+        var local = ToLocal(screenPos);
 
-        float y = ddY;
+        // Check sub-menu first (takes priority over the main dropdown)
+        if (_openSubItemIdx >= 0)
+        {
+            var subRect = CalcSubMenuRect(_openSubItemIdx, renderer);
+            if (subRect.HasValue && subRect.Value.Contains(local))
+            {
+                var   subItems = _menus[_openIdx].Items[_openSubItemIdx].SubItems!;
+                float itemH = 26f, sepH = 8f;
+                float sy    = subRect.Value.Y;
+                foreach (var it in subItems)
+                {
+                    float rowH = it.IsSep ? sepH : itemH;
+                    if (new Rect(subRect.Value.X, sy, subRect.Value.Width, rowH).Contains(local))
+                    { item = it; return true; }
+                    sy += rowH;
+                }
+                return false;
+            }
+        }
+
+        // Main dropdown
+        var items = _menus[_openIdx].Items;
+        float ddW = CalcDropWidth(items, renderer, ThemeManager.Current);
+        float ddX = MenuHeaderX(_openIdx, renderer);
+        float ddY = Bounds.Height;
+        float y   = ddY;
         foreach (var it in items)
         {
-            float rowH = it.IsSep ? sepH : itemH;
+            float rowH = it.IsSep ? 8f : 26f;
             var   rowR = new Rect(ddX, y, ddW, rowH);
             if (rowR.Contains(local)) { item = it; return true; }
             y += rowH;
@@ -297,7 +446,9 @@ public class MenuBar : Widget
         {
             if (it.IsSep) continue;
             float w = renderer.MeasureText(it.Label) + 20f;
-            if (!string.IsNullOrEmpty(it.Shortcut))
+            if (it.SubItems != null && it.SubItems.Count > 0)
+                w += 20f;  // space for ▶ arrow
+            else if (!string.IsNullOrEmpty(it.Shortcut))
                 w += renderer.MeasureText(it.Shortcut) + 20f;
             if (w > max) max = w;
         }
@@ -315,5 +466,44 @@ public class MenuBar : Widget
     {
         renderer.SetFont(Font?.Name ?? theme.DefaultFont);
         renderer.SetFontSize(FontSize > 0f ? FontSize : theme.SmallFontSize);
+    }
+
+    /// <summary>Returns the index of the drop-down item at <paramref name="localPos"/>, or -1.</summary>
+    private int GetDropItemIndex(Vector2 localPos, Renderer renderer)
+    {
+        if (_openIdx < 0) return -1;
+        var   items = _menus[_openIdx].Items;
+        float itemH = 26f, sepH = 8f;
+        float ddX   = MenuHeaderX(_openIdx, renderer);
+        float ddW   = CalcDropWidth(items, renderer, ThemeManager.Current);
+        float y     = Bounds.Height;
+        for (int i = 0; i < items.Count; i++)
+        {
+            float rowH = items[i].IsSep ? sepH : itemH;
+            if (new Rect(ddX, y, ddW, rowH).Contains(localPos)) return i;
+            y += rowH;
+        }
+        return -1;
+    }
+
+    /// <summary>Returns the screen-local rect of the sub-menu for the given parent item index, or null.</summary>
+    private Rect? CalcSubMenuRect(int parentIdx, Renderer renderer)
+    {
+        if (_openIdx < 0) return null;
+        var items = _menus[_openIdx].Items;
+        if (parentIdx < 0 || parentIdx >= items.Count) return null;
+        var parent = items[parentIdx];
+        if (parent.SubItems == null || parent.SubItems.Count == 0) return null;
+
+        float itemH = 26f, sepH = 8f;
+        float ddX   = MenuHeaderX(_openIdx, renderer);
+        float ddW   = CalcDropWidth(items, renderer, ThemeManager.Current);
+        float y     = Bounds.Height;
+        for (int i = 0; i < parentIdx; i++)
+            y += items[i].IsSep ? sepH : itemH;
+
+        float subW = CalcDropWidth(parent.SubItems, renderer, ThemeManager.Current);
+        float subH = CalcDropHeight(parent.SubItems, itemH, sepH);
+        return new Rect(ddX + ddW, y, subW, subH);
     }
 }
