@@ -30,6 +30,8 @@ namespace GameEditor.Framework.Renderer
 
         public Vector3 Center { get => _center; set => _center = value; }
         public float Distance { get => _distance; set => _distance = MathF.Max(0.01f, value); }
+        public float Yaw   { get => _yaw;   set => _yaw   = value; }
+        public float Pitch { get => _pitch; set => _pitch  = value; }
 
         public void Init(Vector3 center, float distance, float yaw = 0f, float pitch = 0.3f,
                          float fov = 60f, float nearZ = 0.1f, float farZ = 1000f)
