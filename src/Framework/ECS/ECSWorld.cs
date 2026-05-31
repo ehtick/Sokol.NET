@@ -33,8 +33,10 @@ namespace GameEditor.Framework.ECS
             if (e.IsAlive) e.Delete();
         }
 
-        public IReadOnlyList<Entity> Entities => _entities;
-
+        // Return the concrete List<Entity> to avoid IReadOnlyList<T> generic interface
+        // dispatch, which causes a "function signature mismatch" crash in WASM NativeAOT.
+        public List<Entity> Entities => _entities;
+        
         // ── Name lookup with ALC bridge ───────────────────────────────────────
         // When the game DLL runs in an isolated AssemblyLoadContext its ECSWorld
         // singleton has an empty _entities list.  GameAssemblyRunner calls

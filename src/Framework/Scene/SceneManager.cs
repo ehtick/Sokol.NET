@@ -108,6 +108,7 @@ namespace GameEditor.Framework.Scene
             ActiveScene.FilePath = path;
             ActiveScene.IsDirty = false;
             PreloadSceneMeshes();
+            PreloadSceneMaterials();
             EventBus.RaiseSceneLoaded();
             UndoStack.Clear();
             Logger.Info($"Scene loaded from {path}");
@@ -126,6 +127,7 @@ namespace GameEditor.Framework.Scene
                     ActiveScene.FilePath = null; // Loaded from assets, not a file path
                     ActiveScene.IsDirty = false;
                     PreloadSceneMeshes();
+                    PreloadSceneMaterials();
                     EventBus.RaiseSceneLoaded();
                     UndoStack.Clear();
                     Logger.Info($"Scene loaded from assets: {assetPath}");
@@ -324,6 +326,28 @@ namespace GameEditor.Framework.Scene
                 else
                     Logger.Warning($"[SceneManager] Failed to load MTL: '{relPath}'");
             });
+        }
+
+        // ── Scene material preloading ─────────────────────────────────────────────────────
+
+        /// <summary>
+        /// For every entity whose MaterialPath is already set in the scene JSON, trigger
+        /// the same MTL load that the editor's OnComponentChanged handler would perform.
+        /// This ensures standalone apps and scene reloads apply materials without needing
+        /// an Inspector change event.
+        /// </summary>
+        private static void PreloadSceneMaterials()
+        {
+            var world = ECSWorld.Instance;
+            foreach (Entity id in world.Entities)
+            {
+                if (!world.TryGetComponent<MeshRenderer>(id, out var mr)) continue;
+                if (string.IsNullOrEmpty(mr.MaterialPath)) continue;
+                if (!mr.MaterialPath.EndsWith(".mtl", StringComparison.OrdinalIgnoreCase)) continue;
+
+                // Reuse the same normalization + load logic as OnComponentChanged.
+                OnComponentChanged(id, nameof(MeshRenderer));
+            }
         }
 
         // ── Scene mesh preloading ──────────────────────────────────────────────────────────

@@ -12,6 +12,9 @@ namespace GameEditor.Framework.Renderer.Server
         /// <summary>Total instances submitted across all draw calls this frame.</summary>
         public int InstancesSubmitted;
 
+        /// <summary>Total renderable entities submitted to the cull stage this frame.</summary>
+        public int TotalRenderable;
+
         /// <summary>Entities culled (frustum or outside LOD range) this frame.</summary>
         public int Culled;
 
@@ -28,6 +31,7 @@ namespace GameEditor.Framework.Renderer.Server
         {
             DrawCalls          = 0;
             InstancesSubmitted = 0;
+            TotalRenderable    = 0;
             Culled             = 0;
             LodSwitches        = 0;
             ShadowDrawCalls    = 0;

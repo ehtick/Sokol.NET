@@ -171,7 +171,20 @@ namespace GameEditor.Framework.Renderer.Server.Passes
         {
             if (!_initialized || !atlas.IsValid) return;
 
-            RenderSlice(world, meshRegistry, _atlasDummyColorView, atlas.GetDepthSliceView(slice), in lightViewProj);
+            RenderSlice(world, meshRegistry, _atlasDummyColorView, atlas.GetDepthSliceView(slice), in lightViewProj, out _);
+        }
+
+        public int RenderDirectionalCounted(
+            ECSWorld world,
+            MeshRegistry meshRegistry,
+            ShadowAtlas atlas,
+            int slice,
+            in Matrix4x4 lightViewProj)
+        {
+            if (!_initialized || !atlas.IsValid) return 0;
+
+            RenderSlice(world, meshRegistry, _atlasDummyColorView, atlas.GetDepthSliceView(slice), in lightViewProj, out int draws);
+            return draws;
         }
 
         public void RenderSpot(
@@ -183,7 +196,20 @@ namespace GameEditor.Framework.Renderer.Server.Passes
         {
             if (!_initialized || !atlas.IsValid) return;
 
-            RenderSlice(world, meshRegistry, _atlasDummyColorView, atlas.GetDepthSliceView(slice), in lightViewProj);
+            RenderSlice(world, meshRegistry, _atlasDummyColorView, atlas.GetDepthSliceView(slice), in lightViewProj, out _);
+        }
+
+        public int RenderSpotCounted(
+            ECSWorld world,
+            MeshRegistry meshRegistry,
+            ShadowAtlas atlas,
+            int slice,
+            in Matrix4x4 lightViewProj)
+        {
+            if (!_initialized || !atlas.IsValid) return 0;
+
+            RenderSlice(world, meshRegistry, _atlasDummyColorView, atlas.GetDepthSliceView(slice), in lightViewProj, out int draws);
+            return draws;
         }
 
         public void RenderPointFace(
@@ -196,7 +222,21 @@ namespace GameEditor.Framework.Renderer.Server.Passes
         {
             if (!_initialized || !cubeArray.IsValid) return;
 
-            RenderSlice(world, meshRegistry, _cubeDummyColorView, cubeArray.GetDepthFaceView(pointLightIndex, faceIndex), in lightViewProj);
+            RenderSlice(world, meshRegistry, _cubeDummyColorView, cubeArray.GetDepthFaceView(pointLightIndex, faceIndex), in lightViewProj, out _);
+        }
+
+        public int RenderPointFaceCounted(
+            ECSWorld world,
+            MeshRegistry meshRegistry,
+            CubeShadowArray cubeArray,
+            int pointLightIndex,
+            int faceIndex,
+            in Matrix4x4 lightViewProj)
+        {
+            if (!_initialized || !cubeArray.IsValid) return 0;
+
+            RenderSlice(world, meshRegistry, _cubeDummyColorView, cubeArray.GetDepthFaceView(pointLightIndex, faceIndex), in lightViewProj, out int draws);
+            return draws;
         }
 
         private void RenderSlice(
@@ -204,8 +244,10 @@ namespace GameEditor.Framework.Renderer.Server.Passes
             MeshRegistry meshRegistry,
             sg_view colorView,
             sg_view depthSliceView,
-            in Matrix4x4 lightViewProj)
+            in Matrix4x4 lightViewProj,
+            out int drawCallCount)
         {
+            drawCallCount = 0;
             if (colorView.id == 0 || depthSliceView.id == 0) return;
 
             var pass = new sg_pass
@@ -250,6 +292,7 @@ namespace GameEditor.Framework.Renderer.Server.Passes
                         });
 
                         sg_draw(0, (uint)prim.IndexCount, 1);
+                        drawCallCount++;
                         continue;
                     }
 
@@ -268,6 +311,7 @@ namespace GameEditor.Framework.Renderer.Server.Passes
                         });
 
                         sg_draw(0, (uint)sub.IndexCount, 1);
+                        drawCallCount++;
                     }
                 }
             }

@@ -58,6 +58,7 @@ namespace GameEditor.Framework.Core
 
         static void RegisterAvailableGameBehaviours()
         {
+#if !GAME_EDITOR && ! __ANDROID__ && !__IOS__
             // GameBehaviour is now in GameEditor.Framework.dll (a separate assembly).
             // Game script types live in the entry/calling assembly, so scan all loaded assemblies.
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
@@ -72,6 +73,7 @@ namespace GameEditor.Framework.Core
                             ?? throw new InvalidOperationException($"Cannot create {captured.Name}")));
                 }
             }
+#endif
         }
         // ── Init ─────────────────────────────────────────────────────────────
 
@@ -82,9 +84,7 @@ namespace GameEditor.Framework.Core
         public static void Init(ProjectConfig? projectConfig = null,bool LoadFromassets = false)
         {
 
-#if !GAME_EDITOR
             RegisterAvailableGameBehaviours();
-#endif
 
             SFilesystem.Initialize();
             Logger.OnLog -= ConsoleLog;
@@ -136,9 +136,8 @@ namespace GameEditor.Framework.Core
         /// </summary>
         public static void InitFromAssetsAsync()
         {
-#if !GAME_EDITOR
+
             RegisterAvailableGameBehaviours();
-#endif
 
             SFilesystem.Initialize();
 

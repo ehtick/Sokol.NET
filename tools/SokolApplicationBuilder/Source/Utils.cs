@@ -6,6 +6,8 @@
 using System;
 using System.Diagnostics;
 using System.Reflection;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using System.Runtime.InteropServices;
 using System.Runtime.Loader;
 using System.Security.Cryptography;
@@ -925,7 +927,152 @@ namespace SokolApplicationBuilder
             }
             return value.Trim();
         }
-        
+
+        /// <summary>
+        /// Scans the project's JIT-built DLL for concrete GameBehaviour subclasses using
+        /// PE metadata (no CLR loading). Emits Source/Generated/RegisteredScripts.g.cs
+        /// with static RegisterType&lt;T&gt;() calls safe for NativeAOT trimming.
+        /// Runs a `dotnet build` first if no DLL exists yet.
+        /// Returns true if the file was created or changed (caller should rebuild).
+        /// </summary>
+        public static bool GenerateRegisteredScripts(TaskLoggingHelper log, string projectPath, string projectName)
+        {
+            // Find the built DLL — search bin/ for the most recently written match.
+            string binDir = Path.Combine(projectPath, "bin");
+            string? dllPath = null;
+            if (Directory.Exists(binDir))
+            {
+                dllPath = Directory.EnumerateFiles(binDir, $"{projectName}.dll", SearchOption.AllDirectories)
+                    .Where(p => !p.Contains(Path.DirectorySeparatorChar + "publish" + Path.DirectorySeparatorChar))
+                    .OrderByDescending(File.GetLastWriteTimeUtc)
+                    .FirstOrDefault();
+            }
+
+            if (dllPath == null)
+            {
+                // No DLL yet — do a quick dotnet build to produce it.
+                log.LogMessage(MessageImportance.High, "No built DLL found — running dotnet build to scan for scripts...");
+                string projectFile = Path.GetFullPath(Path.Combine(projectPath, $"{projectName}.csproj"));
+                (int exitCode, _) = RunShellCommand(
+                    log,
+                    $"dotnet build \"{projectFile}\"",
+                    new Dictionary<string, string>(),
+                    workingDir: projectPath,
+                    logStdErrAsMessage: true,
+                    debugMessageImportance: MessageImportance.Normal,
+                    label: "build-for-scan");
+
+                if (exitCode != 0)
+                {
+                    log.LogMessage(MessageImportance.Normal, "dotnet build failed — skipping script registration generation.");
+                    return false;
+                }
+
+                dllPath = Directory.EnumerateFiles(binDir, $"{projectName}.dll", SearchOption.AllDirectories)
+                    .Where(p => !p.Contains(Path.DirectorySeparatorChar + "publish" + Path.DirectorySeparatorChar))
+                    .OrderByDescending(File.GetLastWriteTimeUtc)
+                    .FirstOrDefault();
+
+                if (dllPath == null)
+                {
+                    log.LogMessage(MessageImportance.Normal, $"Could not find {projectName}.dll after build — skipping.");
+                    return false;
+                }
+            }
+
+            log.LogMessage(MessageImportance.Normal, $"Scanning: {dllPath}");
+
+            var scriptTypes = new List<string>();
+            try
+            {
+                using var fs = new FileStream(dllPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                using var peReader = new PEReader(fs);
+
+                if (!peReader.HasMetadata)
+                {
+                    log.LogMessage(MessageImportance.Normal, "DLL has no metadata — skipping.");
+                    return false;
+                }
+
+                var mr = peReader.GetMetadataReader();
+
+                foreach (var typeDefHandle in mr.TypeDefinitions)
+                {
+                    var typeDef = mr.GetTypeDefinition(typeDefHandle);
+
+                    if ((typeDef.Attributes & System.Reflection.TypeAttributes.Abstract) != 0) continue;
+
+                    var baseHandle = typeDef.BaseType;
+                    if (baseHandle.IsNil) continue;
+
+                    string? baseName = GetPETypeName(mr, baseHandle);
+                    if (baseName != "GameBehaviour") continue;
+
+                    string typeName = mr.GetString(typeDef.Name);
+                    scriptTypes.Add(typeName);
+                    log.LogMessage(MessageImportance.Normal, $"  Found script: {typeName}");
+                }
+            }
+            catch (Exception ex)
+            {
+                log.LogMessage(MessageImportance.Normal, $"Failed to read DLL metadata: {ex.Message} — skipping.");
+                return false;
+            }
+
+            string sourceDir = Path.Combine(projectPath, "Source");
+            Directory.CreateDirectory(Path.Combine(sourceDir, "Generated"));
+            string outputPath = Path.Combine(sourceDir, "Generated", "RegisteredScripts.g.cs");
+
+            var sb = new StringBuilder();
+            sb.AppendLine("// <auto-generated by SokolApplicationBuilder — do not edit>");
+            sb.AppendLine("#if __ANDROID__ || __IOS__");
+            sb.AppendLine("using System.Runtime.CompilerServices;");
+            sb.AppendLine();
+            sb.AppendLine("internal static class RegisteredScripts");
+            sb.AppendLine("{");
+            sb.AppendLine("    [ModuleInitializer]");
+            sb.AppendLine("    public static void Register()");
+            sb.AppendLine("    {");
+            if (scriptTypes.Count == 0)
+            {
+                sb.AppendLine("        // No GameBehaviour subclasses found.");
+            }
+            else
+            {
+                foreach (var t in scriptTypes)
+                    sb.AppendLine($"        global::GameEditor.Framework.Scripting.ScriptSystem.RegisterType<global::{t}>();");
+            }
+            sb.AppendLine("    }");
+            sb.AppendLine("}");
+            sb.AppendLine("#endif");
+
+            string newContent = sb.ToString();
+            string? existing = File.Exists(outputPath) ? File.ReadAllText(outputPath) : null;
+            if (existing == newContent)
+            {
+                log.LogMessage(MessageImportance.High, $"✅ RegisteredScripts.g.cs up to date ({scriptTypes.Count} type(s)).");
+                return false;
+            }
+
+            File.WriteAllText(outputPath, newContent);
+            log.LogMessage(MessageImportance.High, $"✅ RegisteredScripts.g.cs updated ({scriptTypes.Count} type(s): {string.Join(", ", scriptTypes)}).");
+            return true;
+        }
+
+        private static string? GetPETypeName(MetadataReader mr, EntityHandle handle)
+        {
+            if (handle.Kind == HandleKind.TypeDefinition)
+            {
+                var td = mr.GetTypeDefinition((TypeDefinitionHandle)handle);
+                return mr.GetString(td.Name);
+            }
+            if (handle.Kind == HandleKind.TypeReference)
+            {
+                var tr = mr.GetTypeReference((TypeReferenceHandle)handle);
+                return mr.GetString(tr.Name);
+            }
+            return null;
+        }
 
     }
 }

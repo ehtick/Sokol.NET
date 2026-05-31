@@ -139,6 +139,10 @@ namespace SokolApplicationBuilder
                 if (!BuildSokolFramework(iosDir, projectDir))
                     return false;
 
+                // Generate RegisteredScripts.g.cs for NativeAOT (iOS always needs this)
+                Log.LogMessage(MessageImportance.High, "📝 Scanning for GameBehaviour subclasses...");
+                Utils.GenerateRegisteredScripts(Log, projectDir, projectName);
+
                 // Compile shaders
                 if (!CompileShaders(projectDir))
                     return false;

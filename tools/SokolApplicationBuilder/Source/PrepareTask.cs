@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.Diagnostics;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Utilities;
 using Task = Microsoft.Build.Utilities.Task;
@@ -81,6 +83,9 @@ namespace SokolApplicationBuilder
                     }
                 }
 
+                string arch = opts.Arch?.ToLower() ?? "";
+                bool isNativeAot = arch == "android" || arch == "ios";
+
                 // Step 1: Compile shaders
                 Log.LogMessage(MessageImportance.High, "🎨 Compiling shaders...");
                 string shaderCommand = $"dotnet msbuild \"{absoluteProjectFile}\" -t:CompileShaders {defineConstants}";
@@ -102,7 +107,7 @@ namespace SokolApplicationBuilder
 
                 Log.LogMessage(MessageImportance.High, "✅ Shaders compiled successfully");
 
-                // Step 2: Build project
+                // Step 2: Build project (first pass — needed to produce the DLL for script scanning)
                 Log.LogMessage(MessageImportance.High, "📦 Building project...");
                 string buildCommand = $"dotnet build \"{absoluteProjectFile}\"";
 
@@ -122,6 +127,34 @@ namespace SokolApplicationBuilder
                 }
 
                 Log.LogMessage(MessageImportance.High, "✅ Project built successfully");
+
+                // Step 3 (NativeAOT only): scan the built DLL for GameBehaviour subclasses,
+                // emit RegisteredScripts.g.cs, then rebuild if the file changed.
+                if (isNativeAot)
+                {
+                    Log.LogMessage(MessageImportance.High, "📝 Scanning assembly for GameBehaviour subclasses...");
+                    bool changed = GenerateRegisteredScripts(projectPath, projectName);
+                    if (changed)
+                    {
+                        Log.LogMessage(MessageImportance.High, "🔄 Rebuilding with generated script registrations...");
+                        (int rebuildExitCode, string rebuildOutput) = Utils.RunShellCommand(
+                            Log,
+                            buildCommand,
+                            new Dictionary<string, string>(),
+                            workingDir: projectPath,
+                            logStdErrAsMessage: true,
+                            debugMessageImportance: MessageImportance.High,
+                            label: "build-project-scripts");
+
+                        if (rebuildExitCode != 0)
+                        {
+                            Log.LogError("Rebuild after script generation failed");
+                            return false;
+                        }
+                        Log.LogMessage(MessageImportance.High, "✅ Rebuild completed");
+                    }
+                }
+
                 Log.LogMessage(MessageImportance.High, $"🎉 {projectName} is ready!");
 
                 return true;
@@ -204,6 +237,31 @@ namespace SokolApplicationBuilder
             string fallbackName = Path.GetFileNameWithoutExtension(csprojFiles[0]);
             Log.LogMessage(MessageImportance.Normal, $"Using first project found: {fallbackName}");
             return fallbackName;
+        }
+
+        /// <summary>
+        /// Delegates to Utils.GenerateRegisteredScripts.
+        /// Returns true if the file was created or changed (i.e. a rebuild is needed).
+        /// Only called for NativeAOT platforms (Android / iOS).
+        /// </summary>
+        private bool GenerateRegisteredScripts(string projectPath, string projectName)
+        {
+            return Utils.GenerateRegisteredScripts(Log, projectPath, projectName);
+        }
+
+        private static string? GetMetadataTypeName(MetadataReader mr, EntityHandle handle)
+        {
+            if (handle.Kind == HandleKind.TypeDefinition)
+            {
+                var td = mr.GetTypeDefinition((TypeDefinitionHandle)handle);
+                return mr.GetString(td.Name);
+            }
+            if (handle.Kind == HandleKind.TypeReference)
+            {
+                var tr = mr.GetTypeReference((TypeReferenceHandle)handle);
+                return mr.GetString(tr.Name);
+            }
+            return null;
         }
     }
 }

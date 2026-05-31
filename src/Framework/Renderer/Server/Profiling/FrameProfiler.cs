@@ -45,7 +45,7 @@ namespace GameEditor.Framework.Renderer.Server.Profiling
         // ── Public API ───────────────────────────────────────────────────────
 
         /// <summary>Enable or disable profiling. When false, Begin/End are no-ops.</summary>
-        public static bool Enabled { get; set; }
+        public static bool Enabled { get; set; } = false;
 
         /// <summary>Human-readable names indexed by <see cref="Zone"/>.</summary>
         public static ReadOnlySpan<string> ZoneNames => _names;

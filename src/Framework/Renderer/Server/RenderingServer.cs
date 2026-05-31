@@ -273,6 +273,7 @@ namespace GameEditor.Framework.Renderer.Server
             FrameProfiler.Begin(FrameProfiler.Zone.ParallelCull);
             ParallelCuller.Run(in frustum, _cmds, _drawCount, _visible, out int visibleCount);
             FrameProfiler.End(FrameProfiler.Zone.ParallelCull);
+            _stats.TotalRenderable += _drawCount;
             _stats.Culled += _drawCount - visibleCount;
             if (visibleCount == 0) return;
 
@@ -535,7 +536,7 @@ namespace GameEditor.Framework.Renderer.Server
                 _directionalShadowViewProj = BuildDirectionalShadowViewProj(in bestDirectionalShadowLight, casterMin, casterMax);
                 _hasDirectionalShadow = true;
                 if (renderShadowPasses)
-                    _shadowPass.RenderDirectional(world, _meshReg, _shadowAtlas, 0, in _directionalShadowViewProj);
+                    _stats.ShadowDrawCalls += _shadowPass.RenderDirectionalCounted(world, _meshReg, _shadowAtlas, 0, in _directionalShadowViewProj);
             }
 
             for (int si = 0; si < _spotShadowTopCount; si++)
@@ -554,7 +555,7 @@ namespace GameEditor.Framework.Renderer.Server
                 Matrix4x4 spotVp = BuildSpotShadowViewProj(spotPos, spotFwd, slc.Range, outerRad);
                 int atlasSlice = ShadowAtlas.DirectionalCascades + si;
                 if (renderShadowPasses)
-                    _shadowPass.RenderSpot(world, _meshReg, _shadowAtlas, atlasSlice, in spotVp);
+                    _stats.ShadowDrawCalls += _shadowPass.RenderSpotCounted(world, _meshReg, _shadowAtlas, atlasSlice, in spotVp);
                 _spotShadowViewProj[si] = spotVp;
 
                 for (int li = 0; li < _topLightCount; li++)
@@ -591,7 +592,7 @@ namespace GameEditor.Framework.Renderer.Server
                 {
                     Matrix4x4 pointFaceVp = BuildPointShadowFaceViewProj(pointPos, face, plc.Range);
                     if (renderShadowPasses)
-                        _shadowPass.RenderPointFace(world, _meshReg, _cubeShadows, pi, face, in pointFaceVp);
+                        _stats.ShadowDrawCalls += _shadowPass.RenderPointFaceCounted(world, _meshReg, _cubeShadows, pi, face, in pointFaceVp);
                     _pointShadowViewProj[pi * CubeShadowArray.FacesPerLight + face] = pointFaceVp;
                 }
 

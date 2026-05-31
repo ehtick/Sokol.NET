@@ -428,6 +428,10 @@ namespace SokolApplicationBuilder
                 // Configure Android app
                 ConfigureAndroidApp(appName);
 
+                // Generate RegisteredScripts.g.cs for NativeAOT (Android always needs this)
+                Log.LogMessage(MessageImportance.High, "📝 Scanning for GameBehaviour subclasses...");
+                Utils.GenerateRegisteredScripts(Log, opts.ProjectPath, appName);
+
                 // Compile shaders
                 CompileShaders();
 
