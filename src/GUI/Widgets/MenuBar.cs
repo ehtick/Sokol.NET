@@ -142,7 +142,7 @@ public class MenuBar : Widget
             renderer.SetTextAlign(TextHAlign.Left);
             renderer.DrawText(ddX + 10, y + itemH * 0.5f, item.Label, textC);
 
-            if (item.SubItems != null && item.SubItems.Count > 0)
+            if (item.SubItems != null)
             {
                 renderer.SetTextAlign(TextHAlign.Right);
                 renderer.DrawText(ddX + ddW - 8, y + itemH * 0.5f, "▶", textC);
@@ -308,7 +308,7 @@ public class MenuBar : Widget
                 if (newSubIdx >= 0)
                 {
                     var item = _menus[_openIdx].Items[newSubIdx];
-                    if (item.SubItems != null && item.SubItems.Count > 0)
+                    if (item.SubItems != null)
                     {
                         if (_openSubItemIdx != newSubIdx)
                         {
@@ -342,7 +342,7 @@ public class MenuBar : Widget
             if (renderer != null && HitDropItem(e.Position, renderer, out var item))
             {
                 // Sub-menu parent: keep menu open (sub-menu opens on hover, not click)
-                if (item != null && item.SubItems != null && item.SubItems.Count > 0)
+                if (item != null && item.SubItems != null)
                     return true;
                 if (item != null && item.Enabled && !item.IsSep)
                     item.OnClick?.Invoke();
@@ -446,7 +446,7 @@ public class MenuBar : Widget
         {
             if (it.IsSep) continue;
             float w = renderer.MeasureText(it.Label) + 20f;
-            if (it.SubItems != null && it.SubItems.Count > 0)
+            if (it.SubItems != null)
                 w += 20f;  // space for ▶ arrow
             else if (!string.IsNullOrEmpty(it.Shortcut))
                 w += renderer.MeasureText(it.Shortcut) + 20f;
@@ -493,7 +493,7 @@ public class MenuBar : Widget
         var items = _menus[_openIdx].Items;
         if (parentIdx < 0 || parentIdx >= items.Count) return null;
         var parent = items[parentIdx];
-        if (parent.SubItems == null || parent.SubItems.Count == 0) return null;
+        if (parent.SubItems == null) return null;
 
         float itemH = 26f, sepH = 8f;
         float ddX   = MenuHeaderX(_openIdx, renderer);
