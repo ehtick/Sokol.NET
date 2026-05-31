@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using static Sokol.SApp;
 
 namespace Sokol.GUI;
 
@@ -359,6 +360,9 @@ public sealed class DockSpace : Widget
             float newR = Math.Clamp(_dragStartRatio + travel / denom, 0.05f, 0.95f);
             _draggingDivider.SplitRatio = newR;
             InvalidateLayout();
+            sapp_set_mouse_cursor(_draggingDivider.Type == DockNodeType.SplitHorizontal
+                ? sapp_mouse_cursor.SAPP_MOUSECURSOR_RESIZE_EW
+                : sapp_mouse_cursor.SAPP_MOUSECURSOR_RESIZE_NS);
             return true;
         }
 
@@ -422,11 +426,20 @@ public sealed class DockSpace : Widget
         var (hLeaf, hIdx, _) = HitTabInternal(ToLocal(e.Position));
         _hoveredTabLeaf = hLeaf;
         _hoveredTabIdx  = hIdx;
+
+        // Update cursor for divider hover.
+        var hoverDiv = FindDividerAt(Root, ToLocal(e.Position));
+        sapp_set_mouse_cursor(hoverDiv != null
+            ? (hoverDiv.Type == DockNodeType.SplitHorizontal
+                ? sapp_mouse_cursor.SAPP_MOUSECURSOR_RESIZE_EW
+                : sapp_mouse_cursor.SAPP_MOUSECURSOR_RESIZE_NS)
+            : sapp_mouse_cursor.SAPP_MOUSECURSOR_DEFAULT);
         return false;
     }
 
     public override bool OnMouseUp(MouseEvent e)
     {
+        bool wasDividerDrag = _draggingDivider != null;
         bool handled = _draggingDivider != null || _draggingTabPanel != null;
         if (_tabDragBegun && _draggingTabPanel != null)
         {
@@ -442,6 +455,8 @@ public sealed class DockSpace : Widget
         _tabDragIsReorder    = false;
         _tabReorderInsertX   = -1f;
         _tabReorderInsertIdx = -1;
+        if (wasDividerDrag)
+            sapp_set_mouse_cursor(sapp_mouse_cursor.SAPP_MOUSECURSOR_DEFAULT);
         return handled;
     }
 
@@ -449,6 +464,7 @@ public sealed class DockSpace : Widget
     {
         _hoveredTabLeaf = null;
         _hoveredTabIdx  = -1;
+        sapp_set_mouse_cursor(sapp_mouse_cursor.SAPP_MOUSECURSOR_DEFAULT);
         return false;
     }
 
