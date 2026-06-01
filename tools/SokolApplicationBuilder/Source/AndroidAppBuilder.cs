@@ -1033,9 +1033,155 @@ namespace SokolApplicationBuilder
             Log.LogMessage(MessageImportance.High, $"Shaders compilation completed with exit code: {result.ExitCode}");
         }
 
+        // All three (runtimeId, abiName) pairs supported by the build.
+        private static readonly (string runtimeId, string abiName)[] AllArchitectures =
+        {
+            ("linux-bionic-arm64", "arm64-v8a"),
+            ("linux-bionic-arm",   "armeabi-v7a"),
+            ("linux-bionic-x64",   "x86_64")
+        };
+
+        /// <summary>
+        /// Locates the adb executable via the Android SDK path or system PATH.
+        /// Returns an empty string if adb cannot be found.
+        /// </summary>
+        private string FindAdbPath()
+        {
+            var candidates = new List<string> { "adb" };
+            string androidSdk = GetAndroidSdkPath();
+            if (!string.IsNullOrEmpty(androidSdk))
+            {
+                candidates.Add(Path.Combine(androidSdk, "platform-tools", "adb"));
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                    candidates.Add(Path.Combine(androidSdk, "platform-tools", "adb.exe"));
+            }
+            foreach (var candidate in candidates)
+            {
+                try
+                {
+                    if (File.Exists(candidate))
+                        return candidate;
+                    var r = Cli.Wrap(RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "where" : "which")
+                        .WithArguments(candidate)
+                        .WithValidation(CommandResultValidation.None)
+                        .ExecuteBufferedAsync().GetAwaiter().GetResult();
+                    if (r.ExitCode == 0)
+                        return candidate;
+                }
+                catch { }
+            }
+            return string.Empty;
+        }
+
+        /// <summary>
+        /// Returns the set of (runtimeId, abiName) pairs that must be built.
+        /// When <c>opts.Install</c> is true, queries the connected device(s) via adb and returns only
+        /// the architectures those devices actually need, shortening compile time.
+        /// Falls back to all three architectures if adb is unavailable, no devices are found,
+        /// or ABI detection fails.
+        /// When <c>opts.Install</c> is false (pure build / distribution), always returns all three.
+        /// </summary>
+        private (string runtimeId, string abiName)[] GetTargetArchitectures()
+        {
+            if (!opts.DeviceArchs)
+                return AllArchitectures;
+
+            string adbPath = FindAdbPath();
+            if (string.IsNullOrEmpty(adbPath))
+            {
+                Log.LogMessage(MessageImportance.High, "⚠️  adb not found – building all architectures");
+                return AllArchitectures;
+            }
+
+            // Collect target device IDs
+            var targetDeviceIds = new List<string>();
+            if (!string.IsNullOrEmpty(opts.DeviceId))
+            {
+                targetDeviceIds.Add(opts.DeviceId);
+            }
+            else
+            {
+                try
+                {
+                    var r = Cli.Wrap(adbPath)
+                        .WithArguments("devices")
+                        .WithValidation(CommandResultValidation.None)
+                        .ExecuteBufferedAsync().GetAwaiter().GetResult();
+                    foreach (var line in r.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        if (line.Contains("List of devices") || string.IsNullOrWhiteSpace(line)) continue;
+                        var parts = System.Text.RegularExpressions.Regex.Split(line.Trim(), @"\s+");
+                        if (parts.Length >= 2 && parts[1] == "device")
+                            targetDeviceIds.Add(parts[0]);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.LogMessage(MessageImportance.High, $"⚠️  Failed to enumerate Android devices: {ex.Message} – building all architectures");
+                    return AllArchitectures;
+                }
+            }
+
+            if (targetDeviceIds.Count == 0)
+            {
+                Log.LogMessage(MessageImportance.High, "⚠️  No connected Android devices found – building all architectures");
+                return AllArchitectures;
+            }
+
+            // Union of primary ABIs across all target devices.
+            // We use ro.product.cpu.abi (the single native ABI, e.g. "arm64-v8a") rather than
+            // ro.product.cpu.abilist, which lists all *compatibility* ABIs and would cause us to
+            // build armeabi-v7a even on a pure arm64 device.
+            var requiredAbis = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string deviceId in targetDeviceIds)
+            {
+                try
+                {
+                    var r = Cli.Wrap(adbPath)
+                        .WithArguments($"-s {deviceId} shell getprop ro.product.cpu.abi")
+                        .WithValidation(CommandResultValidation.None)
+                        .ExecuteBufferedAsync().GetAwaiter().GetResult();
+                    string primaryAbi = r.StandardOutput.Trim().Replace("\r", "").Replace("\n", "");
+                    if (!string.IsNullOrEmpty(primaryAbi))
+                    {
+                        requiredAbis.Add(primaryAbi);
+                        Log.LogMessage(MessageImportance.High, $"📱 Device {deviceId}: primary ABI = {primaryAbi}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.LogMessage(MessageImportance.High, $"⚠️  Failed to query ABI for device {deviceId}: {ex.Message}");
+                }
+            }
+
+            if (requiredAbis.Count == 0)
+            {
+                Log.LogMessage(MessageImportance.High, "⚠️  Could not determine device ABI(s) – building all architectures");
+                return AllArchitectures;
+            }
+
+            // armeabi devices are covered by the linux-bionic-arm (armeabi-v7a) build
+            var filtered = AllArchitectures
+                .Where(a => requiredAbis.Contains(a.abiName) ||
+                            (a.abiName == "armeabi-v7a" && requiredAbis.Contains("armeabi")))
+                .ToArray();
+
+            if (filtered.Length == 0)
+            {
+                Log.LogMessage(MessageImportance.High,
+                    $"⚠️  No architecture match for device ABI(s) [{string.Join(", ", requiredAbis)}] – building all architectures");
+                return AllArchitectures;
+            }
+
+            var skipped = AllArchitectures.Except(filtered).Select(a => a.abiName);
+            Log.LogMessage(MessageImportance.High,
+                $"🎯 Device ABI filter: building [{string.Join(", ", filtered.Select(a => a.abiName))}], skipping [{string.Join(", ", skipped)}]");
+            return filtered;
+        }
+
         void PublishAssemblies(string buildType)
         {
-            string[] architectures = { "linux-bionic-arm64", "linux-bionic-arm", "linux-bionic-x64" };
+            var architectures = GetTargetArchitectures();
 
             // Determine configuration
             string configuration = buildType == "release" ? "Release" : "Debug";
@@ -1068,9 +1214,9 @@ namespace SokolApplicationBuilder
                 throw new Exception("No suitable Android NDK found");
             }
 
-            foreach (string arch in architectures)
+            foreach (var (arch, abiName) in architectures)
             {
-                Log.LogMessage(MessageImportance.High, $"Publishing for {arch}...");
+                Log.LogMessage(MessageImportance.High, $"Publishing for {arch} ({abiName})...");
 
                 try
                 {
@@ -1106,13 +1252,6 @@ namespace SokolApplicationBuilder
                         // app/src/main/cpp/) which resolves to app/libs/ - so we must copy here.
                         string publishDir = Path.Combine(opts.ProjectPath, "bin", configuration, "net10.0", arch, "publish");
                         string libsDir = Path.Combine(opts.ProjectPath, "Android", "native-activity", "app", "libs");
-                        string abiName = arch switch
-                        {
-                            "linux-bionic-arm64" => "arm64-v8a",
-                            "linux-bionic-arm" => "armeabi-v7a",
-                            "linux-bionic-x64" => "x86_64",
-                            _ => arch
-                        };
                         string libsAbiDir = Path.Combine(libsDir, abiName);
                         string sourceLib = Path.Combine(publishDir, $"lib{GetAppName()}.so");
                         string destLib = Path.Combine(libsAbiDir, $"lib{GetAppName()}.so");
@@ -1149,13 +1288,8 @@ namespace SokolApplicationBuilder
             // Using app/libs/ would NOT package the .so files into the APK.
             string libsDir = Path.Combine(opts.ProjectPath, "Android", "native-activity", "app", "src", "main", "jniLibs");
             
-            // Architectures to process
-            var architectures = new[]
-            {
-                ("linux-bionic-arm64", "arm64-v8a"),
-                ("linux-bionic-arm", "armeabi-v7a"),
-                ("linux-bionic-x64", "x86_64")
-            };
+            // Architectures to process – filtered to connected device(s) when installing
+            var architectures = GetTargetArchitectures();
 
             int librariesProcessed = 0;
 
@@ -2850,7 +2984,7 @@ KeyAlias={keystoreInfo.KeyAlias}
             Log.LogMessage(MessageImportance.High, $"Found AAB: {aabPath}");
 
             // Convert AAB to APK and install using bundletool
-            Log.LogMessage(MessageImportance.High, "Converting AAB to APK for device installation...");
+            Log.LogMessage(MessageImportance.High, "Extracting device-specific splits from AAB via bundletool...");
 
             // Find bundletool
             string bundletoolPath = FindBundletool();
@@ -2936,7 +3070,7 @@ KeyAlias={keystoreInfo.KeyAlias}
                     }
 
                     // Install APKs directly from the .apks file using bundletool
-                    Log.LogMessage(MessageImportance.High, "Installing device-specific APKs...");
+                    Log.LogMessage(MessageImportance.High, "Installing device-specific AAB splits onto device...");
                     
                     var installResult = Cli.Wrap("java")
                         .WithArguments($"-jar \"{bundletoolPath}\" install-apks --apks=\"{apksPath}\" --device-id={selectedDeviceId}")

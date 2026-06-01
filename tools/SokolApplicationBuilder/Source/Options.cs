@@ -98,6 +98,9 @@ namespace SokolApplicationBuilder
         [Option("interactive", Required = false, HelpText = "Enable interactive device selection when multiple devices are connected")]
         public bool Interactive { get; set; } = false;
 
+        [Option("device-archs", Required = false, HelpText = "Build only for architectures matching currently connected Android devices (faster local iteration). Default: build all architectures.")]
+        public bool DeviceArchs { get; set; } = false;
+
         [Option("destination", Required = false, HelpText = "Destination path for create project task")]
         public string Destination { get; set; } = "";
 
