@@ -146,7 +146,11 @@ public class PropertyGrid : Widget
                 var editor = GetOrCreateEditor(editorIdx, desc);
                 if (editor != null)
                 {
-                    editor.Bounds = new Rect(0, 0, editorW - 4, RowHeight - 4);
+                    // Set Bounds with the actual visual position (scroll-adjusted) so that
+                    // ScreenPosition returns the correct on-screen location. This is required
+                    // for popup overlays (e.g. ColorButton's ColorPicker) to be positioned
+                    // next to the editor rather than at the PropertyGrid's origin.
+                    editor.Bounds = new Rect(editorColX + 2, y + 2 - _scrollY, editorW - 4, RowHeight - 4);
                     renderer.Save();
                     renderer.Translate(editorColX + 2, y + 2);
                     editor.Draw(renderer);

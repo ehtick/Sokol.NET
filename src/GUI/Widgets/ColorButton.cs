@@ -69,12 +69,15 @@ public class ColorButton : Widget
         var   pref  = _pickerCache.PreferredSize(renderer);
         float gap   = 4f;
 
-        // Flip upward if the popup would extend below the screen.
+        // Flip upward if the popup would extend below the screen,
+        // then clamp so it never overflows the top or bottom edge.
         var   sp       = ScreenPosition;
         float screenH  = Screen.Instance.LogicalHeight;
         float belowY   = Bounds.Height + gap;
         float belowBot = sp.Y + belowY + pref.Y;
         float popY     = belowBot <= screenH ? belowY : -(pref.Y + gap);
+        // Clamp: popup top must be >= screen top, popup bottom must be <= screen bottom.
+        popY = Math.Clamp(popY, -sp.Y, screenH - sp.Y - pref.Y);
 
         var   popR  = new Rect(0, popY, pref.X, pref.Y);
 

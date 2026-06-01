@@ -245,7 +245,7 @@ public sealed class Screen : Widget
         }
     }
 
-    public void Draw(float width, float height, float dpiScale)
+    public void Draw(float width, float height, float dpiScale, bool drawActiveOverlay = true)
     {
         if (Renderer == null || Renderer.VGContext == IntPtr.Zero ) return; // can happen if Draw is called before Init   
 
@@ -269,15 +269,6 @@ public sealed class Screen : Widget
         _hitTestOverlays = _frameOverlays.ToArray();
         _frameOverlays.Clear();
 
-        // Draw any active popup on top of everything else.
-        if (_activePopup != null)
-        {
-            var sp = _activePopup.ScreenPosition;
-            Renderer.Save();
-            Renderer.Translate(sp.X, sp.Y);
-            _activePopup.DrawPopupOverlay(Renderer);
-            Renderer.Restore();
-        }
         // Draw notification toasts on top of everything.
         _notificationHost.Bounds = new Rect(0, 0, width, height);
         _notificationHost.Draw(Renderer);
@@ -295,6 +286,28 @@ public sealed class Screen : Widget
             Renderer.Restore();
         }
 
+        Renderer.EndFrame();
+
+        if (drawActiveOverlay)
+            DrawActivePopupOverlay(width, height, dpiScale);
+    }
+
+    /// <summary>
+    /// Draws the active popup overlay in a separate NanoVG pass.
+    /// Call this AFTER any layered rendering (e.g. ImGui) that should appear
+    /// below the popup, so the popup renders on top of those layers.
+    /// </summary>
+    public void DrawActivePopupOverlay(float width, float height, float dpiScale)
+    {
+        if (Renderer == null || Renderer.VGContext == IntPtr.Zero) return;
+        if (_activePopup == null) return;
+
+        Renderer.BeginFrame(width, height, dpiScale);
+        var sp = _activePopup.ScreenPosition;
+        Renderer.Save();
+        Renderer.Translate(sp.X, sp.Y);
+        _activePopup.DrawPopupOverlay(Renderer);
+        Renderer.Restore();
         Renderer.EndFrame();
     }
 
