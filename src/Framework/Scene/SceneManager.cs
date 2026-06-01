@@ -32,6 +32,10 @@ namespace GameEditor.Framework.Scene
         private static readonly Dictionary<Entity, VehicleHandle>           _entityToVehicleHandle = new();
         private static readonly Dictionary<int, Entity>                     _vehicleHandleToEntity = new();
 
+        // Reused across OverlapSphere/OverlapBox to avoid a per-call List allocation on the
+        // script-driven hot path. Main-thread-only, non-reentrant; each query Clear()s before use.
+        private static readonly List<PhysicsBodyHandle>                     _overlapScratch        = new(64);
+
         private sealed class PhysicsCollisionDispatcher : ICollisionListener
         {
             public void OnCollisionEnter(PhysicsBodyHandle a, PhysicsBodyHandle b, ContactPoint contact)
@@ -518,11 +522,13 @@ namespace GameEditor.Framework.Scene
             if (width <= 0 || height <= 0) return false;
 
             var world = ECSWorld.Instance;
-            foreach (Entity id in world.Entities)
+            foreach (var row in world.Query<CameraComponent, Transform>()
+                                     .Enumerate<CameraComponent, Transform>())
             {
-                if (!world.TryGetComponent<CameraComponent>(id, out var cam) || !cam.IsMain) continue;
+                ref readonly var cam = ref row.Item1.Value;
+                if (!cam.IsMain) continue;
                 if (cam.NearZ <= 0f || cam.FarZ <= cam.NearZ) continue; // skip degenerate projection
-                if (!world.TryGetComponent<Transform>(id, out var tr)) continue;
+                ref readonly var tr = ref row.Item2.Value;
 
                 Matrix4x4 rotMat = Matrix4x4.CreateFromQuaternion(tr.Rotation);
 
@@ -559,9 +565,10 @@ namespace GameEditor.Framework.Scene
             // Pre-step: push Transform → Jolt for kinematic bodies so scripts can drive them.
             foreach (var (entity, handle) in _entityToHandle)
             {
-                if (!world.TryGetComponent<RigidbodyComponent>(entity, out var rb)) continue;
-                if (rb.MotionType != RigidbodyMotionType.Kinematic) continue;
-                if (!world.TryGetComponent<Transform>(entity, out var tr)) continue;
+                if (!world.TryGetComponentRef<RigidbodyComponent>(entity, out var rbRef)) continue;
+                if (rbRef.Value.MotionType != RigidbodyMotionType.Kinematic) continue;
+                if (!world.TryGetComponentRef<Transform>(entity, out var trRef)) continue;
+                ref readonly var tr = ref trRef.Value;
 
                 // MoveKinematic computes implicit velocity so the body correctly pushes dynamic bodies.
                 _physics.MoveKinematic(handle, tr.Position, tr.Rotation, deltaTime);
@@ -573,48 +580,49 @@ namespace GameEditor.Framework.Scene
             // Kinematic bodies are script-authoritative — skip them to avoid Quaternion→Euler round-trip drift.
             foreach (var (entity, handle) in _entityToHandle)
             {
-                if (!world.TryGetComponent<RigidbodyComponent>(entity, out var rb)) continue;
+                if (!world.TryGetComponentRef<RigidbodyComponent>(entity, out var rbRef)) continue;
+                ref readonly var rb = ref rbRef.Value;
                 if (rb.IsStatic || rb.MotionType == RigidbodyMotionType.Kinematic) continue;
-                if (!world.TryGetComponent<Transform>(entity, out var tr)) continue;
+                if (!world.TryGetComponentRef<Transform>(entity, out var trRef)) continue;
+                ref var tr = ref trRef.Value;
 
-                var pos = _physics.GetPosition(handle);
-                var rot = _physics.GetRotation(handle);
-
-                tr.Position = pos;
-                tr.Rotation = rot;
-                world.AddComponent(entity, tr);
+                // Write straight into archetype storage — no struct copy, no AddComponent copy-back.
+                tr.Position = _physics.GetPosition(handle);
+                tr.Rotation = _physics.GetRotation(handle);
             }
 
             // Post-step: sync character controller positions back to Transform.
             foreach (var (entity, charHandle) in _entityToCharHandle)
             {
-                if (!world.TryGetComponent<Transform>(entity, out var tr)) continue;
+                if (!world.TryGetComponentRef<Transform>(entity, out var trRef)) continue;
+                ref var tr = ref trRef.Value;
 
                 tr.Position = _physics.GetCharacterPosition(charHandle);
                 tr.Rotation = _physics.GetCharacterRotation(charHandle);
-                world.AddComponent(entity, tr);
             }
 
             // Post-step: sync vehicle chassis positions back to Transform.
             foreach (var (handle, entity) in _vehicleHandleToEntity)
             {
                 var vHandle = new VehicleHandle(handle);
-                if (!world.TryGetComponent<Transform>(entity, out var tr)) continue;
+                if (!world.TryGetComponentRef<Transform>(entity, out var trRef)) continue;
+                ref var tr = ref trRef.Value;
                 tr.Position = _physics.GetVehiclePosition(vHandle);
                 tr.Rotation = _physics.GetVehicleRotation(vHandle);
-                world.AddComponent(entity, tr);
             }
 
             // Sync wheel follower entity transforms to wheel world transforms.
-            foreach (Entity entity in world.Entities)
+            // Frent struct-enumerator query: visits only entities that actually have both
+            // components (vs. scanning every entity) and writes Transform in place.
+            foreach (var row in world.Query<WheelFollowerComponent, Transform>()
+                                     .Enumerate<WheelFollowerComponent, Transform>())
             {
-                if (!world.TryGetComponent<WheelFollowerComponent>(entity, out var wf)) continue;
+                ref readonly var wf = ref row.Item1.Value;
                 if (wf.VehicleEntity.IsNull) continue;
-                if (!world.TryGetComponent<Transform>(entity, out var wfTr)) continue;
                 var wm = GetWheelWorldTransform(wf.VehicleEntity, wf.WheelIndex);
+                ref var wfTr = ref row.Item2.Value;
                 wfTr.Position = new Vector3(wm.M41, wm.M42, wm.M43);
                 wfTr.Rotation = Quaternion.CreateFromRotationMatrix(wm);
-                world.AddComponent(entity, wfTr);
             }
         }
 
@@ -691,11 +699,10 @@ namespace GameEditor.Framework.Scene
             results.Clear();
             if (_physics == null) return 0;
 
-            var handles = new List<PhysicsBodyHandle>(maxResults);
-            int hitCount = _physics.OverlapSphere(center, radius, handles, maxResults);
+            int hitCount = _physics.OverlapSphere(center, radius, _overlapScratch, maxResults);
             for (int i = 0; i < hitCount; i++)
             {
-                if (_handleToEntity.TryGetValue(handles[i].Value, out var entity))
+                if (_handleToEntity.TryGetValue(_overlapScratch[i].Value, out var entity))
                     results.Add(entity);
             }
             return results.Count;
@@ -706,11 +713,10 @@ namespace GameEditor.Framework.Scene
             results.Clear();
             if (_physics == null) return 0;
 
-            var handles = new List<PhysicsBodyHandle>(maxResults);
-            int hitCount = _physics.OverlapBox(center, halfExtents, rotation, handles, maxResults);
+            int hitCount = _physics.OverlapBox(center, halfExtents, rotation, _overlapScratch, maxResults);
             for (int i = 0; i < hitCount; i++)
             {
-                if (_handleToEntity.TryGetValue(handles[i].Value, out var entity))
+                if (_handleToEntity.TryGetValue(_overlapScratch[i].Value, out var entity))
                     results.Add(entity);
             }
             return results.Count;

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Frent;
+using Frent.Core;
 using Frent.Systems;
 using GameEditor.Framework.Core;
 using GameEditor.Framework.ECS.Components;
@@ -108,6 +109,26 @@ namespace GameEditor.Framework.ECS
             component = default;
             return false;
         }
+
+        /// <summary>
+        /// Zero-copy component access for hot paths: returns a writable <see cref="Ref{T}"/>
+        /// into archetype storage in a single lookup. Unlike <see cref="TryGetComponent{T}"/>
+        /// it does not copy the struct out, and unlike <see cref="AddComponent{T}"/> it needs
+        /// no copy-back — mutate through <c>component.Value</c> directly.
+        /// Valid only while no structural change (add/remove/create/delete) occurs.
+        /// </summary>
+        public bool TryGetComponentRef<T>(Entity e, out Ref<T> component) where T : struct
+            => e.TryGet<T>(out component);
+
+        /// <summary>
+        /// Returns a cached Frent <see cref="Frent.Systems.Query"/> over entities that have both
+        /// <typeparamref name="T1"/> and <typeparamref name="T2"/>. The query is built once per
+        /// component-set and reused; its <c>Enumerate</c>/<c>EnumerateWithEntities</c> enumerators
+        /// are <see langword="ref"/> structs, so iterating allocates nothing. Prefer this over
+        /// scanning <see cref="Entities"/> + per-entity <see cref="TryGetComponent{T}"/> on
+        /// per-frame paths.
+        /// </summary>
+        public Query Query<T1, T2>() => _world.Query<T1, T2>();
 
         public void RemoveComponent<T>(Entity e) where T : struct
         {
