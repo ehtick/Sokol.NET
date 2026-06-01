@@ -110,8 +110,9 @@ public sealed class InputRouter
             {
                 var pos = new Vector2(ev->mouse_x / dpi, ev->mouse_y / dpi);
                 var me  = new MouseEvent { Position = pos, Scroll = new Vector2(ev->scroll_x, ev->scroll_y), Modifiers = Mods(ev) };
-                // Bubble up the parent chain until a widget consumes the scroll.
-                var scrollTarget = _hovered;
+                // Use HitTestDeep so active modal popups always capture scroll even
+                // when _hovered is stale (e.g. popup opened after last mouse-move).
+                var scrollTarget = _screen.HitTestDeep(pos) ?? _hovered;
                 while (scrollTarget != null)
                 {
                     if (scrollTarget.OnMouseScroll(Localize(scrollTarget, me))) break;

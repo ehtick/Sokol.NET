@@ -113,6 +113,8 @@ public sealed class Screen : Widget
 
     private NotificationHost _notificationHost = new();
 
+    public static bool HasActivePopup => _activePopup != null;
+
     public static void SetActivePopup(Widget? popup)
     {
         _activePopup = popup;
