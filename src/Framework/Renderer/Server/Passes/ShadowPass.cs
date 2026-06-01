@@ -1,6 +1,5 @@
 using System.Numerics;
 using System.Collections.Generic;
-using Frent;
 using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
 using GameEditor.Framework.Renderer.Server.Lighting;
@@ -265,12 +264,13 @@ namespace GameEditor.Framework.Renderer.Server.Passes
             {
                 sg_apply_pipeline(_pipeline);
 
-                for (int i = 0; i < world.Entities.Count; i++)
+                foreach (var row in world.Query<ActiveFlag, MeshRenderer, Transform>()
+                                         .Enumerate<ActiveFlag, MeshRenderer, Transform>())
                 {
-                    Entity id = world.Entities[i];
-                    if (!world.TryGetComponent<ActiveFlag>(id, out var active) || !active.Active) continue;
-                    if (!world.TryGetComponent<MeshRenderer>(id, out var mr) || !mr.Visible || !mr.CastsShadows) continue;
-                    if (!world.TryGetComponent<Transform>(id, out var tf)) continue;
+                    if (!row.Item1.Value.Active) continue;
+                    ref readonly var mr = ref row.Item2.Value;
+                    if (!mr.Visible || !mr.CastsShadows) continue;
+                    ref readonly var tf = ref row.Item3.Value;
 
                     Matrix4x4 model = Transform.GetWorldMatrix(world, tf);
                     var vsParams = new shadow_caster_vs_params_t

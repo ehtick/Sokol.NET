@@ -130,6 +130,9 @@ namespace GameEditor.Framework.ECS
         /// </summary>
         public Query Query<T1, T2>() => _world.Query<T1, T2>();
 
+        /// <inheritdoc cref="Query{T1,T2}()"/>
+        public Query Query<T1, T2, T3>() => _world.Query<T1, T2, T3>();
+
         public void RemoveComponent<T>(Entity e) where T : struct
         {
             if (e.Has<T>()) e.Remove<T>();

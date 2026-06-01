@@ -92,11 +92,11 @@ namespace GameEditor.Framework.Renderer.Server
         /// <summary>Atlas slice to visualise (0–3 directional cascades, 4–11 spot lights).</summary>
         public static int ShadowAtlasDebugSlice { get; set; } = 4;
         private static Matrix4x4 _directionalShadowViewProj;
-        private static readonly int[] _spotShadowTopIndices = new int[ShadowAtlas.SpotSlices];
+        private static readonly Entity[] _spotShadowTopEntities = new Entity[ShadowAtlas.SpotSlices];
         private static readonly float[] _spotShadowTopScores = new float[ShadowAtlas.SpotSlices];
         private static readonly Matrix4x4[] _spotShadowViewProj = new Matrix4x4[ShadowAtlas.SpotSlices];
         private static int _spotShadowTopCount;
-        private static readonly int[] _pointShadowTopIndices = new int[CubeShadowArray.MaxPointShadowLights];
+        private static readonly Entity[] _pointShadowTopEntities = new Entity[CubeShadowArray.MaxPointShadowLights];
         private static readonly float[] _pointShadowTopScores = new float[CubeShadowArray.MaxPointShadowLights];
         private static readonly Matrix4x4[] _pointShadowViewProj = new Matrix4x4[CubeShadowArray.MaxPointShadowLights * CubeShadowArray.FacesPerLight];
         private static int _pointShadowTopCount;
@@ -463,13 +463,13 @@ namespace GameEditor.Framework.Renderer.Server
             float bestDirectionalShadowScore = float.NegativeInfinity;
             bool hasDirectionalShadowLight = false;
 
-            for (int li = 0; li < world.Entities.Count; li++)
+            foreach (var row in world.Query<ActiveFlag, LightComponent, Transform>()
+                                     .EnumerateWithEntities<ActiveFlag, LightComponent, Transform>())
             {
-                Entity lid = world.Entities[li];
-                if (!world.TryGetComponent<ActiveFlag>(lid, out var la) || !la.Active) continue;
-                if (!world.TryGetComponent<LightComponent>(lid, out var lc)) continue;
+                if (!row.Item1.Value.Active) continue;
+                ref readonly var lc = ref row.Item2.Value;
                 if (!lc.Enabled) continue;
-                if (!world.TryGetComponent<Transform>(lid, out var lt)) continue;
+                ref readonly var lt = ref row.Item3.Value;
 
                 Matrix4x4 lightWorld = Transform.GetWorldMatrix(world, lt);
                 var worldPos = new Vector3(lightWorld.M41, lightWorld.M42, lightWorld.M43);
@@ -506,11 +506,11 @@ namespace GameEditor.Framework.Renderer.Server
 
                 if (lc.CastsShadows && lc.Type == GameEditor.Framework.ECS.Components.LightType.Spot)
                 {
-                    TryInsertTopSpotShadowIndex(li, importance);
+                    TryInsertTopSpotShadow(row.Entity, importance);
                 }
                 else if (lc.CastsShadows && lc.Type == GameEditor.Framework.ECS.Components.LightType.Point)
                 {
-                    TryInsertTopPointShadowIndex(li, importance);
+                    TryInsertTopPointShadow(row.Entity, importance);
                 }
             }
 
@@ -541,8 +541,7 @@ namespace GameEditor.Framework.Renderer.Server
 
             for (int si = 0; si < _spotShadowTopCount; si++)
             {
-                int lightEntityListIndex = _spotShadowTopIndices[si];
-                Entity sid = world.Entities[lightEntityListIndex];
+                Entity sid = _spotShadowTopEntities[si];
                 if (!world.TryGetComponent<ActiveFlag>(sid, out var sa) || !sa.Active) continue;
                 if (!world.TryGetComponent<LightComponent>(sid, out var slc) || slc.Type != GameEditor.Framework.ECS.Components.LightType.Spot || !slc.CastsShadows) continue;
                 if (!world.TryGetComponent<Transform>(sid, out var slt)) continue;
@@ -579,8 +578,7 @@ namespace GameEditor.Framework.Renderer.Server
 
             for (int pi = 0; pi < _pointShadowTopCount; pi++)
             {
-                int lightEntityListIndex = _pointShadowTopIndices[pi];
-                Entity pid = world.Entities[lightEntityListIndex];
+                Entity pid = _pointShadowTopEntities[pi];
                 if (!world.TryGetComponent<ActiveFlag>(pid, out var pa) || !pa.Active) continue;
                 if (!world.TryGetComponent<LightComponent>(pid, out var plc) || plc.Type != GameEditor.Framework.ECS.Components.LightType.Point || !plc.CastsShadows) continue;
                 if (!world.TryGetComponent<Transform>(pid, out var plt)) continue;
@@ -738,12 +736,13 @@ namespace GameEditor.Framework.Renderer.Server
             max = new Vector3(float.MinValue);
             bool any = false;
 
-            for (int i = 0; i < world.Entities.Count; i++)
+            foreach (var row in world.Query<ActiveFlag, MeshRenderer, Transform>()
+                                     .Enumerate<ActiveFlag, MeshRenderer, Transform>())
             {
-                Entity id = world.Entities[i];
-                if (!world.TryGetComponent<ActiveFlag>(id, out var active) || !active.Active) continue;
-                if (!world.TryGetComponent<MeshRenderer>(id, out var mr) || !mr.Visible || !mr.CastsShadows) continue;
-                if (!world.TryGetComponent<Transform>(id, out var tf)) continue;
+                if (!row.Item1.Value.Active) continue;
+                ref readonly var mr = ref row.Item2.Value;
+                if (!mr.Visible || !mr.CastsShadows) continue;
+                ref readonly var tf = ref row.Item3.Value;
 
                 MeshResource? mesh = _meshReg.GetByPath(mr.MeshPath);
                 if (mesh == null) continue;
@@ -847,18 +846,18 @@ namespace GameEditor.Framework.Renderer.Server
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static void TryInsertTopSpotShadowIndex(int entityListIndex, float score)
+        private static void TryInsertTopSpotShadow(Entity entity, float score)
         {
             if (_spotShadowTopCount < ShadowAtlas.SpotSlices)
             {
                 int insert = _spotShadowTopCount;
                 while (insert > 0 && score > _spotShadowTopScores[insert - 1])
                 {
-                    _spotShadowTopIndices[insert] = _spotShadowTopIndices[insert - 1];
+                    _spotShadowTopEntities[insert] = _spotShadowTopEntities[insert - 1];
                     _spotShadowTopScores[insert] = _spotShadowTopScores[insert - 1];
                     insert--;
                 }
-                _spotShadowTopIndices[insert] = entityListIndex;
+                _spotShadowTopEntities[insert] = entity;
                 _spotShadowTopScores[insert] = score;
                 _spotShadowTopCount++;
                 return;
@@ -869,27 +868,27 @@ namespace GameEditor.Framework.Renderer.Server
             int at = ShadowAtlas.SpotSlices - 1;
             while (at > 0 && score > _spotShadowTopScores[at - 1])
             {
-                _spotShadowTopIndices[at] = _spotShadowTopIndices[at - 1];
+                _spotShadowTopEntities[at] = _spotShadowTopEntities[at - 1];
                 _spotShadowTopScores[at] = _spotShadowTopScores[at - 1];
                 at--;
             }
-            _spotShadowTopIndices[at] = entityListIndex;
+            _spotShadowTopEntities[at] = entity;
             _spotShadowTopScores[at] = score;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static void TryInsertTopPointShadowIndex(int entityListIndex, float score)
+        private static void TryInsertTopPointShadow(Entity entity, float score)
         {
             if (_pointShadowTopCount < CubeShadowArray.MaxPointShadowLights)
             {
                 int insert = _pointShadowTopCount;
                 while (insert > 0 && score > _pointShadowTopScores[insert - 1])
                 {
-                    _pointShadowTopIndices[insert] = _pointShadowTopIndices[insert - 1];
+                    _pointShadowTopEntities[insert] = _pointShadowTopEntities[insert - 1];
                     _pointShadowTopScores[insert] = _pointShadowTopScores[insert - 1];
                     insert--;
                 }
-                _pointShadowTopIndices[insert] = entityListIndex;
+                _pointShadowTopEntities[insert] = entity;
                 _pointShadowTopScores[insert] = score;
                 _pointShadowTopCount++;
                 return;
@@ -900,11 +899,11 @@ namespace GameEditor.Framework.Renderer.Server
             int at = CubeShadowArray.MaxPointShadowLights - 1;
             while (at > 0 && score > _pointShadowTopScores[at - 1])
             {
-                _pointShadowTopIndices[at] = _pointShadowTopIndices[at - 1];
+                _pointShadowTopEntities[at] = _pointShadowTopEntities[at - 1];
                 _pointShadowTopScores[at] = _pointShadowTopScores[at - 1];
                 at--;
             }
-            _pointShadowTopIndices[at] = entityListIndex;
+            _pointShadowTopEntities[at] = entity;
             _pointShadowTopScores[at] = score;
         }
 
