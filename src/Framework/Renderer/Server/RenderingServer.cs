@@ -220,13 +220,14 @@ namespace GameEditor.Framework.Renderer.Server
 
             FrameProfiler.Begin(FrameProfiler.Zone.EcsExtract);
             _drawCount = 0;
-            for (int ei = 0; ei < world.Entities.Count; ei++)
+            foreach (var row in world.Query<ActiveFlag, MeshRenderer, Transform>()
+                                     .Enumerate<ActiveFlag, MeshRenderer, Transform>())
             {
                 if (_drawCount >= RenderingConstants.MAX_DRAWS) break;
-                Entity id = world.Entities[ei];
-                if (!world.TryGetComponent<ActiveFlag>(id, out var active) || !active.Active) continue;
-                if (!world.TryGetComponent<MeshRenderer>(id, out var mr) || !mr.Visible) continue;
-                if (!world.TryGetComponent<Transform>(id, out var tf)) continue;
+                if (!row.Item1.Value.Active) continue;
+                ref readonly var mr = ref row.Item2.Value;
+                if (!mr.Visible) continue;
+                ref readonly var tf = ref row.Item3.Value;
 
                 MeshResource? meshRes = _meshReg.GetByPath(mr.MeshPath);
                 if (meshRes == null) continue;
