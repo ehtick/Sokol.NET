@@ -286,6 +286,24 @@ public sealed class Screen : Widget
             Renderer.Restore();
         }
 
+        // Pre-warm the active popup's glyphs into the font atlas while we are still
+        // inside this NanoVG frame.  DrawActivePopupOverlay() opens a second NVG
+        // frame (after ImGui has rendered) so the popup appears on top; but if that
+        // second frame bakes new glyphs it would call sg_update_image a second time
+        // in the same Sokol frame, triggering VALIDATE_UPDIMG_ONCE.  Rendering the
+        // popup invisibly here ensures all required glyphs are already in the atlas
+        // before the second NVG frame starts, so that second frame never dirtys the
+        // texture and never calls sg_update_image again.
+        if (_activePopup != null)
+        {
+            Renderer.Save();
+            Renderer.SetGlobalAlpha(0f);
+            var sp = _activePopup.ScreenPosition;
+            Renderer.Translate(sp.X, sp.Y);
+            _activePopup.DrawPopupOverlay(Renderer);
+            Renderer.Restore();
+        }
+
         Renderer.EndFrame();
 
         if (drawActiveOverlay)
