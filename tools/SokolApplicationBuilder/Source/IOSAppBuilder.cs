@@ -734,287 +734,116 @@ namespace SokolApplicationBuilder
                 appBundlePath = foundPath;
                 Log.LogMessage(MessageImportance.High, $"Found app bundle at: {appBundlePath}");
 
-                // Check if ios-deploy is available
-                var checkResult = Cli.Wrap("which")
-                    .WithArguments("ios-deploy")
-                    .WithStandardOutputPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
-                    .WithStandardErrorPipe(PipeTarget.ToDelegate(s => Log.LogError(s)))
-                    .ExecuteBufferedAsync()
-                    .GetAwaiter()
-                    .GetResult();
+                // Determine the target device ID.
+                // If the caller passed --ios-device, use it directly (supports WiFi devices).
+                // Otherwise fall back to ios-deploy -c USB scan.
+                string targetDeviceId;
+                string targetDeviceName;
 
-                if (checkResult.ExitCode != 0)
-                {
-                    Log.LogError("ios-deploy not found. Install with: npm install -g ios-deploy");
-                    return false;
-                }
-
-                // Get connected device ID
-                var deviceResult = Cli.Wrap("ios-deploy")
-                    .WithArguments("-c")
-                    .WithStandardOutputPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
-                    .WithStandardErrorPipe(PipeTarget.ToDelegate(s => Log.LogError(s)))
-                    .ExecuteBufferedAsync()
-                    .GetAwaiter()
-                    .GetResult();
-
-                if (deviceResult.ExitCode != 0)
-                {
-                    Log.LogError("Failed to get connected devices");
-                    return false;
-                }
-
-                Log.LogMessage(MessageImportance.Normal, $"Device detection output: {deviceResult.StandardOutput}");
-
-                // Parse all available devices
-                var availableDevices = new List<(string Id, string Name)>();
-                var lines = deviceResult.StandardOutput.Split('\n');
-                foreach (var line in lines)
-                {
-                    if (line.Contains("Found") && line.Contains("connected through USB"))
-                    {
-                        // Extract device ID from line like: "[....] Found 00008030-000135660CE3802E (D79AP, iPhone SE 2G, iphoneos, arm64e, 18.6.2, 22G100) a.k.a. 'iPhone' connected through USB."
-                        var foundIndex = line.IndexOf("Found");
-                        if (foundIndex >= 0)
-                        {
-                            var afterFound = line.Substring(foundIndex + 6); // Skip "Found "
-                            var deviceIdEnd = afterFound.IndexOf(" ");
-                            if (deviceIdEnd > 0)
-                            {
-                                var extractedDeviceId = afterFound.Substring(0, deviceIdEnd).Trim();
-                                var deviceName = "Unknown";
-                                
-                                // Try to extract device name
-                                var akaIndex = afterFound.IndexOf("a.k.a.");
-                                if (akaIndex >= 0)
-                                {
-                                    deviceName = afterFound.Substring(akaIndex + 7).Trim('\'', ' ');
-                                }
-                                
-                                availableDevices.Add((extractedDeviceId, deviceName));
-                            }
-                        }
-                    }
-                }
-
-                if (availableDevices.Count == 0)
-                {
-                    Log.LogError("No iOS devices found connected via USB");
-                    return false;
-                }
-
-                // Select device(s) based on user preference
-                List<(string Id, string Name)> selectedDevices = new List<(string Id, string Name)>();
-
-                // Check if user specified a device ID
                 if (!string.IsNullOrEmpty(opts.IOSDeviceId))
                 {
-                    // User specified a specific device
-                    var matchingDevice = availableDevices.FirstOrDefault(d => d.Id.Contains(opts.IOSDeviceId) || d.Name.Contains(opts.IOSDeviceId));
-                    if (matchingDevice.Id == null)
-                    {
-                        Log.LogError($"Specified iOS device '{opts.IOSDeviceId}' not found. Available devices:");
-                        foreach (var device in availableDevices)
-                        {
-                            Log.LogError($"  {device.Id} - {device.Name}");
-                        }
-                        return false;
-                    }
-                    selectedDevices = new List<(string Id, string Name)> { matchingDevice };
-                    Log.LogMessage(MessageImportance.High, $"✅ Using specified iOS device: {matchingDevice.Name} ({matchingDevice.Id})");
-                }
-                else if (availableDevices.Count == 1)
-                {
-                    // If only one device, use it automatically
-                    selectedDevices.Add(availableDevices[0]);
-                    Log.LogMessage(MessageImportance.High, $"✅ Found single device: {availableDevices[0].Name} ({availableDevices[0].Id})");
+                    targetDeviceId   = opts.IOSDeviceId;
+                    targetDeviceName = opts.IOSDeviceId;
+                    Log.LogMessage(MessageImportance.High, $"Using specified iOS device: {targetDeviceId}");
                 }
                 else
                 {
-                    // Multiple devices - handle interactive or automatic selection
-                    Log.LogMessage(MessageImportance.High, $"📱 Multiple iOS devices detected ({availableDevices.Count} devices):");
-                    Log.LogMessage(MessageImportance.High, "======================================================");
+                    // Legacy USB-only scan via ios-deploy -c
+                    var checkResult = Cli.Wrap("which")
+                        .WithArguments("ios-deploy")
+                        .WithValidation(CommandResultValidation.None)
+                        .ExecuteBufferedAsync().GetAwaiter().GetResult();
 
-                    for (int i = 0; i < availableDevices.Count; i++)
+                    if (checkResult.ExitCode != 0)
                     {
-                        Log.LogMessage(MessageImportance.High, $"{i + 1}) {availableDevices[i].Name} ({availableDevices[i].Id})");
-                    }
-                    Log.LogMessage(MessageImportance.High, $"{availableDevices.Count + 1}) All devices");
-
-                    if (opts.Interactive)
-                    {
-                        // Interactive mode - prompt user for selection
-                        Console.WriteLine();
-                        int selection = -1;
-                        while (selection < 1 || selection > availableDevices.Count + 1)
-                        {
-                            Console.Write($"Select device (1-{availableDevices.Count + 1}): ");
-                            string? input = Console.ReadLine();
-                            if (int.TryParse(input, out selection) && selection >= 1 && selection <= availableDevices.Count + 1)
-                            {
-                                if (selection == availableDevices.Count + 1)
-                                {
-                                    // All devices selected
-                                    selectedDevices = availableDevices.ToList();
-                                    Log.LogMessage(MessageImportance.High, $"✅ Selected all devices ({availableDevices.Count} devices)");
-                                }
-                                else
-                                {
-                                    selectedDevices.Add(availableDevices[selection - 1]);
-                                    Log.LogMessage(MessageImportance.High, $"✅ Selected device: {availableDevices[selection - 1].Name} ({availableDevices[selection - 1].Id})");
-                                }
-                                break;
-                            }
-                            else
-                            {
-                                Console.WriteLine($"❌ Invalid selection. Please enter a number between 1 and {availableDevices.Count + 1}.");
-                                selection = -1;
-                            }
-                        }
-                    }
-                    else
-                    {
-                        // Non-interactive mode - use first device with warning
-                        selectedDevices.Add(availableDevices[0]);
-                        Log.LogMessage(MessageImportance.High, $"⚠️  Using first device: {availableDevices[0].Name} ({availableDevices[0].Id})");
-                        Log.LogWarning("Multiple devices found. Using the first one. Use --ios-device <device_id> to specify which device to use, or use --interactive for device selection.");
-                    }
-                }
-
-                // Install on each selected device
-                foreach (var device in selectedDevices)
-                {
-                    string deviceId = device.Id;
-                    string deviceName = device.Name;
-
-                    if (string.IsNullOrEmpty(deviceId))
-                    {
-                        Log.LogError("No iOS device found connected via USB");
+                        Log.LogError("ios-deploy not found and no --ios-device specified. Install with: brew install ios-deploy");
                         return false;
                     }
 
-                Log.LogMessage(MessageImportance.High, $"Installing to device: {deviceName} ({deviceId})");
+                    var deviceResult = Cli.Wrap("ios-deploy")
+                        .WithArguments("-c --timeout 2")
+                        .WithValidation(CommandResultValidation.None)
+                        .ExecuteBufferedAsync().GetAwaiter().GetResult();
 
-                // Try to uninstall the app first if it exists (helps with installation errors)
-                try
-                {
-                    string bundleId = $"{iOSBundlePrefix}.{sanitizedProjectName}-ios-app";
-                    Log.LogMessage(MessageImportance.Normal, $"Attempting to uninstall existing app from device: {deviceName}");
-                    var uninstallResult = Cli.Wrap("ios-deploy")
-                        .WithArguments($"--id {deviceId} --uninstall_only --bundle_id {bundleId}")
-                        .WithStandardOutputPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
-                        .WithStandardErrorPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
-                        .ExecuteBufferedAsync()
-                        .GetAwaiter()
-                        .GetResult();
-
-                    // Note: uninstall may fail if app is not installed, which is fine
-                    if (uninstallResult.ExitCode == 0)
+                    var usbDevices = new List<(string Id, string Name)>();
+                    foreach (var rawLine in deviceResult.StandardOutput.Split('\n'))
                     {
-                        Log.LogMessage(MessageImportance.Normal, $"Successfully uninstalled existing app from {deviceName}");
+                        if (!rawLine.Contains("Found")) continue;
+                        var afterFound = rawLine.Substring(rawLine.IndexOf("Found") + 6);
+                        var idEnd      = afterFound.IndexOf(" ");
+                        if (idEnd <= 0) continue;
+                        var id   = afterFound.Substring(0, idEnd).Trim();
+                        var name = "Unknown";
+                        var aka  = afterFound.IndexOf("a.k.a.");
+                        if (aka >= 0) name = afterFound.Substring(aka + 7).Trim('\'', ' ');
+                        usbDevices.Add((id, name));
                     }
-                }
-                catch (Exception ex)
-                {
-                    Log.LogMessage(MessageImportance.Normal, $"Uninstall attempt failed (app may not be installed): {ex.Message}");
-                }
 
-                var installResult = Cli.Wrap("ios-deploy")
-                    .WithArguments($"--id {deviceId} --bundle \"{appBundlePath}\" --no-wifi")
-                    .WithStandardOutputPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
-                    .WithStandardErrorPipe(PipeTarget.ToDelegate(s => Log.LogError(s)))
-                    .ExecuteBufferedAsync()
-                    .GetAwaiter()
-                    .GetResult();
-                    
-                if (installResult.ExitCode != 0)
-                {
-                    // Check for common installation errors and provide helpful suggestions
-                    string errorOutput = installResult.StandardError ?? "";
-                    if (errorOutput.Contains("0xe8008001") || errorOutput.Contains("unknown error"))
+                    if (usbDevices.Count == 0)
                     {
-                        Log.LogMessage(MessageImportance.Normal, $"Installation failed with error 0xe8008001. This can happen due to:");
-                        Log.LogMessage(MessageImportance.Normal, $"  - Trust issues with developer certificate");
-                        Log.LogMessage(MessageImportance.Normal, $"  - Provisioning profile problems");
-                        Log.LogMessage(MessageImportance.Normal, $"  - App already installed with different signing");
-                        Log.LogMessage(MessageImportance.Normal, $"");
-                        Log.LogMessage(MessageImportance.Normal, $"Troubleshooting steps:");
-                        Log.LogMessage(MessageImportance.Normal, $"  1. On your iOS device, go to Settings > General > VPN & Device Management");
-                        Log.LogMessage(MessageImportance.Normal, $"  2. Trust the developer certificate for 'Eli Aloni'");
-                        Log.LogMessage(MessageImportance.Normal, $"  3. Try restarting your iOS device");
-                        Log.LogMessage(MessageImportance.Normal, $"  4. Try a different USB cable or USB port");
-                        Log.LogMessage(MessageImportance.Normal, $"");
-                        Log.LogMessage(MessageImportance.Normal, $"Retrying installation...");
-                        
-                        // Retry installation once
-                        installResult = Cli.Wrap("ios-deploy")
-                            .WithArguments($"--id {deviceId} --bundle \"{appBundlePath}\" --no-wifi")
-                            .WithStandardOutputPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
-                            .WithStandardErrorPipe(PipeTarget.ToDelegate(s => Log.LogError(s)))
-                            .ExecuteBufferedAsync()
-                            .GetAwaiter()
-                            .GetResult();
-                    }
-                    
-                    if (installResult.ExitCode != 0)
-                    {
-                        Log.LogError($"Installation failed on {deviceName}: {installResult.StandardError}");
+                        Log.LogError("No iOS devices found via USB. Connect a device with a cable or pass --ios-device <UDID> for WiFi install.");
                         return false;
                     }
+
+                    targetDeviceId   = usbDevices[0].Id;
+                    targetDeviceName = usbDevices[0].Name;
+                    Log.LogMessage(MessageImportance.High, $"Found USB device: {targetDeviceName} ({targetDeviceId})");
                 }
 
-                    Log.LogMessage(MessageImportance.High, $"App installed successfully on device: {deviceName}!");
+                // ── Install ───────────────────────────────────────────────────────
+                // Primary: xcrun devicectl — works over WiFi and USB (Xcode 15+, iOS 17+)
+                bool installed = TryInstallViaDevicectl(targetDeviceId, targetDeviceName, appBundlePath);
 
-                    // Launch the app if requested
-                    if (runAfterInstall)
+                // Fallback: ios-deploy without --no-wifi (supports WiFi if paired, and USB)
+                if (!installed)
+                    installed = TryInstallViaIosDeploy(targetDeviceId, targetDeviceName, appBundlePath);
+
+                if (!installed)
+                {
+                    Log.LogError($"All installation methods failed for device {targetDeviceName} ({targetDeviceId}).");
+                    return false;
+                }
+
+                Log.LogMessage(MessageImportance.High, $"App installed successfully on device: {targetDeviceName}!");
+
+                // ── Launch ────────────────────────────────────────────────────────
+                if (runAfterInstall)
+                {
+                    Log.LogMessage(MessageImportance.High, $"Launching app on device: {targetDeviceName} ({targetDeviceId})");
+
+                    string infoPlistPath = Path.Combine(appBundlePath, "Info.plist");
+                    string bundleId      = "";
+
+                    try
                     {
-                        Log.LogMessage(MessageImportance.High, $"Launching app on device: {deviceName} ({deviceId})");
+                        var plistResult = Cli.Wrap("plutil")
+                            .WithArguments($"-extract CFBundleIdentifier raw \"{infoPlistPath}\"")
+                            .WithValidation(CommandResultValidation.None)
+                            .ExecuteBufferedAsync().GetAwaiter().GetResult();
 
-                        // Extract bundle ID from Info.plist
-                        string infoPlistPath = Path.Combine(appBundlePath, "Info.plist");
-                        string bundleId = "";
+                        if (plistResult.ExitCode == 0)
+                            bundleId = plistResult.StandardOutput.Trim();
+                        else
+                            Log.LogWarning($"Could not extract bundle ID from Info.plist: {plistResult.StandardError}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.LogWarning($"plutil failed: {ex.Message}");
+                    }
 
-                        try
-                        {
-                            // Use plutil to extract bundle ID from binary plist
-                            var plistResult = Cli.Wrap("plutil")
-                                .WithArguments($"-extract CFBundleIdentifier raw \"{infoPlistPath}\"")
-                                .ExecuteBufferedAsync()
-                                .GetAwaiter()
-                                .GetResult();
-
-                            if (plistResult.ExitCode == 0)
-                            {
-                                bundleId = plistResult.StandardOutput.Trim();
-                            }
-                            else
-                            {
-                                Log.LogError($"Failed to extract bundle ID from Info.plist: {plistResult.StandardError}");
-                                return false;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Log.LogError($"Failed to extract bundle ID: {ex.Message}");
-                            return false;
-                        }
-
-                        // Launch the app using devicectl (more reliable than ios-deploy)
+                    if (!string.IsNullOrEmpty(bundleId))
+                    {
                         var launchResult = Cli.Wrap("xcrun")
-                            .WithArguments($"devicectl device process launch --device {deviceId} {bundleId}")
+                            .WithArguments($"devicectl device process launch --device {targetDeviceId} {bundleId}")
                             .WithStandardOutputPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
-                            .WithStandardErrorPipe(PipeTarget.ToDelegate(s => Log.LogError(s)))
-                            .ExecuteBufferedAsync()
-                            .GetAwaiter()
-                            .GetResult();
+                            .WithStandardErrorPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
+                            .WithValidation(CommandResultValidation.None)
+                            .ExecuteBufferedAsync().GetAwaiter().GetResult();
 
                         if (launchResult.ExitCode != 0)
-                        {
-                            Log.LogError($"Failed to launch app on {deviceName}: {launchResult.StandardError}");
-                            return false;
-                        }
-
-                        Log.LogMessage(MessageImportance.High, $"App launched successfully on device: {deviceName}!");
+                            Log.LogWarning($"App launch failed (exit {launchResult.ExitCode}): {launchResult.StandardError}");
+                        else
+                            Log.LogMessage(MessageImportance.High, $"App launched successfully on device: {targetDeviceName}!");
                     }
                 }
 
@@ -1025,6 +854,96 @@ namespace SokolApplicationBuilder
                 Log.LogError($"Failed to install on device: {ex.Message}");
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Installs the app bundle using <c>xcrun devicectl</c> (Xcode 15+, iOS 17+).
+        /// Works over WiFi and USB; no extra tools required beyond a standard Xcode install.
+        /// The device must have "Connect via Network" enabled (Xcode → Window → Devices → checkbox).
+        /// </summary>
+        private bool TryInstallViaDevicectl(string deviceId, string deviceName, string appBundlePath)
+        {
+            try
+            {
+                Log.LogMessage(MessageImportance.High, $"[Install] Trying xcrun devicectl for {deviceName}...");
+
+                var result = Cli.Wrap("xcrun")
+                    .WithArguments($"devicectl device install app --device {deviceId} \"{appBundlePath}\"")
+                    .WithStandardOutputPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
+                    .WithStandardErrorPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
+                    .WithValidation(CommandResultValidation.None)
+                    .ExecuteBufferedAsync().GetAwaiter().GetResult();
+
+                if (result.ExitCode == 0)
+                {
+                    Log.LogMessage(MessageImportance.High, $"[Install] devicectl succeeded.");
+                    return true;
+                }
+
+                Log.LogMessage(MessageImportance.Normal, $"[Install] devicectl failed (exit {result.ExitCode}): {result.StandardError}");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Log.LogMessage(MessageImportance.Normal, $"[Install] devicectl not available: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Installs the app bundle using <c>ios-deploy</c> (brew install ios-deploy).
+        /// Works over WiFi when the device is network-paired; also works over USB.
+        /// Does NOT pass --no-wifi so both transports are allowed.
+        /// </summary>
+        private bool TryInstallViaIosDeploy(string deviceId, string deviceName, string appBundlePath)
+        {
+            try
+            {
+                string iosDeploy = FindTool("ios-deploy");
+                if (string.IsNullOrEmpty(iosDeploy))
+                {
+                    Log.LogMessage(MessageImportance.Normal, "[Install] ios-deploy not found, skipping.");
+                    return false;
+                }
+
+                Log.LogMessage(MessageImportance.High, $"[Install] Trying ios-deploy for {deviceName}...");
+
+                var result = Cli.Wrap(iosDeploy)
+                    .WithArguments($"--id {deviceId} --bundle \"{appBundlePath}\"")
+                    .WithStandardOutputPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
+                    .WithStandardErrorPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
+                    .WithValidation(CommandResultValidation.None)
+                    .ExecuteBufferedAsync().GetAwaiter().GetResult();
+
+                if (result.ExitCode == 0)
+                {
+                    Log.LogMessage(MessageImportance.High, $"[Install] ios-deploy succeeded.");
+                    return true;
+                }
+
+                Log.LogMessage(MessageImportance.Normal, $"[Install] ios-deploy failed (exit {result.ExitCode}): {result.StandardError}");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Log.LogMessage(MessageImportance.Normal, $"[Install] ios-deploy error: {ex.Message}");
+                return false;
+            }
+        }
+
+        private static string FindTool(string name)
+        {
+            var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
+            char sep    = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ';' : ':';
+            var dirs    = new List<string>(pathEnv.Split(sep, StringSplitOptions.RemoveEmptyEntries));
+            foreach (var extra in new[] { "/usr/bin", "/usr/local/bin", "/opt/homebrew/bin", "/opt/local/bin" })
+                if (!dirs.Contains(extra)) dirs.Add(extra);
+            foreach (var dir in dirs)
+            {
+                var candidate = Path.Combine(dir, name);
+                if (File.Exists(candidate)) return candidate;
+            }
+            return string.Empty;
         }
 
         private string GetProjectName(string projectPath)
