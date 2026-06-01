@@ -46,6 +46,8 @@ jobs:
           while IFS= read -r file; do
             if [[ "$file" == ext/sokol ]] || \
                [[ "$file" == ext/sokol/* ]] || \
+               [[ "$file" == ext/nanovg ]] || \
+               [[ "$file" == ext/nanovg/* ]] || \
                [[ "$file" == ext/CMakeLists.txt ]] || \
                [[ "$file" == ext/sokol_defines.h ]] || \
                [[ "$file" == ext/sokol.c ]] || \
