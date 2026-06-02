@@ -38,13 +38,23 @@ namespace GameEditor.Framework.Renderer.Server.Lod
     /// Levels must be sorted <b>descending</b> by <see cref="LodLevel.ScreenCoverageThreshold"/>
     /// (highest coverage = closest detail = index 0).
     ///
-    /// Example (3-level object):
+    /// Each level's <see cref="LodLevel.HysteresisMargin"/> must be smaller than the
+    /// coverage gap to the next coarser threshold (the constructor asserts this). If a
+    /// margin is too large, that level's stay-bar (<c>threshold − margin</c>) collapses to
+    /// at or below the next threshold and the entity can never downgrade or cull from it —
+    /// it gets pinned at that level forever.
+    ///
+    /// Example (3-level object) — note the explicit margins, each well under its gap:
     /// <code>
-    ///   Levels[0].ScreenCoverageThreshold = 0.10f  // high detail when close
-    ///   Levels[1].ScreenCoverageThreshold = 0.02f  // medium detail
-    ///   Levels[2].ScreenCoverageThreshold = 0.005f // low detail
-    ///   // below 0.005 → <see cref="LodSelector.Skip"/> (cull)
+    ///   new LodGroup(
+    ///       new LodLevel(0.10f,  0.01f),   // LOD 0 — high detail when close
+    ///       new LodLevel(0.02f,  0.004f),  // LOD 1 — medium detail
+    ///       new LodLevel(0.005f, 0.001f)); // LOD 2 — low detail; below 0.005 → Skip (cull)
     /// </code>
+    /// (The <see cref="LodLevel"/> default margin of 0.02 suits ladders whose thresholds
+    /// live on a ~[0,1] coverage scale; small-threshold ladders like the one above must
+    /// pass smaller margins, or the constructor assert will fire — see
+    /// <see cref="LodSelector.Skip"/> and RENDERING_SERVER_M3_REVIEW.md §3.10.)
     /// </summary>
     public struct LodGroup
     {
@@ -55,6 +65,21 @@ namespace GameEditor.Framework.Renderer.Server.Lod
         {
             System.Diagnostics.Debug.Assert(levels.Length <= 16,
                 $"LodGroup: {levels.Length} levels exceeds the 4-bit sort-key capacity (max 16). Wrap-around would mis-group draw commands.");
+
+            // Each level's hysteresis margin must be smaller than the coverage gap to the
+            // next coarser level (the last level's "next" is the Skip/cull boundary at 0).
+            // Otherwise the stay-bar (threshold − margin) drops to <= the coarser threshold
+            // and the entity can never downgrade/cull from this level — it is pinned forever.
+            // This also catches levels that are not sorted strictly descending (gap <= 0).
+            // See RENDERING_SERVER_M3_REVIEW.md §3.10.
+            for (int i = 0; i < levels.Length; i++)
+            {
+                float nextThr  = (i + 1 < levels.Length) ? levels[i + 1].ScreenCoverageThreshold : 0f;
+                float gapBelow = levels[i].ScreenCoverageThreshold - nextThr;
+                System.Diagnostics.Debug.Assert(levels[i].HysteresisMargin < gapBelow,
+                    $"LodGroup level {i}: HysteresisMargin {levels[i].HysteresisMargin} must be < the gap to the next coarser threshold ({gapBelow}); a larger margin pins the entity at this level (can never downgrade/cull). Lower the margin or space the thresholds further apart.");
+            }
+
             Levels = levels;
         }
     }

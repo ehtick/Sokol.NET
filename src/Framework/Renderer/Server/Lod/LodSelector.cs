@@ -58,13 +58,26 @@ namespace GameEditor.Framework.Renderer.Server.Lod
                     float thr    = levels[i].ScreenCoverageThreshold;
                     float margin = levels[i].HysteresisMargin;
 
-                    // Hysteresis: upgrading to a finer level (i < previousLevel) requires
-                    // coverage to exceed thr + margin (higher bar, harder to upgrade);
-                    // staying at or downgrading from the current level only requires
-                    // coverage >= thr - margin (lower bar, sticky).
-                    float effectiveThr = (i < previousLevel)
-                        ? thr + margin   // harder to UPGRADE to a finer level
-                        : thr - margin;  // easier to STAY at / drop to current-or-coarser
+                    // Hysteresis makes the current level "sticky" so it doesn't flip-flop
+                    // near a boundary:
+                    //   • UPGRADE to a finer level (i < previousLevel): require coverage
+                    //     to exceed thr + margin — a higher bar, so a tiny increase won't
+                    //     jump us up.
+                    //   • STAY at the current level (i == previousLevel): require only
+                    //     coverage >= thr - margin — a lower bar, so a tiny decrease won't
+                    //     drop us out.
+                    //   • A COARSER level (i > previousLevel): use the nominal thr with NO
+                    //     relaxation. Relaxing coarser levels (thr - margin) would let
+                    //     coverage that ought to Skip/cull still latch onto a too-fine
+                    //     level during descent — see RENDERING_SERVER_M3_REVIEW.md §3.10.
+                    // NOTE: correctness requires margin < the gap to the adjacent coarser
+                    //       threshold; LodGroup's constructor asserts this so the stay-bar
+                    //       (thr - margin) can never collapse to <= the next threshold and
+                    //       pin the entity at a level forever.
+                    float effectiveThr =
+                          i <  previousLevel ? thr + margin   // upgrade: harder
+                        : i == previousLevel ? thr - margin   // stay:    sticky
+                        :                      thr;           // coarser: nominal
 
                     if (coverage >= effectiveThr)
                     {
