@@ -85,6 +85,49 @@ namespace GameEditor.Framework.Renderer.Server.Resources
             return id;
         }
 
+        /// <summary>
+        /// Register a pre-built mesh (already split into sub-meshes) under <paramref name="key"/>
+        /// and upload its GPU buffers. Used by the glTF importer, which assembles vertices itself
+        /// instead of parsing OBJ text. Ref-counted like <see cref="Load"/>; returns the 16-bit id
+        /// (0 on failure or when the registry is full).
+        /// </summary>
+        public ushort RegisterMesh(string key, ObjSubMesh[] subMeshes, in Aabb bounds)
+        {
+            if (_byPath.TryGetValue(key, out var existing))
+            {
+                existing.RefCount++;
+                return existing.Id;
+            }
+            if (subMeshes.Length == 0 || _nextId >= _byId.Length) return 0;
+
+            var subResources = new MeshSubResource[subMeshes.Length];
+            for (int i = 0; i < subMeshes.Length; i++)
+            {
+                subResources[i] = new MeshSubResource
+                {
+                    VertexBuffer = UploadVertexBuffer(subMeshes[i], key, i),
+                    IndexBuffer  = UploadIndexBuffer(subMeshes[i], key, i),
+                    IndexCount   = subMeshes[i].Indices.Length,
+                    MaterialName = subMeshes[i].MaterialName,
+                    MaterialKey  = ""
+                };
+            }
+
+            ushort id = _nextId++;
+            var res = new MeshResource
+            {
+                Id          = id,
+                SourcePath  = key,
+                MtlLib      = "",
+                SubMeshes   = subResources,
+                LocalBounds = bounds,
+                RefCount    = 1
+            };
+            _byPath[key] = res;
+            _byId[id]    = res;
+            return id;
+        }
+
         /// <summary>Decrement ref-count; destroys GPU buffers when count reaches zero.</summary>
         public void Release(string path)
         {

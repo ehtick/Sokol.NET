@@ -22,6 +22,9 @@ namespace GameEditor.Framework.Scene
 
         // Async mesh loads in flight (keyed by MeshPath); avoids duplicate SFilesystem requests.
         private static readonly HashSet<string> _pendingMeshLoads = new(StringComparer.Ordinal);
+        // glTF/GLB files whose resources are currently being (re-)registered — dedupes the
+        // per-file preload when many entities reference the same imported model.
+        private static readonly HashSet<string> _pendingGltfPreloads = new(StringComparer.Ordinal);
 
         // ---- Physics -------------------------------------------------------
         private static IPhysicsWorld? _physics;
@@ -397,6 +400,26 @@ namespace GameEditor.Framework.Scene
 
                 string path = relPath;
                 if (RenderingServer.Meshes.GetByPath(path) != null) continue;
+
+                // glTF/GLB resource key ("<file>.glb#m{i}p{j}"): re-register the file's meshes,
+                // materials, and textures (NOT entities — those are already deserialized). One
+                // preload per unique file covers every primitive it references.
+                int hashIdx = path.IndexOf('#');
+                if (hashIdx > 0)
+                {
+                    string gltfFile = path.Substring(0, hashIdx);
+                    if (gltfFile.EndsWith(".glb", StringComparison.OrdinalIgnoreCase) ||
+                        gltfFile.EndsWith(".gltf", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (_pendingGltfPreloads.Add(gltfFile))
+                        {
+                            string captured = gltfFile;
+                            RenderingServer.PreloadGltfAsync(captured, () => _pendingGltfPreloads.Remove(captured));
+                        }
+                        continue;
+                    }
+                }
+
                 if (_pendingMeshLoads.Contains(path)) continue;
 
                 // Try desktop sync path first (resolves relative → absolute via ProjectFolder).

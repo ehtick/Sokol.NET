@@ -65,6 +65,27 @@ namespace GameEditor.Framework.Renderer.Server.Materials
             return firstId;
         }
 
+        /// <summary>
+        /// Register a pre-built PBR material under <paramref name="key"/> and assign it an id.
+        /// Returns the assigned id (or the existing id if the key is already registered, or 0
+        /// when the registry is full).  Used by the glTF importer and the Inspector's PBR
+        /// material authoring path.
+        /// </summary>
+        public ushort RegisterPbr(string key, PbrMaterial mat)
+        {
+            if (_byPath.TryGetValue(key, out var existing)) return existing.Id;
+            if (_nextId >= _byId.Length) return 0;
+
+            ushort id = _nextId++;
+            mat.Id = id;
+            if (string.IsNullOrEmpty(mat.Name)) mat.Name = key;
+            if (mat.Sampler.id == 0) mat.Sampler = _textures.DefaultSampler;
+
+            _byPath[key] = mat;
+            _byId[id]    = mat;
+            return id;
+        }
+
         /// <summary>Look up a material by 16-bit id. Returns null if not registered.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Material? GetById(ushort id)

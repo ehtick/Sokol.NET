@@ -1,3 +1,4 @@
+using System;
 using System.Numerics;
 using System.Collections.Generic;
 using GameEditor.Framework.ECS;
@@ -184,6 +185,32 @@ namespace GameEditor.Framework.Renderer.Server.Passes
 
             RenderSlice(world, meshRegistry, _atlasDummyColorView, atlas.GetDepthSliceView(slice), in lightViewProj, out int draws);
             return draws;
+        }
+
+        /// <summary>
+        /// Renders all CSM cascades into consecutive atlas slices starting at <paramref name="baseSlice"/>.
+        /// Each element of <paramref name="cascadeVPs"/> corresponds to one cascade, rendered into
+        /// slice <c>baseSlice + i</c>.
+        /// </summary>
+        /// <returns>Total shadow draw calls across all cascades.</returns>
+        public int RenderDirectionalCsmCounted(
+            ECSWorld world,
+            MeshRegistry meshRegistry,
+            ShadowAtlas atlas,
+            int baseSlice,
+            ReadOnlySpan<Matrix4x4> cascadeVPs)
+        {
+            if (!_initialized || !atlas.IsValid) return 0;
+
+            int totalDraws = 0;
+            for (int i = 0; i < cascadeVPs.Length; i++)
+            {
+                Matrix4x4 vp = cascadeVPs[i];
+                RenderSlice(world, meshRegistry, _atlasDummyColorView,
+                    atlas.GetDepthSliceView(baseSlice + i), in vp, out int draws);
+                totalDraws += draws;
+            }
+            return totalDraws;
         }
 
         public void RenderSpot(

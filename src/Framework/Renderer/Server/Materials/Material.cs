@@ -17,5 +17,6 @@ namespace GameEditor.Framework.Renderer.Server.Materials
     {
         BlinnPhong = 0,
         Unlit      = 1,
+        Pbr        = 2,
     }
 }

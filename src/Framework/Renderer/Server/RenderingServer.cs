@@ -20,6 +20,7 @@ using Sokol;
 using static Sokol.SG;
 using static Sokol.Utils;
 using static blinn_phong_shader_cs.Shaders;
+using static pbr_shader_cs_pbr.Shaders;
 using GameEditor.Framework.Core;
 using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
@@ -50,6 +51,7 @@ namespace GameEditor.Framework.Renderer.Server
         private static readonly CubeShadowArray    _cubeShadows = new();
         private static readonly ShadowPass         _shadowPass  = new();
         private static readonly ShadowDebugPass     _shadowDebugPass = new();
+        private static readonly TonemapPass         _tonemapPass = new();
         private static readonly RenderView?[]      _views       = new RenderView[RenderingConstants.MAX_VIEWS];
         private static sg_sampler _shadowSampler;
         private static sg_sampler _cubeShadowSampler;
@@ -150,6 +152,7 @@ namespace GameEditor.Framework.Renderer.Server
             _cubeShadows.Init();
             _shadowPass.Init();
             _shadowDebugPass.Init();
+            _tonemapPass.Init();
             _shadowSampler = sg_make_sampler(new sg_sampler_desc
             {
                 min_filter = sg_filter.SG_FILTER_NEAREST,
@@ -182,6 +185,7 @@ namespace GameEditor.Framework.Renderer.Server
             _texCache.Shutdown();
             _shadowPass.Shutdown();
             _shadowDebugPass.Shutdown();
+            _tonemapPass.Shutdown();
             _cubeShadows.Shutdown();
             _shadowAtlas.Shutdown();
             if (_shadowSampler.id != 0)
@@ -217,6 +221,32 @@ namespace GameEditor.Framework.Renderer.Server
         public static MaterialRegistry Materials => _matReg;
         public static TextureCache     Textures  => _texCache;
 
+        /// <summary>
+        /// Imports a glTF/GLB model from the current project's Assets folder (cross-platform, via
+        /// SFilesystem). Registers its meshes, PBR materials, and textures, then builds the ECS node
+        /// hierarchy under a single container entity. Asynchronous (external .bin/textures are
+        /// fetched first); <paramref name="onComplete"/> fires on the main thread with the container
+        /// entity, or null on failure. Skinning is not yet wired — skinned models import in bind pose.
+        /// </summary>
+        public static void ImportGltfAsync(string assetsRelativePath, Action<Entity?>? onComplete = null)
+        {
+            if (!_initialized) { onComplete?.Invoke(null); return; }
+            GameEditor.Framework.Renderer.Server.Assets.GltfImporter.ImportAsync(
+                assetsRelativePath, _meshReg, _matReg, _texCache, ECSWorld.Instance, onComplete);
+        }
+
+        /// <summary>
+        /// Re-registers a glTF/GLB's meshes, materials, and textures WITHOUT creating entities —
+        /// used on scene reload to re-populate resources referenced by already-deserialized
+        /// MeshRenderers (mesh keys "&lt;file&gt;#m{i}p{j}", material keys "&lt;file&gt;#mat{i}").
+        /// </summary>
+        public static void PreloadGltfAsync(string assetsRelativePath, Action? onComplete = null)
+        {
+            if (!_initialized) { onComplete?.Invoke(); return; }
+            GameEditor.Framework.Renderer.Server.Assets.GltfImporter.PreloadAsync(
+                assetsRelativePath, _meshReg, _matReg, _texCache, ECSWorld.Instance, onComplete);
+        }
+
         // ── Frame loop ───────────────────────────────────────────────────────────────────
 
         public static void BeginFrame()
@@ -236,6 +266,22 @@ namespace GameEditor.Framework.Renderer.Server
             FrameProfiler.Begin(FrameProfiler.Zone.ShadowPass);
             CollectLightsAndShadows(ECSWorld.Instance, in viewProj, renderShadowPasses: true);
             FrameProfiler.End(FrameProfiler.Zone.ShadowPass);
+        }
+
+        /// <summary>
+        /// Applies the HDR tonemap pass using the provided HDR color image.
+        /// Must be called inside an active swapchain <c>sg_begin_pass / sg_end_pass</c> block,
+        /// after all geometry and post-process passes have written to the HDR render target.
+        /// </summary>
+        /// <param name="hdrColorView">sg_view for the RGBA16F HDR offscreen color attachment.</param>
+        /// <param name="exposure">Linear exposure multiplier (default 1.0).</param>
+        /// <param name="tonemapType">
+        ///   0 = Linear, 1 = ACES Narkowicz, 2 = ACES Hill, 3 = KHR PBR Neutral (default 1).
+        /// </param>
+        public static void RenderTonemapPass(sg_view hdrColorView, float exposure = 1.0f, int tonemapType = 1)
+        {
+            if (!_initialized) return;
+            _tonemapPass.Render(hdrColorView, exposure, tonemapType);
         }
 
         public static void SubmitView(
@@ -406,6 +452,14 @@ namespace GameEditor.Framework.Renderer.Server
                 dir_shadow_vp = _hasDirectionalShadow ? _directionalShadowViewProj : Matrix4x4.Identity,
             };
 
+            // PBR view-constant uniform blocks. Built lazily on the first PBR group so
+            // scenes with no PBR materials never touch them (the light block is ~4 KB).
+            bool pbrSharedBuilt = false;
+            pbr_pbr_vs_params_t     pbrVs     = default;
+            pbr_pbr_light_params_t  pbrLights = default;
+            pbr_pbr_camera_params_t pbrCam    = default;
+            pbr_pbr_ibl_params_t    pbrIbl    = default;
+
             // ── 6. Walk sorted groups ─────────────────────────────────────────────────────
 
             FrameProfiler.Begin(FrameProfiler.Zone.DrawCalls);
@@ -442,6 +496,27 @@ namespace GameEditor.Framework.Renderer.Server
 
                 if (mesh == null || mesh.SubMeshes == null || mesh.SubMeshes.Length == 0)
                 {
+                    instanceOffset += groupSize;
+                    i += groupSize;
+                    continue;
+                }
+
+                // ── PBR path ──────────────────────────────────────────────────────────────
+                // PBR materials are applied whole-group (no per-sub-mesh .mtl override).
+                if (mat is PbrMaterial pbrMat)
+                {
+                    if (!pbrSharedBuilt)
+                    {
+                        BuildPbrSharedUniforms(in viewProj, cameraPos,
+                            out pbrVs, out pbrLights, out pbrCam, out pbrIbl);
+                        pbrSharedBuilt = true;
+                    }
+
+                    int pbrInstByteOffset = instanceBaseByteOffset
+                                          + instanceOffset * Unsafe.SizeOf<InstanceData>();
+                    DrawPbrGroup(pbrMat, mesh, groupSize, pbrInstByteOffset, basePipelineFlags,
+                        in pbrVs, in pbrLights, in pbrCam, in pbrIbl);
+
                     instanceOffset += groupSize;
                     i += groupSize;
                     continue;
@@ -765,6 +840,165 @@ namespace GameEditor.Framework.Renderer.Server
                 fs.point_shadow_vp[b + 1] = new Vector4(m.M21, m.M22, m.M23, m.M24);
                 fs.point_shadow_vp[b + 2] = new Vector4(m.M31, m.M32, m.M33, m.M34);
                 fs.point_shadow_vp[b + 3] = new Vector4(m.M41, m.M42, m.M43, m.M44);
+            }
+        }
+
+        // ── PBR forward path ───────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Builds the four view-constant PBR uniform blocks (vertex params, packed light block,
+        /// camera, IBL). Called once per <see cref="SubmitView"/> on the first PBR group.
+        /// The light block reuses the same packed GpuLight[32] format as <see cref="BuildFsParams"/>.
+        /// </summary>
+        private static void BuildPbrSharedUniforms(
+            in Matrix4x4 viewProj, Vector3 cameraPos,
+            out pbr_pbr_vs_params_t vs,
+            out pbr_pbr_light_params_t lights,
+            out pbr_pbr_camera_params_t cam,
+            out pbr_pbr_ibl_params_t ibl)
+        {
+            vs = new pbr_pbr_vs_params_t
+            {
+                view_proj            = viewProj,
+                eye_pos              = cameraPos,
+                use_uniform_skinning = 1,   // unused by the base variant; reserved for skinning
+            };
+
+            lights = new pbr_pbr_light_params_t();
+            int n = _lightBuf.Count;
+            var span = _lightBuf.ActiveSpan;
+            for (int l = 0; l < n; l++)
+            {
+                int b = l * 4;
+                lights.lights_data[b + 0] = span[l].PositionType;
+                lights.lights_data[b + 1] = span[l].DirectionRange;
+                lights.lights_data[b + 2] = span[l].ColorIntensity;
+                lights.lights_data[b + 3] = span[l].SpotShadow;
+            }
+            // Base variant reads only ambient_num.w (= light count); ambient colour comes
+            // from pbr_rendering_flags.ambient_strength. spot/point shadow VPs stay zeroed
+            // (the base variant samples no punctual shadows — that is a later increment).
+            lights.ambient_num = new Vector4(0f, 0f, 0f, n);
+
+            cam = new pbr_pbr_camera_params_t { u_Camera = cameraPos };
+
+            // IBL is disabled in this increment (use_ibl=0). The block must still be valid
+            // because ibl.glsl statically references these fields.
+            ibl = new pbr_pbr_ibl_params_t
+            {
+                u_EnvIntensity      = 1f,
+                u_EnvBlurNormalized = 0f,
+                u_MipCount          = 1,
+                u_EnvRotation       = Matrix4x4.Identity,
+                u_ViewMatrix        = Matrix4x4.Identity,
+                u_ProjectionMatrix  = Matrix4x4.Identity,
+                u_ModelMatrix       = Matrix4x4.Identity,
+            };
+        }
+
+        /// <summary>
+        /// Draws one instanced group of a single <see cref="PbrMaterial"/> through the base
+        /// PBR variant. Unset texture slots fall back to placeholders; the IBL env slots bind
+        /// the placeholder cube (never sampled while use_ibl=0).
+        /// </summary>
+        private static void DrawPbrGroup(
+            PbrMaterial mat, MeshResource mesh, int groupSize, int instanceByteOffset,
+            PipelineFlags basePipelineFlags,
+            in pbr_pbr_vs_params_t vs,
+            in pbr_pbr_light_params_t lights,
+            in pbr_pbr_camera_params_t cam,
+            in pbr_pbr_ibl_params_t ibl)
+        {
+            bool blend = mat.AlphaMode == 2;
+            PipelineFlags pf = basePipelineFlags;
+            if (mat.DoubleSided) pf |= PipelineFlags.DoubleSided;
+            if (blend)           pf |= PipelineFlags.AlphaBlend;
+            sg_apply_pipeline(_shaderCache.GetPbrPipeline(pf));
+
+            var matParams = new pbr_pbr_material_params_t
+            {
+                base_color_factor          = mat.BaseColorFactor,
+                emissive_factor            = mat.EmissiveFactor,
+                metallic_factor            = mat.MetallicFactor,
+                roughness_factor           = mat.RoughnessFactor,
+                has_base_color_tex         = mat.BaseColorMap.id         != 0 ? 1f : 0f,
+                has_metallic_roughness_tex = mat.MetallicRoughnessMap.id != 0 ? 1f : 0f,
+                has_normal_tex             = mat.NormalMap.id            != 0 ? 1f : 0f,
+                has_occlusion_tex          = mat.OcclusionMap.id         != 0 ? 1f : 0f,
+                has_emissive_tex           = mat.EmissiveMap.id          != 0 ? 1f : 0f,
+                alpha_cutoff               = mat.AlphaCutoff,
+                emissive_strength          = mat.EmissiveStrength,
+                occlusion_strength         = mat.OcclusionStrength,
+                ior                        = 1.5f,
+                normal_map_scale           = mat.NormalMapScale,
+                // Base UV path uses texcoord set 0 with identity texture transforms.
+                base_color_tex_scale         = Vector2.One,
+                metallic_roughness_tex_scale = Vector2.One,
+                normal_tex_scale             = Vector2.One,
+                occlusion_tex_scale          = Vector2.One,
+                emissive_tex_scale           = Vector2.One,
+            };
+
+            var flags = new pbr_pbr_rendering_flags_t
+            {
+                use_ibl             = 0,
+                use_punctual_lights = 1,
+                alphamode           = mat.AlphaMode,
+                linear_output       = 0,      // LDR RGBA8 target → tonemap + sRGB in-shader
+                ambient_strength    = 0.25f,
+            };
+
+            sg_apply_uniforms(UB_pbr_pbr_vs_params,       SG_RANGE(ref Unsafe.AsRef(in vs)));
+            sg_apply_uniforms(UB_pbr_pbr_material_params, SG_RANGE(ref matParams));
+            sg_apply_uniforms(UB_pbr_pbr_light_params,    SG_RANGE(ref Unsafe.AsRef(in lights)));
+            sg_apply_uniforms(UB_pbr_pbr_ibl_params,      SG_RANGE(ref Unsafe.AsRef(in ibl)));
+            sg_apply_uniforms(UB_pbr_pbr_camera_params,   SG_RANGE(ref Unsafe.AsRef(in cam)));
+            sg_apply_uniforms(UB_pbr_pbr_rendering_flags, SG_RANGE(ref flags));
+
+            sg_view baseColor = mat.BaseColorMap.id         != 0 ? mat.BaseColorMap         : _texCache.PlaceholderWhite;
+            sg_view metalRgh  = mat.MetallicRoughnessMap.id != 0 ? mat.MetallicRoughnessMap : _texCache.PlaceholderWhite;
+            sg_view normalMap = mat.NormalMap.id            != 0 ? mat.NormalMap            : _texCache.PlaceholderNormal;
+            sg_view occlusion = mat.OcclusionMap.id         != 0 ? mat.OcclusionMap         : _texCache.PlaceholderWhite;
+            sg_view emissive  = mat.EmissiveMap.id          != 0 ? mat.EmissiveMap          : _texCache.PlaceholderBlack;
+            sg_view cube      = _texCache.PlaceholderCube;
+            sg_view lut       = _texCache.PlaceholderWhite;
+            sg_sampler matSmp = mat.Sampler.id != 0 ? mat.Sampler : _texCache.DefaultSampler;
+            sg_sampler iblSmp = _texCache.DefaultSampler;
+
+            foreach (MeshSubResource sub in mesh.SubMeshes)
+            {
+                if (sub.IndexCount == 0 || sub.VertexBuffer.id == 0 || sub.IndexBuffer.id == 0)
+                    continue;
+
+                sg_apply_bindings(new sg_bindings
+                {
+                    vertex_buffers        = { [0] = sub.VertexBuffer, [1] = _instanceBuf.Buffer },
+                    vertex_buffer_offsets = { [1] = instanceByteOffset },
+                    index_buffer          = sub.IndexBuffer,
+                    views = {
+                        [VIEW_pbr_u_BaseColorTexture]         = baseColor,
+                        [VIEW_pbr_u_MetallicRoughnessTexture] = metalRgh,
+                        [VIEW_pbr_u_NormalTexture]            = normalMap,
+                        [VIEW_pbr_u_OcclusionTexture]         = occlusion,
+                        [VIEW_pbr_u_EmissiveTexture]          = emissive,
+                        [VIEW_pbr_u_GGXEnvTexture]            = cube,
+                        [VIEW_pbr_u_LambertianEnvTexture]     = cube,
+                        [VIEW_pbr_u_GGXLUTTexture]            = lut,
+                    },
+                    samplers = {
+                        [SMP_pbr_u_BaseColorSampler]         = matSmp,
+                        [SMP_pbr_u_MetallicRoughnessSampler] = matSmp,
+                        [SMP_pbr_u_NormalSampler]            = matSmp,
+                        [SMP_pbr_u_OcclusionSampler]         = matSmp,
+                        [SMP_pbr_u_EmissiveSampler]          = matSmp,
+                        [SMP_pbr_u_GGXEnvSampler_Raw]        = iblSmp,
+                        [SMP_pbr_u_LambertianEnvSampler_Raw] = iblSmp,
+                        [SMP_pbr_u_GGXLUTSampler_Raw]        = iblSmp,
+                    },
+                });
+
+                sg_draw(0u, (uint)sub.IndexCount, (uint)groupSize);
+                _stats.DrawCalls++;
             }
         }
 

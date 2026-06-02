@@ -22,6 +22,11 @@ namespace GameEditor.Framework.Renderer.Server.Resources
         public sg_view PlaceholderWhite  { get; private set; }
         public sg_view PlaceholderBlack  { get; private set; }
         public sg_view PlaceholderNormal { get; private set; }
+        // 1×1×6 black cubemap — bound to the PBR IBL env slots (binding 5/6) when no
+        // environment map is loaded.  The base pbr variant statically references the
+        // env cube samplers, so a valid cube view must always be bound even though
+        // use_ibl=0 means it is never sampled.
+        public sg_view PlaceholderCube   { get; private set; }
         public sg_sampler DefaultSampler { get; private set; }
 
         // ── lifecycle ────────────────────────────────────────────────────────────────
@@ -42,6 +47,7 @@ namespace GameEditor.Framework.Renderer.Server.Resources
             PlaceholderBlack  = MakePlaceholder("builtin:black",  0xFF_00_00_00);
             // Flat normal map: RGB = (128,128,255) pointing +Z in tangent space.
             PlaceholderNormal = MakePlaceholder("builtin:normal", 0xFF_FF_80_80);
+            PlaceholderCube   = MakeCubePlaceholder("builtin:cube-black", 0xFF_00_00_00);
         }
 
         public void Shutdown()
@@ -61,8 +67,11 @@ namespace GameEditor.Framework.Renderer.Server.Resources
         /// <summary>
         /// Decode image bytes (PNG/JPEG via stb_image) and upload to GPU.
         /// Returns the view handle. Increments ref-count on repeat calls for the same key.
+        /// <paramref name="srgb"/> uploads as <c>SRGB8A8</c> so the GPU auto-linearises on
+        /// sample — required for PBR base-colour and emissive maps (colour data); leave false
+        /// for data maps (normal, metallic-roughness, occlusion).
         /// </summary>
-        public sg_view LoadFromBytes(string key, ReadOnlySpan<byte> data)
+        public sg_view LoadFromBytes(string key, ReadOnlySpan<byte> data, bool srgb = false)
         {
             if (_map.TryGetValue(key, out var existing))
             {
@@ -86,7 +95,7 @@ namespace GameEditor.Framework.Renderer.Server.Resources
             {
                 width        = w,
                 height       = h,
-                pixel_format = SG_PIXELFORMAT_RGBA8,
+                pixel_format = srgb ? SG_PIXELFORMAT_SRGB8A8 : SG_PIXELFORMAT_RGBA8,
                 label        = key
             };
             imgDesc.data.mip_levels[0] = SG_RANGE(pixelSpan);
@@ -154,6 +163,53 @@ namespace GameEditor.Framework.Renderer.Server.Resources
                 ptr  = pixel,
                 size = 4
             };
+
+            sg_image img  = sg_make_image(imgDesc);
+            sg_view  view = sg_make_view(new sg_view_desc
+            {
+                texture = new sg_texture_view_desc { image = img },
+                label   = key
+            });
+
+            var res = new TextureResource
+            {
+                Image    = img,
+                View     = view,
+                Sampler  = DefaultSampler,
+                RefCount = 1,
+                Key      = key
+            };
+            _map[key] = res;
+            return view;
+        }
+
+        // Single-texel cubemap placeholder.  All six faces share one colour.
+        // sokol-gfx packs a cube mip level as the six faces concatenated in one range.
+        private sg_view MakeCubePlaceholder(string key, uint rgba8)
+        {
+            byte r = (byte)(rgba8 & 0xFF);
+            byte g = (byte)((rgba8 >> 8)  & 0xFF);
+            byte b = (byte)((rgba8 >> 16) & 0xFF);
+            byte a = (byte)((rgba8 >> 24) & 0xFF);
+
+            byte* faces = stackalloc byte[6 * 4];
+            for (int f = 0; f < 6; f++)
+            {
+                faces[f * 4 + 0] = r;
+                faces[f * 4 + 1] = g;
+                faces[f * 4 + 2] = b;
+                faces[f * 4 + 3] = a;
+            }
+
+            var imgDesc = new sg_image_desc
+            {
+                type         = sg_image_type.SG_IMAGETYPE_CUBE,
+                width        = 1,
+                height       = 1,
+                pixel_format = SG_PIXELFORMAT_RGBA8,
+                label        = key
+            };
+            imgDesc.data.mip_levels[0] = new sg_range { ptr = faces, size = 6 * 4 };
 
             sg_image img  = sg_make_image(imgDesc);
             sg_view  view = sg_make_view(new sg_view_desc
