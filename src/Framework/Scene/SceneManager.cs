@@ -586,8 +586,10 @@ namespace GameEditor.Framework.Scene
                 if (!world.TryGetComponentRef<Transform>(entity, out var trRef)) continue;
                 ref readonly var tr = ref trRef.Value;
 
-                // MoveKinematic computes implicit velocity so the body correctly pushes dynamic bodies.
-                _physics.MoveKinematic(handle, tr.Position, tr.Rotation, deltaTime);
+                // MoveKinematic needs world-space; child entities store local position/rotation.
+                var kmWorldPos = GetEntityWorldPosition(world, tr);
+                var kmWorldRot = GetEntityWorldRotation(world, tr);
+                _physics.MoveKinematic(handle, kmWorldPos, kmWorldRot, deltaTime);
             }
 
             _physics.Step(deltaTime);
@@ -602,9 +604,11 @@ namespace GameEditor.Framework.Scene
                 if (!world.TryGetComponentRef<Transform>(entity, out var trRef)) continue;
                 ref var tr = ref trRef.Value;
 
-                // Write straight into archetype storage — no struct copy, no AddComponent copy-back.
-                tr.Position = _physics.GetPosition(handle);
-                tr.Rotation = _physics.GetRotation(handle);
+                // Jolt returns world-space; convert to local if this entity has a parent.
+                var (syncLocalPos, syncLocalRot) = WorldToLocalTransform(
+                    world, tr.Parent, _physics.GetPosition(handle), _physics.GetRotation(handle));
+                tr.Position = syncLocalPos;
+                tr.Rotation = syncLocalRot;
             }
 
             // Post-step: sync character controller positions back to Transform.
@@ -791,8 +795,12 @@ namespace GameEditor.Framework.Scene
                     }
                 }
 
+                // Child entities store local position/rotation; Jolt needs world-space.
+                var worldPos = GetEntityWorldPosition(world, tr);
+                var worldRot = GetEntityWorldRotation(world, tr);
+
                 var desc = new BodyDesc(
-                    tr.Position, tr.Rotation, tr.Scale,
+                    worldPos, worldRot, tr.Scale,
                     rb.MotionType, rb.Mass, rb.UseGravity, shapes,
                     rb.Friction, rb.Restitution, rb.LinearDamping, rb.AngularDamping,
                     rb.IsTrigger, rb.Layer, rb.LayerMask);
@@ -928,6 +936,62 @@ namespace GameEditor.Framework.Scene
                     break;
             }
             return entry;
+        }
+
+        // ── Physics world/local helpers ────────────────────────────────────────
+
+        /// <summary>
+        /// Returns the world-space position of <paramref name="tr"/> by resolving the parent chain.
+        /// For root entities (no parent) this is just <c>tr.Position</c>.
+        /// </summary>
+        static Vector3 GetEntityWorldPosition(ECSWorld world, in Transform tr)
+        {
+            if (!tr.Parent.HasValue) return tr.Position;
+            var mat = Transform.GetWorldMatrix(world, tr);
+            return new Vector3(mat.M41, mat.M42, mat.M43);
+        }
+
+        /// <summary>
+        /// Returns the world-space rotation of <paramref name="tr"/> by walking the parent chain
+        /// and composing quaternions (avoids scale contamination from the matrix path).
+        /// </summary>
+        static Quaternion GetEntityWorldRotation(ECSWorld world, in Transform tr)
+        {
+            if (!tr.Parent.HasValue) return tr.Rotation;
+            var q = tr.Rotation;
+            Entity? parentEnt = tr.Parent;
+            int depth = 0;
+            while (parentEnt.HasValue && parentEnt.Value.IsAlive && depth++ < 32
+                   && world.TryGetComponent<Transform>(parentEnt.Value, out var parentTr))
+            {
+                q = parentTr.Rotation * q;
+                parentEnt = parentTr.Parent;
+            }
+            return q;
+        }
+
+        /// <summary>
+        /// Converts a Jolt world-space position/rotation back to the local-space values
+        /// stored in <see cref="Transform"/>, accounting for the entity's parent chain.
+        /// For root entities the values are returned unchanged.
+        /// </summary>
+        static (Vector3 localPos, Quaternion localRot) WorldToLocalTransform(
+            ECSWorld world, Entity? parentEntity, Vector3 worldPos, Quaternion worldRot)
+        {
+            if (!parentEntity.HasValue) return (worldPos, worldRot);
+            Entity p = parentEntity.Value;
+            if (!p.IsAlive || !world.TryGetComponent<Transform>(p, out var parentTr))
+                return (worldPos, worldRot);
+
+            // Remove parent world position/rotation from the physics world values.
+            var parentWorldMat = Transform.GetWorldMatrix(world, parentTr);
+            if (!Matrix4x4.Invert(parentWorldMat, out var invParent))
+                return (worldPos, worldRot);
+
+            var localPos = Vector3.Transform(worldPos, invParent);
+            var parentWorldRot = GetEntityWorldRotation(world, parentTr);
+            var localRot = Quaternion.Conjugate(parentWorldRot) * worldRot;
+            return (localPos, localRot);
         }
 
         static void ShutdownPhysics()
