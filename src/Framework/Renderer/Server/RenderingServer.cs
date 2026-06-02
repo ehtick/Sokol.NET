@@ -103,8 +103,10 @@ namespace GameEditor.Framework.Renderer.Server
         /// <see cref="SubmitView"/> call, or 0 if the entity has no <see cref="LodGroup"/>
         /// or has never been rendered.  Intended for read-only display in the editor
         /// Inspector — do not cache the result across frames.
-        /// <paramref name="viewIndex"/> selects which view's history to read; defaults to 0
-        /// (the canonical Scene view).
+        /// <paramref name="viewIndex"/> selects which view's history to read; defaults to 0,
+        /// which by the editor's convention is the Scene view (see the SubmitView call sites
+        /// in GameEditor-app.cs: Scene = 0, camera-preview = 1, Game = 2). Out-of-range
+        /// indices return 0.
         /// </summary>
         public static int GetLastLodLevel(Entity entity, int viewIndex = 0)
         {
@@ -260,6 +262,13 @@ namespace GameEditor.Framework.Renderer.Server
             // Gate per-entity TryGetComponent<LodGroup> behind a cheap per-frame archetype check
             // so non-LOD scenes pay nothing for this feature on the hot path.
             bool anyLodGroups = world.HasAnyComponent<LodGroup>();
+            // Resolve this view's LOD-history bucket ONCE, with the view-index bounds check
+            // here rather than per entity in the loop. A stray viewIndex yields a null bucket,
+            // so the entity simply renders without LOD history (LOD 0) instead of faulting.
+            System.Collections.Generic.Dictionary<Entity, int>? lodHistory =
+                anyLodGroups && (uint)viewIndex < (uint)_prevLodLevel.Length
+                    ? _prevLodLevel[viewIndex]
+                    : null;
             foreach (var row in world.Query<ActiveFlag, MeshRenderer, Transform>()
                                      .EnumerateWithEntities<ActiveFlag, MeshRenderer, Transform>())
             {
@@ -299,22 +308,20 @@ namespace GameEditor.Framework.Renderer.Server
                 Entity entity = row.Entity;
                 LodGroup? lodGroup = null;
                 int prevLod = 0;
-                if (anyLodGroups)
+                if (lodHistory != null)
                 {
                     lodGroup = world.TryGetComponent<LodGroup>(entity, out var lgVal) ? lgVal : (LodGroup?)null;
-                    _prevLodLevel[viewIndex].TryGetValue(entity, out prevLod);
+                    lodHistory.TryGetValue(entity, out prevLod);
                 }
                 int lodIndex = LodSelector.Pick(worldRadius, dist, prevLod, lodGroup);
                 if (lodIndex == LodSelector.Skip) { _stats.Culled++; continue; }
 
-                // Update per-view, per-entity hysteresis state (only when entity has a LodGroup).
-                if (lodGroup.HasValue)
+                // Update per-view, per-entity hysteresis state (only when entity has a LodGroup;
+                // lodGroup.HasValue implies lodHistory != null — it was only set inside the guard).
+                if (lodHistory != null && lodGroup.HasValue && prevLod != lodIndex)
                 {
-                    if (prevLod != lodIndex)
-                    {
-                        _prevLodLevel[viewIndex][entity] = lodIndex;
-                        _stats.LodSwitches++;
-                    }
+                    lodHistory[entity] = lodIndex;
+                    _stats.LodSwitches++;
                 }
 
                 ushort lodMask = (ushort)(drawFlags | (ushort)(lodIndex & 0xF));
@@ -351,10 +358,15 @@ namespace GameEditor.Framework.Renderer.Server
                 //   bits 27-16: MaterialId (12 bits — 0-4095 IDs fit; sufficient for editor)
                 //   bit  15:    noMatBit
                 //   bits 14-0:  MeshId     (15 bits — 0-32767 meshes)
-                System.Diagnostics.Debug.Assert((_cmds[idx].MaterialId & ~0xFFFu) == 0,
-                    $"MaterialId {_cmds[idx].MaterialId} exceeds 12-bit sort-key capacity (max 4095).");
-                System.Diagnostics.Debug.Assert((_cmds[idx].MeshId & ~0x7FFFu) == 0,
-                    $"MeshId {_cmds[idx].MeshId} exceeds 15-bit sort-key capacity (max 32767).");
+                // Sort-key capacity guard. `if (overflow) Debug.Fail(...)` builds the
+                // interpolated message ONLY on actual overflow — Debug.Assert(cond, $"...")
+                // would build it eagerly every iteration in Debug builds. Both the Debug.Fail
+                // call and the now-empty branch vanish in Release ([Conditional("DEBUG")] +
+                // JIT dead-code elimination of the side-effect-free test).
+                if ((_cmds[idx].MaterialId & ~0xFFFu) != 0)
+                    System.Diagnostics.Debug.Fail($"MaterialId {_cmds[idx].MaterialId} exceeds 12-bit sort-key capacity (max 4095).");
+                if ((_cmds[idx].MeshId & ~0x7FFFu) != 0)
+                    System.Diagnostics.Debug.Fail($"MeshId {_cmds[idx].MeshId} exceeds 15-bit sort-key capacity (max 32767).");
                 _sortKeys[idx]  = (lod << 28)
                                 | (((uint)_cmds[idx].MaterialId & 0xFFF) << 16)
                                 | (noMatBit << 15)
