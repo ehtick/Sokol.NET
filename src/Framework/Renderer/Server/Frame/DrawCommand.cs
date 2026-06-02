@@ -3,7 +3,7 @@ using System.Numerics;
 namespace GameEditor.Framework.Renderer.Server
 {
     /// <summary>
-    /// 24 B draw command. Fits two per 64 B cache line.
+    /// 28 B draw command (2+2+2+2 + 4 + 12 + 4). Fits two per 64 B cache line.
     /// Emitted during ECS extract; consumed by culling, LOD selection, and grouping.
     /// All fields are value types — this struct is never boxed on the hot path.
     /// </summary>
