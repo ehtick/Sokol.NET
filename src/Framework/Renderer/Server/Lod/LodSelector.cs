@@ -58,12 +58,13 @@ namespace GameEditor.Framework.Renderer.Server.Lod
                     float thr    = levels[i].ScreenCoverageThreshold;
                     float margin = levels[i].HysteresisMargin;
 
-                    // Hysteresis: when moving away from a finer level (i < previousLevel)
-                    // require coverage to drop below thr - margin; when moving toward finer
-                    // (i >= previousLevel) accept above thr + margin.
+                    // Hysteresis: upgrading to a finer level (i < previousLevel) requires
+                    // coverage to exceed thr + margin (higher bar, harder to upgrade);
+                    // staying at or downgrading from the current level only requires
+                    // coverage >= thr - margin (lower bar, sticky).
                     float effectiveThr = (i < previousLevel)
-                        ? thr - margin
-                        : thr + margin;
+                        ? thr + margin   // harder to UPGRADE to a finer level
+                        : thr - margin;  // easier to STAY at / drop to current-or-coarser
 
                     if (coverage >= effectiveThr)
                     {

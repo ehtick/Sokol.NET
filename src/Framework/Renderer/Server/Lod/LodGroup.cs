@@ -51,6 +51,11 @@ namespace GameEditor.Framework.Renderer.Server.Lod
         /// <summary>LOD levels sorted descending by ScreenCoverageThreshold.</summary>
         public LodLevel[] Levels;
 
-        public LodGroup(params LodLevel[] levels) => Levels = levels;
+        public LodGroup(params LodLevel[] levels)
+        {
+            System.Diagnostics.Debug.Assert(levels.Length <= 16,
+                $"LodGroup: {levels.Length} levels exceeds the 4-bit sort-key capacity (max 16). Wrap-around would mis-group draw commands.");
+            Levels = levels;
+        }
     }
 }

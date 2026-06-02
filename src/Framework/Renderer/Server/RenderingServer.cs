@@ -67,11 +67,26 @@ namespace GameEditor.Framework.Renderer.Server
         // ── M3: frustum culling ───────────────────────────────────────────────────────────
         private static readonly int[]  _visible = new int[RenderingConstants.MAX_DRAWS];
 
-        // ── M3: per-entity LOD history (keyed by Frent EntityID int) ─────────────────────
-        // Only populated for entities that carry a LodGroup component.
-        // Dictionary is acceptable here: the hot path touches it once per entity, and the
-        // entity count is bounded by MAX_DRAWS (4096 typical). Zero GC pressure after warm-up.
-        private static readonly System.Collections.Generic.Dictionary<Entity, int> _prevLodLevel = new();
+        // ── M3: per-view, per-entity LOD history ─────────────────────────────────────────────
+        // Indexed by viewIndex (see SubmitView) to prevent the two editor views (Scene + Game)
+        // from clobbering each other's hysteresis state. One dictionary per view.
+        // Only populated for entities that carry a LodGroup component. Bounded by
+        // MAX_DRAWS (16384) × MAX_VIEWS. Zero GC pressure after warm-up for a static entity set.
+        // Pruned on EntityDestroyed (see ForgetEntity) to prevent unbounded growth under churn.
+        private static readonly System.Collections.Generic.Dictionary<Entity, int>[] _prevLodLevel =
+            InitLodHistory();
+
+        private static System.Collections.Generic.Dictionary<Entity, int>[] InitLodHistory()
+        {
+            var arr = new System.Collections.Generic.Dictionary<Entity, int>[RenderingConstants.MAX_VIEWS];
+            for (int i = 0; i < arr.Length; i++) arr[i] = new();
+            return arr;
+        }
+
+        private static void ForgetEntity(Entity e)
+        {
+            foreach (var dict in _prevLodLevel) dict.Remove(e);
+        }
 
         // Top-N light selection scratch (M2): keep the highest-importance lights only.
         private static readonly Light[] _topLights = new Light[RenderingConstants.MAX_LIGHTS];
@@ -88,9 +103,14 @@ namespace GameEditor.Framework.Renderer.Server
         /// <see cref="SubmitView"/> call, or 0 if the entity has no <see cref="LodGroup"/>
         /// or has never been rendered.  Intended for read-only display in the editor
         /// Inspector — do not cache the result across frames.
+        /// <paramref name="viewIndex"/> selects which view's history to read; defaults to 0
+        /// (the canonical Scene view).
         /// </summary>
-        public static int GetLastLodLevel(Entity entity)
-            => _prevLodLevel.TryGetValue(entity, out int lv) ? lv : 0;
+        public static int GetLastLodLevel(Entity entity, int viewIndex = 0)
+        {
+            if ((uint)viewIndex >= (uint)_prevLodLevel.Length) return 0;
+            return _prevLodLevel[viewIndex].TryGetValue(entity, out int lv) ? lv : 0;
+        }
 
         private static bool _initialized;
         private static bool _hasDirectionalShadow;
@@ -121,6 +141,7 @@ namespace GameEditor.Framework.Renderer.Server
         public static void Init()
         {
             if (_initialized) return;
+            EventBus.EntityDestroyed += ForgetEntity;
             _texCache.Init();
             _shaderCache.Init();
             _shadowAtlas.Init();
@@ -151,6 +172,7 @@ namespace GameEditor.Framework.Renderer.Server
         public static void Shutdown()
         {
             if (!_initialized) return;
+            EventBus.EntityDestroyed -= ForgetEntity;
             _initialized = false;
             _instanceBuf.Dispose();
             _matReg.Shutdown();
@@ -235,6 +257,9 @@ namespace GameEditor.Framework.Renderer.Server
 
             FrameProfiler.Begin(FrameProfiler.Zone.EcsExtract);
             _drawCount = 0;
+            // Gate per-entity TryGetComponent<LodGroup> behind a cheap per-frame archetype check
+            // so non-LOD scenes pay nothing for this feature on the hot path.
+            bool anyLodGroups = world.HasAnyComponent<LodGroup>();
             foreach (var row in world.Query<ActiveFlag, MeshRenderer, Transform>()
                                      .EnumerateWithEntities<ActiveFlag, MeshRenderer, Transform>())
             {
@@ -272,17 +297,22 @@ namespace GameEditor.Framework.Renderer.Server
 
                 // ── LOD selection ─────────────────────────────────────────────────────────
                 Entity entity = row.Entity;
-                LodGroup? lodGroup = world.TryGetComponent<LodGroup>(entity, out var lgVal) ? lgVal : (LodGroup?)null;
-                _prevLodLevel.TryGetValue(entity, out int prevLod);
+                LodGroup? lodGroup = null;
+                int prevLod = 0;
+                if (anyLodGroups)
+                {
+                    lodGroup = world.TryGetComponent<LodGroup>(entity, out var lgVal) ? lgVal : (LodGroup?)null;
+                    _prevLodLevel[viewIndex].TryGetValue(entity, out prevLod);
+                }
                 int lodIndex = LodSelector.Pick(worldRadius, dist, prevLod, lodGroup);
                 if (lodIndex == LodSelector.Skip) { _stats.Culled++; continue; }
 
-                // Update per-entity hysteresis state (only when entity has a LodGroup).
+                // Update per-view, per-entity hysteresis state (only when entity has a LodGroup).
                 if (lodGroup.HasValue)
                 {
                     if (prevLod != lodIndex)
                     {
-                        _prevLodLevel[entity] = lodIndex;
+                        _prevLodLevel[viewIndex][entity] = lodIndex;
                         _stats.LodSwitches++;
                     }
                 }
@@ -321,6 +351,10 @@ namespace GameEditor.Framework.Renderer.Server
                 //   bits 27-16: MaterialId (12 bits — 0-4095 IDs fit; sufficient for editor)
                 //   bit  15:    noMatBit
                 //   bits 14-0:  MeshId     (15 bits — 0-32767 meshes)
+                System.Diagnostics.Debug.Assert((_cmds[idx].MaterialId & ~0xFFFu) == 0,
+                    $"MaterialId {_cmds[idx].MaterialId} exceeds 12-bit sort-key capacity (max 4095).");
+                System.Diagnostics.Debug.Assert((_cmds[idx].MeshId & ~0x7FFFu) == 0,
+                    $"MeshId {_cmds[idx].MeshId} exceeds 15-bit sort-key capacity (max 32767).");
                 _sortKeys[idx]  = (lod << 28)
                                 | (((uint)_cmds[idx].MaterialId & 0xFFF) << 16)
                                 | (noMatBit << 15)

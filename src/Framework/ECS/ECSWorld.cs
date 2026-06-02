@@ -147,6 +147,18 @@ namespace GameEditor.Framework.ECS
             return result;
         }
 
+        /// <summary>
+        /// Returns <see langword="true"/> if at least one entity currently carries
+        /// component <typeparamref name="T"/>.  Uses the Frent chunk enumerator
+        /// (a <see langword="ref"/> struct — zero allocation) for an O(archetypes) check.
+        /// </summary>
+        public bool HasAnyComponent<T>() where T : struct
+        {
+            foreach (var chunk in _world.Query<T>().EnumerateChunks<T>())
+                if (chunk.Span.Length > 0) return true;
+            return false;
+        }
+
         public void Clear()
         {
             var copy = new List<Entity>(_entities);
