@@ -45,6 +45,16 @@ namespace GameEditor.Framework.Renderer.Server.Resources
         /// <summary>Local-space AABB computed during load.</summary>
         public Aabb LocalBounds;
 
+        /// <summary>
+        /// Optional LOD ladder — additional mesh levels ordered coarsest-to-finest
+        /// starting at LOD 1.  <c>LodSlots[0]</c> = LOD 1 (one step coarser than this
+        /// mesh), <c>LodSlots[1]</c> = LOD 2, etc.  Null or empty means no additional
+        /// LOD levels exist; the draw walk falls back to the base mesh for any index &gt; 0.
+        ///
+        /// Populated by the glTF importer (M4).  The OBJ loader leaves this empty.
+        /// </summary>
+        public MeshResource?[] LodSlots = Array.Empty<MeshResource?>();
+
         /// <summary>Reference count maintained by MeshRegistry.</summary>
         public int RefCount;
 

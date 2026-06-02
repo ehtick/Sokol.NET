@@ -67,6 +67,12 @@ namespace GameEditor.Framework.Renderer.Server
         // ── M3: frustum culling ───────────────────────────────────────────────────────────
         private static readonly int[]  _visible = new int[RenderingConstants.MAX_DRAWS];
 
+        // ── M3: per-entity LOD history (keyed by Frent EntityID int) ─────────────────────
+        // Only populated for entities that carry a LodGroup component.
+        // Dictionary is acceptable here: the hot path touches it once per entity, and the
+        // entity count is bounded by MAX_DRAWS (4096 typical). Zero GC pressure after warm-up.
+        private static readonly System.Collections.Generic.Dictionary<Entity, int> _prevLodLevel = new();
+
         // Top-N light selection scratch (M2): keep the highest-importance lights only.
         private static readonly Light[] _topLights = new Light[RenderingConstants.MAX_LIGHTS];
         private static readonly float[] _topLightScores = new float[RenderingConstants.MAX_LIGHTS];
@@ -76,6 +82,15 @@ namespace GameEditor.Framework.Renderer.Server
 
         private static FrameStats _stats;
         public static ref readonly FrameStats Stats => ref _stats;
+
+        /// <summary>
+        /// Returns the LOD index that was selected for the given entity during the last
+        /// <see cref="SubmitView"/> call, or 0 if the entity has no <see cref="LodGroup"/>
+        /// or has never been rendered.  Intended for read-only display in the editor
+        /// Inspector — do not cache the result across frames.
+        /// </summary>
+        public static int GetLastLodLevel(Entity entity)
+            => _prevLodLevel.TryGetValue(entity, out int lv) ? lv : 0;
 
         private static bool _initialized;
         private static bool _hasDirectionalShadow;
@@ -221,7 +236,7 @@ namespace GameEditor.Framework.Renderer.Server
             FrameProfiler.Begin(FrameProfiler.Zone.EcsExtract);
             _drawCount = 0;
             foreach (var row in world.Query<ActiveFlag, MeshRenderer, Transform>()
-                                     .Enumerate<ActiveFlag, MeshRenderer, Transform>())
+                                     .EnumerateWithEntities<ActiveFlag, MeshRenderer, Transform>())
             {
                 if (_drawCount >= RenderingConstants.MAX_DRAWS) break;
                 if (!row.Item1.Value.Active) continue;
@@ -254,11 +269,26 @@ namespace GameEditor.Framework.Renderer.Server
                 Aabb worldAabb      = meshRes.LocalBounds.Transform(model);
                 float worldRadius   = worldAabb.Extents.Length();
                 float dist          = Vector3.Distance(cameraPos, worldAabb.Center);
-                int lodIndex        = LodSelector.Pick(worldRadius, dist, 0);
+
+                // ── LOD selection ─────────────────────────────────────────────────────────
+                Entity entity = row.Entity;
+                LodGroup? lodGroup = world.TryGetComponent<LodGroup>(entity, out var lgVal) ? lgVal : (LodGroup?)null;
+                _prevLodLevel.TryGetValue(entity, out int prevLod);
+                int lodIndex = LodSelector.Pick(worldRadius, dist, prevLod, lodGroup);
                 if (lodIndex == LodSelector.Skip) { _stats.Culled++; continue; }
 
-                ushort lodMask = (ushort)(drawFlags | (ushort)lodIndex);
-                _cmds[_drawCount]    = new DrawCommand(meshRes.Id, matId, lodMask, 0, 0u, worldAabb.Center, worldRadius);
+                // Update per-entity hysteresis state (only when entity has a LodGroup).
+                if (lodGroup.HasValue)
+                {
+                    if (prevLod != lodIndex)
+                    {
+                        _prevLodLevel[entity] = lodIndex;
+                        _stats.LodSwitches++;
+                    }
+                }
+
+                ushort lodMask = (ushort)(drawFlags | (ushort)(lodIndex & 0xF));
+                _cmds[_drawCount]    = new DrawCommand(meshRes.Id, matId, lodMask, 0, (uint)entity.GetHashCode(), worldAabb.Center, worldRadius);
                 _cpuInst[_drawCount] = new InstanceData(
                     in model,
                     new Vector4(1f, 1f, 1f, mr.ReceivesShadows ? 1f : 0f));
@@ -285,7 +315,16 @@ namespace GameEditor.Framework.Renderer.Server
             {
                 int idx = _visible[j];
                 uint noMatBit = (_cmds[idx].LodMask & DrawFlagDisableSubMeshMaterial) != 0 ? 1u : 0u;
-                _sortKeys[idx]  = (uint)(_cmds[idx].MaterialId << 17 | noMatBit << 16 | _cmds[idx].MeshId);
+                uint lod      = (uint)(_cmds[idx].LodMask & 0x0F);
+                // Sort key (32 bits):
+                //   bits 31-28: lodIndex   (4 bits  — separates LOD variants of the same mesh)
+                //   bits 27-16: MaterialId (12 bits — 0-4095 IDs fit; sufficient for editor)
+                //   bit  15:    noMatBit
+                //   bits 14-0:  MeshId     (15 bits — 0-32767 meshes)
+                _sortKeys[idx]  = (lod << 28)
+                                | (((uint)_cmds[idx].MaterialId & 0xFFF) << 16)
+                                | (noMatBit << 15)
+                                | ((uint)_cmds[idx].MeshId & 0x7FFF);
                 _sortOrder[j] = idx;
             }
             Array.Sort(_sortOrder, 0, visibleCount, _drawSorter);
@@ -333,16 +372,27 @@ namespace GameEditor.Framework.Renderer.Server
                 ushort curMat  = _cmds[firstIdx].MaterialId;
                 ushort curMesh = _cmds[firstIdx].MeshId;
                   bool disableSubMeshMaterial = (_cmds[firstIdx].LodMask & DrawFlagDisableSubMeshMaterial) != 0;
+                int  curLod  = _cmds[firstIdx].LodMask & 0x0F;
 
                 int groupSize = 0;
                 while (i + groupSize < submitCount
                        && _cmds[_sortOrder[i + groupSize]].MaterialId == curMat
                       && _cmds[_sortOrder[i + groupSize]].MeshId     == curMesh
-                      && ((_cmds[_sortOrder[i + groupSize]].LodMask & DrawFlagDisableSubMeshMaterial) != 0) == disableSubMeshMaterial)
+                      && ((_cmds[_sortOrder[i + groupSize]].LodMask & DrawFlagDisableSubMeshMaterial) != 0) == disableSubMeshMaterial
+                      && (_cmds[_sortOrder[i + groupSize]].LodMask & 0x0F) == curLod)
                     groupSize++;
 
                 Material?     mat  = _matReg.GetById(curMat);
                 MeshResource? mesh = _meshReg.GetById(curMesh);
+
+                // Pick the LOD mesh: lodIndex 0 = base mesh; lodIndex > 0 = LodSlots[lodIndex-1]
+                if (curLod > 0 && mesh?.LodSlots is { Length: > 0 } slots)
+                {
+                    int slotIdx = curLod - 1;
+                    if (slotIdx < slots.Length && slots[slotIdx] != null)
+                        mesh = slots[slotIdx];
+                    // else fall through: missing LOD slot → keep rendering base mesh
+                }
 
                 if (mesh == null || mesh.SubMeshes == null || mesh.SubMeshes.Length == 0)
                 {

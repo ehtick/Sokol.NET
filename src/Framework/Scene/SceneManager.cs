@@ -91,7 +91,23 @@ namespace GameEditor.Framework.Scene
         public static void SaveScene(string path)
         {
             if (ActiveScene == null) return;
-            string json = SceneSerializer.Serialize(ActiveScene);
+            string compact = SceneSerializer.Serialize(ActiveScene);
+
+            // Re-format as indented JSON for human readability.
+            // Uses Utf8JsonWriter directly — avoids JsonSerializer.Serialize which requires
+            // reflection and is disabled under NativeAOT.
+            string json;
+            using (var doc = System.Text.Json.JsonDocument.Parse(compact))
+            {
+                // Pre-size: indented output is ~2.5× the compact string (whitespace overhead).
+                // Avoids MemoryStream doubling-resizes for large scenes.
+                var buf = new System.IO.MemoryStream(compact.Length * 3);
+                var writerOptions = new System.Text.Json.JsonWriterOptions { Indented = true };
+                using (var writer = new System.Text.Json.Utf8JsonWriter(buf, writerOptions))
+                    doc.RootElement.WriteTo(writer);
+                json = System.Text.Encoding.UTF8.GetString(buf.ToArray());
+            }
+
             SokolFile.WriteAllText(path, json);
             ActiveScene.FilePath = path;
             ActiveScene.IsDirty = false;
