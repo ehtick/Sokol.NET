@@ -29,9 +29,34 @@ namespace GameEditor.Framework.ECS
 
         public void DestroyEntity(Entity e)
         {
-            _entities.Remove(e);
-            EventBus.RaiseEntityDestroyed(e);
-            if (e.IsAlive) e.Delete();
+            if (!e.IsAlive) return;   // already gone (e.g. deleted as another entity's descendant)
+
+            // Cascade to descendants. A child links to its parent only via Transform.Parent (there
+            // is no children list), so gather the entity + everything beneath it before deleting.
+            // Without this, deleting a parent in the Hierarchy orphaned its children — they kept a
+            // dangling Parent and were never ForgetEntity'd in the renderer (so their GPU state lingered).
+            var toDelete = new List<Entity> { e };
+            var seen = new HashSet<Entity> { e };
+            for (int i = 0; i < toDelete.Count; i++)
+            {
+                Entity parent = toDelete[i];
+                foreach (var c in _entities)
+                {
+                    if (seen.Contains(c)) continue;
+                    if (TryGetComponent<Transform>(c, out var tr) && tr.Parent.HasValue && tr.Parent.Value.Equals(parent))
+                    {
+                        seen.Add(c);
+                        toDelete.Add(c);   // appended → its own children are visited in a later iteration
+                    }
+                }
+            }
+
+            foreach (var d in toDelete)
+            {
+                _entities.Remove(d);
+                EventBus.RaiseEntityDestroyed(d);
+                if (d.IsAlive) d.Delete();
+            }
         }
 
         // Return the concrete List<Entity> to avoid IReadOnlyList<T> generic interface
