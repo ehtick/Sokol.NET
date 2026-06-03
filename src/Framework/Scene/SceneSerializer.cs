@@ -8,6 +8,7 @@ using Frent;
 using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
 using GameEditor.Framework.Physics;
+using GameEditor.Framework.Renderer.Server.Animation;
 
 namespace GameEditor.Framework.Scene
 {
@@ -62,6 +63,20 @@ namespace GameEditor.Framework.Scene
                                             .Append("\",\"Vis\":").Append(mr.Visible ? "true" : "false")
                                             .Append(",\"RecvSh\":").Append(mr.ReceivesShadows ? "true" : "false")
                                             .Append(",\"CastSh\":").Append(mr.CastsShadows ? "true" : "false").Append('}');
+                }
+
+                // Skinned characters hold only registry keys (live GPU + animator live in
+                // SkinnedCharacterRegistry), so they serialize like any other component and survive
+                // the Play→Stop snapshot — the registry persists and the keys re-resolve on load.
+                if (world.TryGetComponent<SkinnedMeshRenderer>(id, out var skmr))
+                {
+                    Comma(sb, ref fc);
+                    sb.Append("\"SkinnedMeshRenderer\":{\"Key\":\"").Append(Esc(skmr.CharacterKey ?? ""))
+                        .Append("\",\"Prim\":").Append(skmr.PrimIndex)
+                        .Append(",\"Mat\":\"").Append(Esc(skmr.MaterialKey ?? ""))
+                        .Append("\",\"Vis\":").Append(skmr.Visible ? "true" : "false")
+                        .Append(",\"RecvSh\":").Append(skmr.ReceivesShadows ? "true" : "false")
+                        .Append(",\"CastSh\":").Append(skmr.CastsShadows ? "true" : "false").Append('}');
                 }
 
                 if (world.TryGetComponent<CameraComponent>(id, out var cam))
@@ -324,6 +339,17 @@ namespace GameEditor.Framework.Scene
                         Visible      = mrEl.GetProperty("Vis").GetBoolean(),
                         ReceivesShadows = !mrEl.TryGetProperty("RecvSh", out var recvShEl) || recvShEl.GetBoolean(),
                         CastsShadows = !mrEl.TryGetProperty("CastSh", out var castShEl) || castShEl.GetBoolean(),
+                    });
+
+                if (c.TryGetProperty("SkinnedMeshRenderer", out var skEl))
+                    world.AddComponent(newId, new SkinnedMeshRenderer
+                    {
+                        CharacterKey    = skEl.GetProperty("Key").GetString() ?? "",
+                        PrimIndex       = skEl.TryGetProperty("Prim", out var primEl) ? primEl.GetInt32() : 0,
+                        MaterialKey     = skEl.TryGetProperty("Mat", out var smatEl) ? (smatEl.GetString() ?? "") : "",
+                        Visible         = !skEl.TryGetProperty("Vis", out var svisEl) || svisEl.GetBoolean(),
+                        ReceivesShadows = !skEl.TryGetProperty("RecvSh", out var srecvEl) || srecvEl.GetBoolean(),
+                        CastsShadows    = !skEl.TryGetProperty("CastSh", out var scastEl) || scastEl.GetBoolean(),
                     });
 
                 if (c.TryGetProperty("Camera", out var camEl))

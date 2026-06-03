@@ -32,6 +32,7 @@ using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
 using GameEditor.Framework.Renderer.Server.Materials;
 using GameEditor.Framework.Renderer.Server.Resources;
+using GameEditor.Framework.Renderer.Server.Animation;
 using Frent;
 using Sokol;
 using static Sokol.CGltf;
@@ -261,14 +262,28 @@ namespace GameEditor.Framework.Renderer.Server.Assets
             // Preload (scene reload) skips node building — the entities already exist.
             private Entity? BuildScene()
             {
-                RegisterResources(out var primKeysByMesh, out var primMatsByMesh);
-                return _buildEntities ? BuildNodes(primKeysByMesh, primMatsByMesh) : (Entity?)null;
+                // A glTF mesh is "skinned" when some node references it together with a skin.
+                // Those primitives take the GPU-skinning path (80 B verts + bone UBO); their static
+                // 48 B registration is skipped so we don't create unused mesh GPU buffers.
+                var skinnedMeshPtrs = new HashSet<IntPtr>();
+                for (int ni = 0; ni < (int)_data->nodes_count; ni++)
+                {
+                    cgltf_node* n = &_data->nodes[ni];
+                    if (n->mesh != null && n->skin != null) skinnedMeshPtrs.Add((IntPtr)n->mesh);
+                }
+
+                RegisterResources(skinnedMeshPtrs, out var primKeysByMesh, out var primMatsByMesh);
+                if (!_buildEntities) return null;
+                return skinnedMeshPtrs.Count > 0
+                    ? BuildSkinnedNodes()
+                    : BuildNodes(primKeysByMesh, primMatsByMesh);
             }
 
             // Registers every primitive as a MeshResource ("<file>#m{i}p{j}") and every material as a
             // PbrMaterial ("<file>#mat{i}") + its textures. Same keys the serialized scene references,
             // so a reload only needs this (no entity creation).
             private void RegisterResources(
+                HashSet<IntPtr> skinnedMeshPtrs,
                 out Dictionary<IntPtr, string[]> primKeysByMesh,
                 out Dictionary<IntPtr, string[]> primMatsByMesh)
             {
@@ -288,6 +303,13 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                 for (int mi = 0; mi < (int)data->meshes_count; mi++)
                 {
                     cgltf_mesh* mesh = &data->meshes[mi];
+                    if (skinnedMeshPtrs.Contains((IntPtr)mesh))
+                    {
+                        // Skinned mesh — registered via the GPU-skinning path in BuildSkinnedNodes.
+                        primKeysByMesh[(IntPtr)mesh] = Array.Empty<string>();
+                        primMatsByMesh[(IntPtr)mesh] = Array.Empty<string>();
+                        continue;
+                    }
                     int primCount = (int)mesh->primitives_count;
                     var keys = new List<string>(primCount);
                     var mats = new List<string>(primCount);
@@ -336,6 +358,64 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                     }
                 }
 
+                return container;
+            }
+
+            // Skinned glTF: extract the skeleton + clips once, build one shared CGltfAnimator, and
+            // create one entity per skinned primitive carrying a SkinnedMeshRenderer. The mesh node's
+            // own transform is ignored (per the glTF skinning spec — the joints place the mesh); the
+            // entity sits at identity under the container and the bone matrices (joint globals from
+            // the scene root) do the placement.
+            private Entity BuildSkinnedNodes()
+            {
+                cgltf_data* data = _data;
+                string rootName = Path.GetFileNameWithoutExtension(_path);
+                Entity container = _world.CreateEntity(string.IsNullOrEmpty(rootName) ? "GltfModel" : rootName);
+
+                // Live GPU meshes + the shared animator persist in the registry (keyed by path) so
+                // the character survives scene save/load + the Play→Stop snapshot; the component
+                // stores only serializable keys.
+                var extractor = CGltfSkinExtractor.Extract(data);
+                var entry = SkinnedCharacterRegistry.GetOrCreateFresh(_path);
+                entry.BoneCount = extractor.BoneCount;
+                entry.Animator  = extractor.HasAnimations
+                    ? new CGltfAnimator(extractor.Animations[0], extractor.Nodes, extractor.BoneCount, extractor.BoneInfoMap)
+                    : null;
+
+                int runningPrim = 0;
+                for (int ni = 0; ni < (int)data->nodes_count; ni++)
+                {
+                    cgltf_node* node = &data->nodes[ni];
+                    if (node->mesh == null || node->skin == null) continue;
+                    string nodeName = PtrToStr(node->name) ?? "SkinnedMesh";
+
+                    int primCount = (int)node->mesh->primitives_count;
+                    for (int pi = 0; pi < primCount; pi++)
+                    {
+                        cgltf_primitive* prim = &node->mesh->primitives[pi];
+                        if (prim->type != cgltf_primitive_type.cgltf_primitive_type_triangles) continue;
+                        if (!BuildSkinnedPrimitive(prim, out SkinnedVertex[] sverts, out uint[] sidx, out Aabb sbounds)) continue;
+
+                        int primIndex = runningPrim++;
+                        entry.Meshes[primIndex] = SkinnedMesh.Create(sverts, sidx, in sbounds, $"{nodeName}_p{pi}");
+                        string matKey = prim->material != null
+                            ? $"{_path}#mat{(int)(prim->material - data->materials)}" : "";
+
+                        Entity e = _world.CreateEntity($"{nodeName}_skin{pi}");
+                        _world.AddComponent(e, new Transform { Position = Vector3.Zero, Rotation = Quaternion.Identity, Scale = Vector3.One, Parent = container });
+                        _world.AddComponent(e, new SkinnedMeshRenderer
+                        {
+                            CharacterKey    = _path,
+                            PrimIndex       = primIndex,
+                            MaterialKey     = matKey,
+                            Visible         = true,
+                            ReceivesShadows = true,
+                            CastsShadows    = true,
+                        });
+                    }
+                }
+
+                Logger.Info($"[glTF] skinned import '{_path}': {extractor.BoneCount} bones, {extractor.Animations.Count} anim(s), {runningPrim} prim(s)");
                 return container;
             }
 
@@ -541,6 +621,81 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                         Normal   = normData.Length > 0 ? new Vector3(normData[i * 3], normData[i * 3 + 1], normData[i * 3 + 2]) : Vector3.UnitY,
                         Uv       = tc0Data.Length  > 0 ? new Vector2(tc0Data[i * 2], tc0Data[i * 2 + 1]) : Vector2.Zero,
                         Tangent  = tanData.Length  > 0 ? new Vector4(tanData[i * 4], tanData[i * 4 + 1], tanData[i * 4 + 2], tanData[i * 4 + 3]) : new Vector4(1f, 0f, 0f, 1f),
+                    };
+                    bmin = Vector3.Min(bmin, p);
+                    bmax = Vector3.Max(bmax, p);
+                }
+
+                indices = idx;
+                bounds  = new Aabb(bmin, bmax);
+                return true;
+            }
+
+            // Skinned variant of BuildPrimitive: also reads JOINTS_0 + WEIGHTS_0 into an 80 B
+            // SkinnedVertex (joint indices are unpacked as floats — the shader casts them back).
+            private bool BuildSkinnedPrimitive(cgltf_primitive* prim, out SkinnedVertex[] vertices, out uint[] indices, out Aabb bounds)
+            {
+                vertices = Array.Empty<SkinnedVertex>();
+                indices  = Array.Empty<uint>();
+                bounds   = default;
+
+                cgltf_accessor* posAcc = null, normAcc = null, tanAcc = null, tc0Acc = null, jntAcc = null, wgtAcc = null;
+                for (int ai = 0; ai < (int)prim->attributes_count; ai++)
+                {
+                    cgltf_attribute* a = &prim->attributes[ai];
+                    switch (a->type)
+                    {
+                        case cgltf_attribute_type.cgltf_attribute_type_position: posAcc  = a->data; break;
+                        case cgltf_attribute_type.cgltf_attribute_type_normal:   normAcc = a->data; break;
+                        case cgltf_attribute_type.cgltf_attribute_type_tangent:  tanAcc  = a->data; break;
+                        case cgltf_attribute_type.cgltf_attribute_type_texcoord: if (a->index == 0) tc0Acc = a->data; break;
+                        case cgltf_attribute_type.cgltf_attribute_type_joints:   if (a->index == 0) jntAcc = a->data; break;
+                        case cgltf_attribute_type.cgltf_attribute_type_weights:  if (a->index == 0) wgtAcc = a->data; break;
+                    }
+                }
+
+                if (posAcc == null) return false;
+                int vc = (int)posAcc->count;
+                if (vc == 0) return false;
+
+                float[] posData  = UnpackFloats(posAcc,  vc * 3);
+                float[] normData = normAcc != null ? UnpackFloats(normAcc, vc * 3) : Array.Empty<float>();
+                float[] tanData  = tanAcc  != null ? UnpackFloats(tanAcc,  vc * 4) : Array.Empty<float>();
+                float[] tc0Data  = tc0Acc  != null ? UnpackFloats(tc0Acc,  vc * 2) : Array.Empty<float>();
+                float[] jntData  = jntAcc  != null ? UnpackFloats(jntAcc,  vc * 4) : Array.Empty<float>();
+                float[] wgtData  = wgtAcc  != null ? UnpackFloats(wgtAcc,  vc * 4) : Array.Empty<float>();
+
+                uint[] idx;
+                if (prim->indices != null)
+                {
+                    int ic = (int)prim->indices->count;
+                    idx = new uint[ic];
+                    for (int i = 0; i < ic; i++)
+                        idx[i] = (uint)cgltf_accessor_read_index(*prim->indices, (nuint)i);
+                }
+                else
+                {
+                    idx = new uint[vc];
+                    for (int i = 0; i < vc; i++) idx[i] = (uint)i;
+                }
+
+                if (tanData.Length == 0 && tc0Data.Length > 0 && normData.Length > 0)
+                    tanData = ComputeTangents(posData, normData, tc0Data, idx, vc);
+
+                vertices = new SkinnedVertex[vc];
+                var bmin = new Vector3(float.MaxValue);
+                var bmax = new Vector3(float.MinValue);
+                for (int i = 0; i < vc; i++)
+                {
+                    var p = new Vector3(posData[i * 3], posData[i * 3 + 1], posData[i * 3 + 2]);
+                    vertices[i] = new SkinnedVertex
+                    {
+                        Position = p,
+                        Normal   = normData.Length > 0 ? new Vector3(normData[i * 3], normData[i * 3 + 1], normData[i * 3 + 2]) : Vector3.UnitY,
+                        Uv       = tc0Data.Length  > 0 ? new Vector2(tc0Data[i * 2], tc0Data[i * 2 + 1]) : Vector2.Zero,
+                        Tangent  = tanData.Length  > 0 ? new Vector4(tanData[i * 4], tanData[i * 4 + 1], tanData[i * 4 + 2], tanData[i * 4 + 3]) : new Vector4(1f, 0f, 0f, 1f),
+                        Joints   = jntData.Length  > 0 ? new Vector4(jntData[i * 4], jntData[i * 4 + 1], jntData[i * 4 + 2], jntData[i * 4 + 3]) : Vector4.Zero,
+                        Weights  = wgtData.Length  > 0 ? new Vector4(wgtData[i * 4], wgtData[i * 4 + 1], wgtData[i * 4 + 2], wgtData[i * 4 + 3]) : new Vector4(1f, 0f, 0f, 0f),
                     };
                     bmin = Vector3.Min(bmin, p);
                     bmax = Vector3.Max(bmax, p);
