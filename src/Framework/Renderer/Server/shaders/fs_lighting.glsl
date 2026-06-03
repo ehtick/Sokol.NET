@@ -93,14 +93,12 @@ float sampleCsmShadow(vec3 worldPos, float view_depth, float ndotl)
 #else
     float receiver = ndc.z;
 #endif
-    // Slope-scaled depth bias (ported from blinn_phong's directional path). A flat bias too
-    // small for grazing-angle floor receivers produces self-shadow stripes (acne) — most
-    // visible with CSM4's wider cascades. csm_bias is the near-perpendicular floor; the slope
-    // term grows the bias as the surface tilts away from the light. Per-cascade scaling is NOT
-    // needed: each cascade's [0,1] depth range scales with its world extent, so a constant
-    // slope-keyed [0,1] bias maps to a near-constant world-space offset on every cascade.
+    // Depth bias — now SMALL because the normal-offset bias (pbr.glsl VS, CSM_NORMAL_OFFSET)
+    // carries most of the anti-acne work spatially. A large depth bias caused peter-panning
+    // (a close occluder's shadow dropping off the receiver), so the slope term is kept light;
+    // csm_bias is the near-perpendicular floor. If acne returns, raise CSM_NORMAL_OFFSET first.
     float slope    = clamp(1.0 - ndotl, 0.0, 1.0);
-    float bias     = max(csm_bias, 0.012 * slope);
+    float bias     = max(csm_bias, 0.0025 * slope);
     float slice    = float(cascade);
 
     vec2 texel = 1.0 / vec2(textureSize(sampler2DArray(shadow_atlas, shadow_atlas_smp), 0).xy);

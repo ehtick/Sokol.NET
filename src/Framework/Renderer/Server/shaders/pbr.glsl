@@ -127,16 +127,25 @@ void main()
     v_Custom    = in_custom;
 
     // ── CSM shadow projection ──────────────────────────────────────────────
+    // Normal-offset bias: push the shadow-space position a few texels along the surface normal
+    // so the receiver doesn't self-shadow. This carries most of the anti-acne bias spatially, so
+    // the depth bias (fs_lighting.glsl) can stay small — which avoids the peter-panning where a
+    // close occluder's shadow drops off the receiver. Constant world offset; tune if acne or
+    // peter-panning reappears (too small → acne, too large → light leak near contacts).
+#if CSM_CASCADES > 0
+    const float CSM_NORMAL_OFFSET = 0.04;
+    vec4 shadowWorldPos = vec4(v_Position + normalW * CSM_NORMAL_OFFSET, 1.0);
+#endif
 #if defined(CSM4)
-    v_ShadowPos[0] = csm_vp[0] * worldPos;
-    v_ShadowPos[1] = csm_vp[1] * worldPos;
-    v_ShadowPos[2] = csm_vp[2] * worldPos;
-    v_ShadowPos[3] = csm_vp[3] * worldPos;
+    v_ShadowPos[0] = csm_vp[0] * shadowWorldPos;
+    v_ShadowPos[1] = csm_vp[1] * shadowWorldPos;
+    v_ShadowPos[2] = csm_vp[2] * shadowWorldPos;
+    v_ShadowPos[3] = csm_vp[3] * shadowWorldPos;
 #elif defined(CSM2)
-    v_ShadowPos[0] = csm_vp[0] * worldPos;
-    v_ShadowPos[1] = csm_vp[1] * worldPos;
+    v_ShadowPos[0] = csm_vp[0] * shadowWorldPos;
+    v_ShadowPos[1] = csm_vp[1] * shadowWorldPos;
 #elif defined(CSM1)
-    v_ShadowPos[0] = csm_vp[0] * worldPos;
+    v_ShadowPos[0] = csm_vp[0] * shadowWorldPos;
 #endif
 
     gl_Position = view_proj * worldPos;
