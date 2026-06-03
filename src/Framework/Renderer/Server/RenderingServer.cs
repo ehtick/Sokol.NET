@@ -25,6 +25,7 @@ using Csm1 = pbr_csm1_shader_cs_pbr_csm1;
 using Csm4 = pbr_csm4_shader_cs_pbr_csm4;
 using PbrSkin = pbr_skinning_shader_cs_pbr_skinning;
 using PbrSkinCsm4 = pbr_skinning_csm4_shader_cs_pbr_skinning_csm4;
+using PbrSkinCsm1 = pbr_skinning_csm1_shader_cs_pbr_skinning_csm1;
 using GameEditor.Framework.Core;
 using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
@@ -1309,15 +1310,18 @@ namespace GameEditor.Framework.Renderer.Server
             if (staged == 0) return;
             int baseOff = _skinnedInstanceBuf.Flush();
 
-            // When the 4-cascade directional shadow is active (same as the static PBR path),
-            // route skinned chars through the pbr_skinning_csm4 variant so they receive it too.
+            // Match the static PBR directional-shadow selection: CSM4 → skinning_csm4,
+            // else a single-fit directional map → skinning_csm1, else the base skinning variant.
             bool csm4 = _csmCascadeCount == 4;
+            bool csm1 = !csm4 && _hasDirectionalShadow;
             for (int k = 0; k < staged; k++)
             {
                 int instByteOffset = baseOff + k * Unsafe.SizeOf<InstanceData>();
                 var d = _skinnedDraws[k];
                 if (csm4)
                     DrawSkinnedCsm4(d.smr, d.entry, d.mesh, instByteOffset, basePipelineFlags, in viewProj, cameraPos);
+                else if (csm1)
+                    DrawSkinnedCsm1(d.smr, d.entry, d.mesh, instByteOffset, basePipelineFlags, in viewProj, cameraPos);
                 else
                     DrawSkinned(d.smr, d.entry, d.mesh, instByteOffset, basePipelineFlags, in viewProj, cameraPos);
             }
@@ -1645,6 +1649,172 @@ namespace GameEditor.Framework.Renderer.Server
                     [PbrSkinCsm4.Shaders.SMP_pbr_skinning_csm4_u_GGXLUTSampler_Raw]        = lutSmp,
                     [PbrSkinCsm4.Shaders.SMP_pbr_skinning_csm4_shadow_atlas_smp]           = _shadowSampler,
                     [PbrSkinCsm4.Shaders.SMP_pbr_skinning_csm4_u_jointsSampler_Smp]        = _texCache.DefaultSampler,
+                },
+            });
+
+            sg_draw(0u, (uint)mesh.IndexCount, 1u);
+            _stats.DrawCalls++;
+        }
+
+        /// <summary>
+        /// Skinned draw through the pbr_skinning_csm1 variant — like <see cref="DrawSkinnedCsm4"/> but
+        /// for the default single-fit directional map (cascade 0 = <c>_directionalShadowViewProj</c>,
+        /// split depths forced so cascade 0 always wins). Mirrors <see cref="DrawPbrCsm1Group"/>.
+        /// </summary>
+        private static void DrawSkinnedCsm1(in Animation.SkinnedMeshRenderer smr, Animation.SkinnedCharacterRegistry.Entry entry,
+                                            Resources.SkinnedMesh mesh, int instanceByteOffset,
+                                            PipelineFlags basePipelineFlags, in Matrix4x4 viewProj, Vector3 cameraPos)
+        {
+            var mat = (_matReg.GetByKey(smr.MaterialKey) as Materials.PbrMaterial) ?? _skinnedFallbackMat;
+
+            bool blend = mat.AlphaMode == 2;
+            PipelineFlags pf = basePipelineFlags;
+            if (mat.DoubleSided) pf |= PipelineFlags.DoubleSided;
+            if (blend)           pf |= PipelineFlags.AlphaBlend;
+            sg_apply_pipeline(_shaderCache.GetPbrSkinningCsm1Pipeline(pf));
+
+            var vs = new PbrSkinCsm1.Shaders.pbr_skinning_csm1_pbr_vs_params_t
+            {
+                view_proj            = viewProj,
+                eye_pos              = cameraPos,
+                use_uniform_skinning = 1,
+            };
+            vs.csm_vp[0] = _directionalShadowViewProj;   // cascade 0 = the slice-0 directional map
+            var bones = entry.Animator?.GetFinalBoneMatrices();
+            if (bones != null)
+            {
+                int bc = Math.Min(Math.Min(entry.BoneCount, bones.Length), Animation.AnimationConstants.MAX_BONES);
+                for (int i = 0; i < bc; i++) vs.finalBonesMatrices[i] = bones[i];
+            }
+
+            var lights = new PbrSkinCsm1.Shaders.pbr_skinning_csm1_pbr_light_params_t();
+            int n = _lightBuf.Count;
+            var span = _lightBuf.ActiveSpan;
+            for (int l = 0; l < n; l++)
+            {
+                int b = l * 4;
+                lights.lights_data[b + 0] = span[l].PositionType;
+                lights.lights_data[b + 1] = span[l].DirectionRange;
+                lights.lights_data[b + 2] = span[l].ColorIntensity;
+                lights.lights_data[b + 3] = span[l].SpotShadow;
+            }
+            for (int si = 0; si < ShadowAtlas.SpotSlices; si++)
+            {
+                int sb = si * 4;
+                var sm = _spotShadowViewProj[si];
+                lights.spot_shadow_vp[sb + 0] = new Vector4(sm.M11, sm.M12, sm.M13, sm.M14);
+                lights.spot_shadow_vp[sb + 1] = new Vector4(sm.M21, sm.M22, sm.M23, sm.M24);
+                lights.spot_shadow_vp[sb + 2] = new Vector4(sm.M31, sm.M32, sm.M33, sm.M34);
+                lights.spot_shadow_vp[sb + 3] = new Vector4(sm.M41, sm.M42, sm.M43, sm.M44);
+            }
+            lights.ambient_num = new Vector4(0f, 0f, 0f, n);
+
+            var cam = new PbrSkinCsm1.Shaders.pbr_skinning_csm1_pbr_camera_params_t { u_Camera = cameraPos };
+
+            bool iblActive = _environment is { IsLoaded: true };
+            var ibl = new PbrSkinCsm1.Shaders.pbr_skinning_csm1_pbr_ibl_params_t
+            {
+                u_EnvIntensity      = iblActive ? _environment!.Intensity : 1f,
+                u_EnvBlurNormalized = 0f,
+                u_MipCount          = iblActive ? _environment!.MipCount : 1,
+                u_EnvRotation       = iblActive ? _environment!.Rotation : Matrix4x4.Identity,
+                u_ViewMatrix        = Matrix4x4.Identity,
+                u_ProjectionMatrix  = Matrix4x4.Identity,
+                u_ModelMatrix       = Matrix4x4.Identity,
+            };
+
+            var matParams = new PbrSkinCsm1.Shaders.pbr_skinning_csm1_pbr_material_params_t
+            {
+                base_color_factor          = mat.BaseColorFactor,
+                emissive_factor            = mat.EmissiveFactor,
+                metallic_factor            = mat.MetallicFactor,
+                roughness_factor           = mat.RoughnessFactor,
+                has_base_color_tex         = mat.BaseColorMap.id         != 0 ? 1f : 0f,
+                has_metallic_roughness_tex = mat.MetallicRoughnessMap.id != 0 ? 1f : 0f,
+                has_normal_tex             = mat.NormalMap.id            != 0 ? 1f : 0f,
+                has_occlusion_tex          = mat.OcclusionMap.id         != 0 ? 1f : 0f,
+                has_emissive_tex           = mat.EmissiveMap.id          != 0 ? 1f : 0f,
+                alpha_cutoff               = mat.AlphaCutoff,
+                emissive_strength          = mat.EmissiveStrength,
+                occlusion_strength         = mat.OcclusionStrength,
+                ior                        = 1.5f,
+                normal_map_scale           = mat.NormalMapScale,
+                base_color_tex_scale         = Vector2.One,
+                metallic_roughness_tex_scale = Vector2.One,
+                normal_tex_scale             = Vector2.One,
+                occlusion_tex_scale          = Vector2.One,
+                emissive_tex_scale           = Vector2.One,
+                debug_view_enabled           = PbrDebugViewMode != 0 ? 1f : 0f,
+                debug_view_mode              = PbrDebugViewMode,
+                shadow_ambient_weight        = ShadowAmbientWeight,
+            };
+
+            var flags = new PbrSkinCsm1.Shaders.pbr_skinning_csm1_pbr_rendering_flags_t
+            {
+                use_ibl             = iblActive ? 1 : 0,
+                use_punctual_lights = 1,
+                alphamode           = mat.AlphaMode,
+                linear_output       = 0,
+                ambient_strength    = 0.4f,
+            };
+
+            int pcf = ShadowQuality >= 2 ? 25 : (ShadowQuality >= 1 ? 9 : 1);
+            var csm = new PbrSkinCsm1.Shaders.pbr_skinning_csm1_pbr_csm_params_t
+            {
+                csm_split_depths = new Vector4(1e9f, 1e9f, 1e9f, 1e9f), // CSM1 → always cascade 0
+                csm_bias         = CsmBiasForBackend(),
+                csm_blend_band   = 0f,
+                csm_pcf_taps     = pcf,
+            };
+
+            sg_apply_uniforms(PbrSkinCsm1.Shaders.UB_pbr_skinning_csm1_pbr_vs_params,       SG_RANGE(ref vs));
+            sg_apply_uniforms(PbrSkinCsm1.Shaders.UB_pbr_skinning_csm1_pbr_material_params, SG_RANGE(ref matParams));
+            sg_apply_uniforms(PbrSkinCsm1.Shaders.UB_pbr_skinning_csm1_pbr_light_params,    SG_RANGE(ref lights));
+            sg_apply_uniforms(PbrSkinCsm1.Shaders.UB_pbr_skinning_csm1_pbr_ibl_params,      SG_RANGE(ref ibl));
+            sg_apply_uniforms(PbrSkinCsm1.Shaders.UB_pbr_skinning_csm1_pbr_camera_params,   SG_RANGE(ref cam));
+            sg_apply_uniforms(PbrSkinCsm1.Shaders.UB_pbr_skinning_csm1_pbr_rendering_flags, SG_RANGE(ref flags));
+            sg_apply_uniforms(PbrSkinCsm1.Shaders.UB_pbr_skinning_csm1_pbr_csm_params,      SG_RANGE(ref csm));
+
+            sg_view baseColor = mat.BaseColorMap.id         != 0 ? mat.BaseColorMap         : _texCache.PlaceholderWhite;
+            sg_view metalRgh  = mat.MetallicRoughnessMap.id != 0 ? mat.MetallicRoughnessMap : _texCache.PlaceholderWhite;
+            sg_view normalMap = mat.NormalMap.id            != 0 ? mat.NormalMap            : _texCache.PlaceholderNormal;
+            sg_view occlusion = mat.OcclusionMap.id         != 0 ? mat.OcclusionMap         : _texCache.PlaceholderWhite;
+            sg_view emissive  = mat.EmissiveMap.id          != 0 ? mat.EmissiveMap          : _texCache.PlaceholderBlack;
+            sg_view ggxEnv    = iblActive ? _environment!.SpecularCubeView : _texCache.PlaceholderCube;
+            sg_view lambEnv   = iblActive ? _environment!.DiffuseCubeView  : _texCache.PlaceholderCube;
+            sg_view lut       = iblActive ? _environment!.GgxLutView        : _texCache.PlaceholderWhite;
+            sg_sampler matSmp  = mat.Sampler.id != 0 ? mat.Sampler : _texCache.DefaultSampler;
+            sg_sampler cubeSmp = iblActive ? _environment!.CubeSampler : _texCache.DefaultSampler;
+            sg_sampler lutSmp  = iblActive ? _environment!.LutSampler  : _texCache.DefaultSampler;
+
+            sg_apply_bindings(new sg_bindings
+            {
+                vertex_buffers        = { [0] = mesh.VertexBuffer, [1] = _skinnedInstanceBuf.Buffer },
+                vertex_buffer_offsets = { [1] = instanceByteOffset },
+                index_buffer          = mesh.IndexBuffer,
+                views = {
+                    [PbrSkinCsm1.Shaders.VIEW_pbr_skinning_csm1_u_BaseColorTexture]         = baseColor,
+                    [PbrSkinCsm1.Shaders.VIEW_pbr_skinning_csm1_u_MetallicRoughnessTexture] = metalRgh,
+                    [PbrSkinCsm1.Shaders.VIEW_pbr_skinning_csm1_u_NormalTexture]            = normalMap,
+                    [PbrSkinCsm1.Shaders.VIEW_pbr_skinning_csm1_u_OcclusionTexture]         = occlusion,
+                    [PbrSkinCsm1.Shaders.VIEW_pbr_skinning_csm1_u_EmissiveTexture]          = emissive,
+                    [PbrSkinCsm1.Shaders.VIEW_pbr_skinning_csm1_u_GGXEnvTexture]            = ggxEnv,
+                    [PbrSkinCsm1.Shaders.VIEW_pbr_skinning_csm1_u_LambertianEnvTexture]     = lambEnv,
+                    [PbrSkinCsm1.Shaders.VIEW_pbr_skinning_csm1_u_GGXLUTTexture]            = lut,
+                    [PbrSkinCsm1.Shaders.VIEW_pbr_skinning_csm1_shadow_atlas]              = _shadowAtlas.TextureView,
+                    [PbrSkinCsm1.Shaders.VIEW_pbr_skinning_csm1_u_jointsSampler_Tex]       = _texCache.PlaceholderWhite,
+                },
+                samplers = {
+                    [PbrSkinCsm1.Shaders.SMP_pbr_skinning_csm1_u_BaseColorSampler]         = matSmp,
+                    [PbrSkinCsm1.Shaders.SMP_pbr_skinning_csm1_u_MetallicRoughnessSampler] = matSmp,
+                    [PbrSkinCsm1.Shaders.SMP_pbr_skinning_csm1_u_NormalSampler]            = matSmp,
+                    [PbrSkinCsm1.Shaders.SMP_pbr_skinning_csm1_u_OcclusionSampler]         = matSmp,
+                    [PbrSkinCsm1.Shaders.SMP_pbr_skinning_csm1_u_EmissiveSampler]          = matSmp,
+                    [PbrSkinCsm1.Shaders.SMP_pbr_skinning_csm1_u_GGXEnvSampler_Raw]        = cubeSmp,
+                    [PbrSkinCsm1.Shaders.SMP_pbr_skinning_csm1_u_LambertianEnvSampler_Raw] = cubeSmp,
+                    [PbrSkinCsm1.Shaders.SMP_pbr_skinning_csm1_u_GGXLUTSampler_Raw]        = lutSmp,
+                    [PbrSkinCsm1.Shaders.SMP_pbr_skinning_csm1_shadow_atlas_smp]           = _shadowSampler,
+                    [PbrSkinCsm1.Shaders.SMP_pbr_skinning_csm1_u_jointsSampler_Smp]        = _texCache.DefaultSampler,
                 },
             });
 

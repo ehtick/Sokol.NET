@@ -110,8 +110,9 @@
                    $(_PbrShaderDir)pbr_csm1_shader.cs;
                    $(_PbrShaderDir)pbr_csm4_shader.cs;
                    $(_PbrShaderDir)pbr_skinning_csm4_shader.cs;
+                   $(_PbrShaderDir)pbr_skinning_csm1_shader.cs;
                    $(_PbrShaderDir)pbr_skinning_morphing_csm4_shader.cs">
-    <Message Text="Compiling Framework PBR shader variants (8 total)" Importance="high" />
+    <Message Text="Compiling Framework PBR shader variants (9 total)" Importance="high" />
     <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_PbrShaderDir)pbr_shader.cs&quot; --module pbr --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
     <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_PbrShaderDir)pbr_skinning_shader.cs&quot; --module pbr_skinning --defines SKINNING --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
     <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_PbrShaderDir)pbr_morphing_shader.cs&quot; --module pbr_morphing --defines MORPHING --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
@@ -119,6 +120,7 @@
     <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_PbrShaderDir)pbr_csm1_shader.cs&quot; --module pbr_csm1 --defines CSM1 --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
     <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_PbrShaderDir)pbr_csm4_shader.cs&quot; --module pbr_csm4 --defines CSM4 --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
     <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_PbrShaderDir)pbr_skinning_csm4_shader.cs&quot; --module pbr_skinning_csm4 --defines SKINNING:CSM4 --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
+    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_PbrShaderDir)pbr_skinning_csm1_shader.cs&quot; --module pbr_skinning_csm1 --defines SKINNING:CSM1 --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
     <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_PbrShaderDir)pbr_skinning_morphing_csm4_shader.cs&quot; --module pbr_skinning_morphing_csm4 --defines SKINNING:MORPHING:CSM4 --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
   </Target>
 

@@ -27,6 +27,7 @@ using PbrCsm1 = pbr_csm1_shader_cs_pbr_csm1.Shaders;
 using PbrCsm4 = pbr_csm4_shader_cs_pbr_csm4.Shaders;
 using PbrSkinning = pbr_skinning_shader_cs_pbr_skinning.Shaders;
 using PbrSkinningCsm4 = pbr_skinning_csm4_shader_cs_pbr_skinning_csm4.Shaders;
+using PbrSkinningCsm1 = pbr_skinning_csm1_shader_cs_pbr_skinning_csm1.Shaders;
 using GameEditor.Framework.Core;
 using GameEditor.Framework.Renderer.Server.Materials;
 
@@ -66,6 +67,10 @@ namespace GameEditor.Framework.Renderer.Server
         // M4: PBR + GPU skinning + 4-cascade directional shadow (skinned chars receive CSM).
         private readonly sg_pipeline[] _pbrSkinningCsm4Pipelines = new sg_pipeline[8];
         private sg_shader _pbrSkinningCsm4Shader;
+
+        // M4: PBR + GPU skinning + 1-cascade directional shadow (default CSM1-mode receive).
+        private readonly sg_pipeline[] _pbrSkinningCsm1Pipelines = new sg_pipeline[8];
+        private sg_shader _pbrSkinningCsm1Shader;
         private bool _disposed;
 
         // ── lifecycle ────────────────────────────────────────────────────────────────
@@ -147,6 +152,18 @@ namespace GameEditor.Framework.Renderer.Server
                     (flags & PipelineFlags.DoubleSided) != 0,
                     (flags & PipelineFlags.OffscreenRt) != 0);
             }
+
+            // ── M4: PBR skinning + CSM1 — same 80 B layout, reuses BuildPbrSkinningPipeline. ──
+            _pbrSkinningCsm1Shader = sg_make_shader(PbrSkinningCsm1.pbr_skinning_csm1_pbr_program_shader_desc(sg_query_backend()));
+            for (int i = 0; i < _pbrSkinningCsm1Pipelines.Length; i++)
+            {
+                var flags = (PipelineFlags)i;
+                _pbrSkinningCsm1Pipelines[i] = BuildPbrSkinningPipeline(
+                    _pbrSkinningCsm1Shader,
+                    (flags & PipelineFlags.AlphaBlend)  != 0,
+                    (flags & PipelineFlags.DoubleSided) != 0,
+                    (flags & PipelineFlags.OffscreenRt) != 0);
+            }
         }
 
         /// <summary>Look up the cached pipeline for the given flag combination.</summary>
@@ -178,6 +195,11 @@ namespace GameEditor.Framework.Renderer.Server
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public sg_pipeline GetPbrSkinningCsm4Pipeline(PipelineFlags flags)
             => _pbrSkinningCsm4Pipelines[(int)flags & 0x07];
+
+        /// <summary>GPU-skinning PBR pipeline that also samples the 1-cascade directional shadow.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public sg_pipeline GetPbrSkinningCsm1Pipeline(PipelineFlags flags)
+            => _pbrSkinningCsm1Pipelines[(int)flags & 0x07];
 
         /// <summary>The shared shader object (for inspecting reflection).</summary>
         public sg_shader Shader => _shaders[0];
@@ -674,6 +696,20 @@ namespace GameEditor.Framework.Renderer.Server
             {
                 sg_destroy_shader(_pbrSkinningCsm4Shader);
                 _pbrSkinningCsm4Shader = default;
+            }
+
+            for (int i = 0; i < _pbrSkinningCsm1Pipelines.Length; i++)
+            {
+                if (_pbrSkinningCsm1Pipelines[i].id != 0)
+                {
+                    sg_destroy_pipeline(_pbrSkinningCsm1Pipelines[i]);
+                    _pbrSkinningCsm1Pipelines[i] = default;
+                }
+            }
+            if (_pbrSkinningCsm1Shader.id != 0)
+            {
+                sg_destroy_shader(_pbrSkinningCsm1Shader);
+                _pbrSkinningCsm1Shader = default;
             }
 
             // Destroy the single shader object (shared across all variants).
