@@ -273,10 +273,15 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                 }
 
                 RegisterResources(skinnedMeshPtrs, out var primKeysByMesh, out var primMatsByMesh);
-                if (!_buildEntities) return null;
-                return skinnedMeshPtrs.Count > 0
-                    ? BuildSkinnedNodes()
-                    : BuildNodes(primKeysByMesh, primMatsByMesh);
+
+                // Skinned characters register their GPU meshes + shared animator into
+                // SkinnedCharacterRegistry ALWAYS — even in preload (_buildEntities == false) — so a
+                // cold scene reload repopulates the registry that the already-deserialized
+                // SkinnedMeshRenderer entities resolve against. Entity creation stays gated.
+                if (skinnedMeshPtrs.Count > 0)
+                    return BuildSkinnedNodes(_buildEntities);
+
+                return _buildEntities ? BuildNodes(primKeysByMesh, primMatsByMesh) : (Entity?)null;
             }
 
             // Registers every primitive as a MeshResource ("<file>#m{i}p{j}") and every material as a
@@ -366,11 +371,15 @@ namespace GameEditor.Framework.Renderer.Server.Assets
             // own transform is ignored (per the glTF skinning spec — the joints place the mesh); the
             // entity sits at identity under the container and the bone matrices (joint globals from
             // the scene root) do the placement.
-            private Entity BuildSkinnedNodes()
+            private Entity? BuildSkinnedNodes(bool buildEntities)
             {
                 cgltf_data* data = _data;
-                string rootName = Path.GetFileNameWithoutExtension(_path);
-                Entity container = _world.CreateEntity(string.IsNullOrEmpty(rootName) ? "GltfModel" : rootName);
+                Entity container = default;
+                if (buildEntities)
+                {
+                    string rootName = Path.GetFileNameWithoutExtension(_path);
+                    container = _world.CreateEntity(string.IsNullOrEmpty(rootName) ? "GltfModel" : rootName);
+                }
 
                 // Live GPU meshes + the shared animator persist in the registry (keyed by path) so
                 // the character survives scene save/load + the Play→Stop snapshot; the component
@@ -398,6 +407,9 @@ namespace GameEditor.Framework.Renderer.Server.Assets
 
                         int primIndex = runningPrim++;
                         entry.Meshes[primIndex] = SkinnedMesh.Create(sverts, sidx, in sbounds, $"{nodeName}_p{pi}");
+
+                        if (!buildEntities) continue;   // preload: registry only, no entities
+
                         string matKey = prim->material != null
                             ? $"{_path}#mat{(int)(prim->material - data->materials)}" : "";
 
@@ -415,8 +427,8 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                     }
                 }
 
-                Logger.Info($"[glTF] skinned import '{_path}': {extractor.BoneCount} bones, {extractor.Animations.Count} anim(s), {runningPrim} prim(s)");
-                return container;
+                Logger.Info($"[glTF] skinned {(buildEntities ? "import" : "preload")} '{_path}': {extractor.BoneCount} bones, {extractor.Animations.Count} anim(s), {runningPrim} prim(s)");
+                return buildEntities ? container : (Entity?)null;
             }
 
             // ── Nodes ────────────────────────────────────────────────────────────────────────

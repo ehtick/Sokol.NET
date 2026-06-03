@@ -4,6 +4,7 @@ using Frent;
 using Sokol;
 using GameEditor.Framework.Renderer;
 using GameEditor.Framework.Renderer.Server;
+using GameEditor.Framework.Renderer.Server.Animation;
 using GameEditor.Framework.Core;
 using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
@@ -446,6 +447,21 @@ namespace GameEditor.Framework.Scene
                             Logger.Warning($"[SceneManager] Failed to load mesh: '{captured}'");
                     });
                 }
+            }
+
+            // Skinned characters: re-import each referenced glTF once so SkinnedCharacterRegistry is
+            // repopulated on a cold scene load (the deserialized SkinnedMeshRenderer entities resolve
+            // their mesh + animator from it by key). Skipped when already registered — e.g. the
+            // Play->Stop snapshot, where the static registry survived the round-trip.
+            foreach (Entity id in world.Entities)
+            {
+                if (!world.TryGetComponent<SkinnedMeshRenderer>(id, out var skmr)) continue;
+                string charKey = skmr.CharacterKey;
+                if (string.IsNullOrEmpty(charKey)) continue;
+                if (SkinnedCharacterRegistry.TryGet(charKey, out var entry) && entry.Meshes.Count > 0) continue;
+                if (!_pendingGltfPreloads.Add(charKey)) continue;
+                string capturedKey = charKey;
+                RenderingServer.PreloadGltfAsync(capturedKey, () => _pendingGltfPreloads.Remove(capturedKey));
             }
         }
 
