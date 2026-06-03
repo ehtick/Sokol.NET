@@ -350,6 +350,10 @@ namespace GameEditor.Framework.Renderer.Server
         {
             if (!_initialized) return;
 
+            // Advance skinned animators BEFORE the shadow pass so skinned casters write the current
+            // pose into the shadow maps; the color pass (SubmitView) then reads the same pose.
+            UpdateSkinnedAnimators(ECSWorld.Instance);
+
             FrameProfiler.Begin(FrameProfiler.Zone.ShadowPass);
             CollectLightsAndShadows(ECSWorld.Instance, in viewProj, renderShadowPasses: true, csm);
             FrameProfiler.End(FrameProfiler.Zone.ShadowPass);
@@ -912,8 +916,14 @@ namespace GameEditor.Framework.Renderer.Server
                 _directionalShadowViewProj = _csmCascadeVP[0];   // blinn-phong samples slice 0 = cascade 0
                 _hasDirectionalShadow      = true;
                 if (renderShadowPasses)
+                {
                     _stats.ShadowDrawCalls += _shadowPass.RenderDirectionalCsmCounted(
                         world, _meshReg, _shadowAtlas, 0, _csmCascadeVP.AsSpan(0, CsmComputer.MaxCascades));
+                    // Skinned characters cast into the same cascades (depth LOAD, on top of statics).
+                    if (world.HasAnyComponent<Animation.SkinnedMeshRenderer>())
+                        _stats.ShadowDrawCalls += _shadowPass.RenderSkinnedDirectionalCsm(
+                            world, _shadowAtlas, 0, _csmCascadeVP.AsSpan(0, CsmComputer.MaxCascades));
+                }
             }
             else if (hasDirectionalShadowLight && TryComputeCasterBounds(world, out var casterMin, out var casterMax))
             {
@@ -922,7 +932,13 @@ namespace GameEditor.Framework.Renderer.Server
                 _csmCascadeCount           = 1;
                 _hasDirectionalShadow      = true;
                 if (renderShadowPasses)
+                {
                     _stats.ShadowDrawCalls += _shadowPass.RenderDirectionalCounted(world, _meshReg, _shadowAtlas, 0, in _directionalShadowViewProj);
+                    if (world.HasAnyComponent<Animation.SkinnedMeshRenderer>())
+                        _stats.ShadowDrawCalls += _shadowPass.RenderSkinnedDirectionalCsm(
+                            world, _shadowAtlas, 0,
+                            System.Runtime.InteropServices.MemoryMarshal.CreateReadOnlySpan(ref _directionalShadowViewProj, 1));
+                }
             }
 
             for (int si = 0; si < _spotShadowTopCount; si++)
@@ -1259,6 +1275,28 @@ namespace GameEditor.Framework.Renderer.Server
 
                 sg_draw(0u, (uint)sub.IndexCount, (uint)groupSize);
                 _stats.DrawCalls++;
+            }
+        }
+
+        // Advances each skinned character's animator once per frame (frame-guarded across views +
+        // primitives). Called at the top of RenderShadowMaps so the pose is ready for skinned shadow
+        // casting; DrawSkinnedEntities re-runs it as a fallback (no-op once already advanced).
+        private static void UpdateSkinnedAnimators(ECSWorld world)
+        {
+            if (!world.HasAnyComponent<Animation.SkinnedMeshRenderer>()) return;
+            float dt = (float)Sokol.SApp.sapp_frame_duration();
+            foreach (var row in world.Query<ActiveFlag, Animation.SkinnedMeshRenderer, Transform>()
+                                     .Enumerate<ActiveFlag, Animation.SkinnedMeshRenderer, Transform>())
+            {
+                if (!row.Item1.Value.Active) continue;
+                ref readonly var smr = ref row.Item2.Value;
+                if (!Animation.SkinnedCharacterRegistry.TryGet(smr.CharacterKey, out var entry)) continue;
+                var anim = entry.Animator;
+                if (anim != null && anim.LastUpdatedFrame != _animationFrame)
+                {
+                    anim.LastUpdatedFrame = _animationFrame;
+                    anim.UpdateAnimation(dt);
+                }
             }
         }
 
