@@ -152,15 +152,14 @@ layout(binding=6) uniform sampler         u_LambertianEnvSampler_Raw;
 layout(binding=7) uniform texture2D       u_GGXLUTTexture;
 layout(binding=7) uniform sampler         u_GGXLUTSampler_Raw;
 
-// Charlie sheen — disabled when MORPHING is active (shared binding 8/9)
+// Charlie sheen reuses the GGX env + LUT bindings rather than dedicated bindings 8/9. The sheen
+// IBL (getSheenSample, ibl.glsl) is dead-stripped from every compiled variant — it is never
+// sampled — so this alias is a no-op that keeps bindings 8/9 free. That lets the point-shadow
+// cube array take binding 8 in SKINNING variants (where joints occupy 11). Still #ifndef MORPHING
+// to mirror getSheenSample's own guard.
 #ifndef MORPHING
-layout(binding=8) uniform textureCube     u_CharlieEnvTexture;
-layout(binding=8) uniform sampler         u_CharlieEnvSampler_Raw;
-layout(binding=9) uniform texture2D       u_CharlieLUTTexture;
-layout(binding=9) uniform sampler         u_CharlieLUTSampler_Raw;
-
-#define u_CharlieEnvSampler samplerCube(u_CharlieEnvTexture,  u_CharlieEnvSampler_Raw)
-#define u_CharlieLUT        sampler2D  (u_CharlieLUTTexture,  u_CharlieLUTSampler_Raw)
+#define u_CharlieEnvSampler samplerCube(u_GGXEnvTexture, u_GGXEnvSampler_Raw)
+#define u_CharlieLUT        sampler2D  (u_GGXLUTTexture, u_GGXLUTSampler_Raw)
 #endif
 
 #ifdef TRANSMISSION
@@ -186,12 +185,17 @@ layout(binding=10) uniform samplerShadow   shadow_atlas_smp;
 #endif
 
 // Point-light cube shadows: 6 faces per light packed as 2D-array slices (slot*6 + face).
-// Reuses binding 11 — the joints texture there is VS-only and stripped in non-skinning
-// variants (sampler slots cap at 0..11, so this can't go higher). SKINNING variants keep
-// joints at 11 and forgo PBR point shadows (acceptable: skinning isn't wired yet).
-#if !defined(SKINNING) && !defined(TRANSMISSION)
+// Non-skinning variants reuse binding 11 (the joints texture there is VS-only and stripped).
+// SKINNING variants keep joints at binding 11, so the cube array moves to the free slot 8
+// (sheen is excluded in skinning above, so binding 8 is unused and ≤11, within the sampler cap).
+#if !defined(TRANSMISSION)
+#ifdef SKINNING
+layout(binding=8)  uniform texture2DArray  cube_shadow_array;
+layout(binding=8)  uniform samplerShadow   cube_shadow_array_smp;
+#else
 layout(binding=11) uniform texture2DArray  cube_shadow_array;
 layout(binding=11) uniform samplerShadow   cube_shadow_array_smp;
+#endif
 #endif
 
 // Combined-sampler macros required by ibl.glsl

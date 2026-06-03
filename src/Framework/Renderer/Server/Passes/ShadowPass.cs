@@ -281,19 +281,33 @@ namespace GameEditor.Framework.Renderer.Server.Passes
             if (!_initialized || !atlas.IsValid) return 0;
             int total = 0;
             for (int i = 0; i < cascadeVPs.Length; i++)
-                total += RenderSkinnedSlice(world, atlas.GetDepthSliceView(baseSlice + i), cascadeVPs[i]);
+                total += RenderSkinnedSlice(world, _atlasDummyColorView, atlas.GetDepthSliceView(baseSlice + i), cascadeVPs[i]);
             return total;
         }
 
-        private int RenderSkinnedSlice(ECSWorld world, sg_view depthSliceView, in Matrix4x4 lightViewProj)
+        /// <summary>Renders skinned casters into a spot atlas slice (depth LOAD, on top of statics).</summary>
+        public int RenderSkinnedSpotCounted(ECSWorld world, ShadowAtlas atlas, int slice, in Matrix4x4 lightViewProj)
         {
-            if (_atlasDummyColorView.id == 0 || depthSliceView.id == 0) return 0;
+            if (!_initialized || !atlas.IsValid) return 0;
+            return RenderSkinnedSlice(world, _atlasDummyColorView, atlas.GetDepthSliceView(slice), in lightViewProj);
+        }
+
+        /// <summary>Renders skinned casters into one cube-map face of a point light (depth LOAD, on top of statics).</summary>
+        public int RenderSkinnedPointFaceCounted(ECSWorld world, CubeShadowArray cubeArray, int pointLightIndex, int faceIndex, in Matrix4x4 lightViewProj)
+        {
+            if (!_initialized || !cubeArray.IsValid) return 0;
+            return RenderSkinnedSlice(world, _cubeDummyColorView, cubeArray.GetDepthFaceView(pointLightIndex, faceIndex), in lightViewProj);
+        }
+
+        private int RenderSkinnedSlice(ECSWorld world, sg_view colorView, sg_view depthSliceView, in Matrix4x4 lightViewProj)
+        {
+            if (colorView.id == 0 || depthSliceView.id == 0) return 0;
 
             int draws = 0;
             var pass = new sg_pass
             {
                 action = _passActionLoad,
-                attachments = { colors = { [0] = _atlasDummyColorView }, depth_stencil = depthSliceView }
+                attachments = { colors = { [0] = colorView }, depth_stencil = depthSliceView }
             };
             sg_begin_pass(pass);
             try

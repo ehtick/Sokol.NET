@@ -956,7 +956,11 @@ namespace GameEditor.Framework.Renderer.Server
                 Matrix4x4 spotVp = BuildSpotShadowViewProj(spotPos, spotFwd, slc.Range, outerRad);
                 int atlasSlice = ShadowAtlas.DirectionalCascades + si;
                 if (renderShadowPasses)
+                {
                     _stats.ShadowDrawCalls += _shadowPass.RenderSpotCounted(world, _meshReg, _shadowAtlas, atlasSlice, in spotVp);
+                    if (world.HasAnyComponent<Animation.SkinnedMeshRenderer>())
+                        _stats.ShadowDrawCalls += _shadowPass.RenderSkinnedSpotCounted(world, _shadowAtlas, atlasSlice, in spotVp);
+                }
                 _spotShadowViewProj[si] = spotVp;
 
                 for (int li = 0; li < _topLightCount; li++)
@@ -988,11 +992,16 @@ namespace GameEditor.Framework.Renderer.Server
                 Matrix4x4 lightWorld = Transform.GetWorldMatrix(world, plt);
                 var pointPos = new Vector3(lightWorld.M41, lightWorld.M42, lightWorld.M43);
 
+                bool hasSkinnedCasters = renderShadowPasses && world.HasAnyComponent<Animation.SkinnedMeshRenderer>();
                 for (int face = 0; face < CubeShadowArray.FacesPerLight; face++)
                 {
                     Matrix4x4 pointFaceVp = BuildPointShadowFaceViewProj(pointPos, face, plc.Range);
                     if (renderShadowPasses)
+                    {
                         _stats.ShadowDrawCalls += _shadowPass.RenderPointFaceCounted(world, _meshReg, _cubeShadows, pi, face, in pointFaceVp);
+                        if (hasSkinnedCasters)
+                            _stats.ShadowDrawCalls += _shadowPass.RenderSkinnedPointFaceCounted(world, _cubeShadows, pi, face, in pointFaceVp);
+                    }
                     _pointShadowViewProj[pi * CubeShadowArray.FacesPerLight + face] = pointFaceVp;
                 }
 
@@ -1418,6 +1427,16 @@ namespace GameEditor.Framework.Renderer.Server
                 lights.spot_shadow_vp[sb + 2] = new Vector4(sm.M31, sm.M32, sm.M33, sm.M34);
                 lights.spot_shadow_vp[sb + 3] = new Vector4(sm.M41, sm.M42, sm.M43, sm.M44);
             }
+            // Point-light shadow VPs (cube faces; slice = slot*6 + face) — skinned point shadows.
+            for (int pi = 0; pi < _pointShadowViewProj.Length; pi++)
+            {
+                int pb = pi * 4;
+                var pm = _pointShadowViewProj[pi];
+                lights.point_shadow_vp[pb + 0] = new Vector4(pm.M11, pm.M12, pm.M13, pm.M14);
+                lights.point_shadow_vp[pb + 1] = new Vector4(pm.M21, pm.M22, pm.M23, pm.M24);
+                lights.point_shadow_vp[pb + 2] = new Vector4(pm.M31, pm.M32, pm.M33, pm.M34);
+                lights.point_shadow_vp[pb + 3] = new Vector4(pm.M41, pm.M42, pm.M43, pm.M44);
+            }
             lights.ambient_num = new Vector4(0f, 0f, 0f, n);
 
             var cam = new PbrSkin.Shaders.pbr_skinning_pbr_camera_params_t { u_Camera = cameraPos };
@@ -1503,6 +1522,7 @@ namespace GameEditor.Framework.Renderer.Server
                     [PbrSkin.Shaders.VIEW_pbr_skinning_u_LambertianEnvTexture]     = lambEnv,
                     [PbrSkin.Shaders.VIEW_pbr_skinning_u_GGXLUTTexture]            = lut,
                     [PbrSkin.Shaders.VIEW_pbr_skinning_shadow_atlas]              = _shadowAtlas.TextureView,
+                    [PbrSkin.Shaders.VIEW_pbr_skinning_cube_shadow_array]         = _cubeShadows.TextureView,
                     // Joints texture is unused (use_uniform_skinning=1) but the binding must be set.
                     [PbrSkin.Shaders.VIEW_pbr_skinning_u_jointsSampler_Tex]       = _texCache.PlaceholderWhite,
                 },
@@ -1516,6 +1536,7 @@ namespace GameEditor.Framework.Renderer.Server
                     [PbrSkin.Shaders.SMP_pbr_skinning_u_LambertianEnvSampler_Raw] = cubeSmp,
                     [PbrSkin.Shaders.SMP_pbr_skinning_u_GGXLUTSampler_Raw]        = lutSmp,
                     [PbrSkin.Shaders.SMP_pbr_skinning_shadow_atlas_smp]           = _shadowSampler,
+                    [PbrSkin.Shaders.SMP_pbr_skinning_cube_shadow_array_smp]      = _cubeShadowSampler,
                     [PbrSkin.Shaders.SMP_pbr_skinning_u_jointsSampler_Smp]        = _texCache.DefaultSampler,
                 },
             });
@@ -1578,6 +1599,16 @@ namespace GameEditor.Framework.Renderer.Server
                 lights.spot_shadow_vp[sb + 1] = new Vector4(sm.M21, sm.M22, sm.M23, sm.M24);
                 lights.spot_shadow_vp[sb + 2] = new Vector4(sm.M31, sm.M32, sm.M33, sm.M34);
                 lights.spot_shadow_vp[sb + 3] = new Vector4(sm.M41, sm.M42, sm.M43, sm.M44);
+            }
+            // Point-light shadow VPs (cube faces; slice = slot*6 + face) — skinned point shadows.
+            for (int pi = 0; pi < _pointShadowViewProj.Length; pi++)
+            {
+                int pb = pi * 4;
+                var pm = _pointShadowViewProj[pi];
+                lights.point_shadow_vp[pb + 0] = new Vector4(pm.M11, pm.M12, pm.M13, pm.M14);
+                lights.point_shadow_vp[pb + 1] = new Vector4(pm.M21, pm.M22, pm.M23, pm.M24);
+                lights.point_shadow_vp[pb + 2] = new Vector4(pm.M31, pm.M32, pm.M33, pm.M34);
+                lights.point_shadow_vp[pb + 3] = new Vector4(pm.M41, pm.M42, pm.M43, pm.M44);
             }
             lights.ambient_num = new Vector4(0f, 0f, 0f, n);
 
@@ -1674,6 +1705,7 @@ namespace GameEditor.Framework.Renderer.Server
                     [PbrSkinCsm4.Shaders.VIEW_pbr_skinning_csm4_u_LambertianEnvTexture]     = lambEnv,
                     [PbrSkinCsm4.Shaders.VIEW_pbr_skinning_csm4_u_GGXLUTTexture]            = lut,
                     [PbrSkinCsm4.Shaders.VIEW_pbr_skinning_csm4_shadow_atlas]              = _shadowAtlas.TextureView,
+                    [PbrSkinCsm4.Shaders.VIEW_pbr_skinning_csm4_cube_shadow_array]         = _cubeShadows.TextureView,
                     [PbrSkinCsm4.Shaders.VIEW_pbr_skinning_csm4_u_jointsSampler_Tex]       = _texCache.PlaceholderWhite,
                 },
                 samplers = {
@@ -1686,6 +1718,7 @@ namespace GameEditor.Framework.Renderer.Server
                     [PbrSkinCsm4.Shaders.SMP_pbr_skinning_csm4_u_LambertianEnvSampler_Raw] = cubeSmp,
                     [PbrSkinCsm4.Shaders.SMP_pbr_skinning_csm4_u_GGXLUTSampler_Raw]        = lutSmp,
                     [PbrSkinCsm4.Shaders.SMP_pbr_skinning_csm4_shadow_atlas_smp]           = _shadowSampler,
+                    [PbrSkinCsm4.Shaders.SMP_pbr_skinning_csm4_cube_shadow_array_smp]      = _cubeShadowSampler,
                     [PbrSkinCsm4.Shaders.SMP_pbr_skinning_csm4_u_jointsSampler_Smp]        = _texCache.DefaultSampler,
                 },
             });
@@ -1744,6 +1777,16 @@ namespace GameEditor.Framework.Renderer.Server
                 lights.spot_shadow_vp[sb + 1] = new Vector4(sm.M21, sm.M22, sm.M23, sm.M24);
                 lights.spot_shadow_vp[sb + 2] = new Vector4(sm.M31, sm.M32, sm.M33, sm.M34);
                 lights.spot_shadow_vp[sb + 3] = new Vector4(sm.M41, sm.M42, sm.M43, sm.M44);
+            }
+            // Point-light shadow VPs (cube faces; slice = slot*6 + face) — skinned point shadows.
+            for (int pi = 0; pi < _pointShadowViewProj.Length; pi++)
+            {
+                int pb = pi * 4;
+                var pm = _pointShadowViewProj[pi];
+                lights.point_shadow_vp[pb + 0] = new Vector4(pm.M11, pm.M12, pm.M13, pm.M14);
+                lights.point_shadow_vp[pb + 1] = new Vector4(pm.M21, pm.M22, pm.M23, pm.M24);
+                lights.point_shadow_vp[pb + 2] = new Vector4(pm.M31, pm.M32, pm.M33, pm.M34);
+                lights.point_shadow_vp[pb + 3] = new Vector4(pm.M41, pm.M42, pm.M43, pm.M44);
             }
             lights.ambient_num = new Vector4(0f, 0f, 0f, n);
 
@@ -1840,6 +1883,7 @@ namespace GameEditor.Framework.Renderer.Server
                     [PbrSkinCsm1.Shaders.VIEW_pbr_skinning_csm1_u_LambertianEnvTexture]     = lambEnv,
                     [PbrSkinCsm1.Shaders.VIEW_pbr_skinning_csm1_u_GGXLUTTexture]            = lut,
                     [PbrSkinCsm1.Shaders.VIEW_pbr_skinning_csm1_shadow_atlas]              = _shadowAtlas.TextureView,
+                    [PbrSkinCsm1.Shaders.VIEW_pbr_skinning_csm1_cube_shadow_array]         = _cubeShadows.TextureView,
                     [PbrSkinCsm1.Shaders.VIEW_pbr_skinning_csm1_u_jointsSampler_Tex]       = _texCache.PlaceholderWhite,
                 },
                 samplers = {
@@ -1852,6 +1896,7 @@ namespace GameEditor.Framework.Renderer.Server
                     [PbrSkinCsm1.Shaders.SMP_pbr_skinning_csm1_u_LambertianEnvSampler_Raw] = cubeSmp,
                     [PbrSkinCsm1.Shaders.SMP_pbr_skinning_csm1_u_GGXLUTSampler_Raw]        = lutSmp,
                     [PbrSkinCsm1.Shaders.SMP_pbr_skinning_csm1_shadow_atlas_smp]           = _shadowSampler,
+                    [PbrSkinCsm1.Shaders.SMP_pbr_skinning_csm1_cube_shadow_array_smp]      = _cubeShadowSampler,
                     [PbrSkinCsm1.Shaders.SMP_pbr_skinning_csm1_u_jointsSampler_Smp]        = _texCache.DefaultSampler,
                 },
             });

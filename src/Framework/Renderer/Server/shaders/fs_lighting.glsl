@@ -176,8 +176,8 @@ float sample_spot_shadow(float atlas_slice, vec3 worldPos, vec3 nrm)
 // Picks the cube face from the light→fragment direction, projects by that face's VP,
 // and 3×3-PCF samples cube_shadow_array (slice = slot*6 + face). 1.0 (lit) for invalid
 // slots, so point lights without a shadow map contribute no occlusion.
-// Excluded from SKINNING variants (binding 11 is the joints texture there).
-#if !defined(SKINNING)
+// In SKINNING variants cube_shadow_array lives at binding 8 (joints occupies 11); see
+// pbr_fs_uniforms.glsl. Sampling code below is identical regardless of binding.
 float sample_point_shadow(int point_slot, vec3 light_pos, vec3 worldPos, vec3 nrm)
 {
     if (point_slot < 0 || point_slot >= 4) return 1.0;
@@ -221,5 +221,4 @@ float sample_point_shadow(int point_slot, vec3 light_pos, vec3 worldPos, vec3 nr
     }
     return vis2 / 9.0;
 }
-#endif  // !SKINNING
 #endif  // !TRANSMISSION
