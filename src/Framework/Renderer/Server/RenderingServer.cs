@@ -71,6 +71,10 @@ namespace GameEditor.Framework.Renderer.Server
         private static readonly RenderView?[]      _views       = new RenderView[RenderingConstants.MAX_VIEWS];
         private static sg_sampler _shadowSampler;
         private static sg_sampler _cubeShadowSampler;
+        // Nonfiltering sampler for the >128-bone joint-matrix texture (texelFetch only). Must be
+        // NEAREST/no-mip to match the shader's `nonfiltering` u_jointsSampler_Smp declaration, and
+        // lets the unfilterable RGBA32F joint texture bind on GLES3 drivers without float-linear.
+        private static sg_sampler _jointSampler;
 
         // M4: active Image-Based Lighting environment (procedural or skybox cubemap).
         // Bound to every PbrMaterial draw; use_ibl flips on whenever it is loaded.
@@ -248,6 +252,15 @@ namespace GameEditor.Framework.Renderer.Server
                 wrap_v = sg_wrap.SG_WRAP_CLAMP_TO_EDGE,
                 label = "cube-shadow-array-sampler"
             });
+            _jointSampler = sg_make_sampler(new sg_sampler_desc
+            {
+                min_filter    = sg_filter.SG_FILTER_NEAREST,
+                mag_filter    = sg_filter.SG_FILTER_NEAREST,
+                mipmap_filter = sg_filter.SG_FILTER_NEAREST,
+                wrap_u = sg_wrap.SG_WRAP_CLAMP_TO_EDGE,
+                wrap_v = sg_wrap.SG_WRAP_CLAMP_TO_EDGE,
+                label = "joint-matrix-sampler"
+            });
             _initialized = true;
 
             // Build the default environment (cubemap from "skyboxes/skybox", procedural
@@ -282,6 +295,11 @@ namespace GameEditor.Framework.Renderer.Server
             {
                 sg_destroy_sampler(_cubeShadowSampler);
                 _cubeShadowSampler = default;
+            }
+            if (_jointSampler.id != 0)
+            {
+                sg_destroy_sampler(_jointSampler);
+                _jointSampler = default;
             }
             _shaderCache.Dispose();
         }
@@ -1306,7 +1324,19 @@ namespace GameEditor.Framework.Renderer.Server
                     anim.LastUpdatedFrame = _animationFrame;
                     anim.UpdateAnimation(dt);
                 }
+                RefreshJointTextureIfNeeded(entry);
             }
+        }
+
+        // Ensures a >128-bone character's joint-matrix texture exists and holds this frame's pose.
+        // The upload is frame-guarded inside the entry, so calling this from both the shadow tick
+        // (UpdateSkinnedAnimators) and the color tick (DrawSkinnedEntities) costs at most one upload
+        // per character per frame — whichever pass runs first wins. No-op for ≤128-bone skeletons.
+        private static void RefreshJointTextureIfNeeded(Animation.SkinnedCharacterRegistry.Entry entry)
+        {
+            if (!entry.UsesTextureSkinning) return;
+            entry.EnsureJointTexture();
+            entry.UploadJointMatrices(_animationFrame);
         }
 
         // ── GPU skinning draw path ─────────────────────────────────────────────────────────
@@ -1337,6 +1367,7 @@ namespace GameEditor.Framework.Renderer.Server
                     anim.LastUpdatedFrame = _animationFrame;
                     anim.UpdateAnimation(dt);
                 }
+                RefreshJointTextureIfNeeded(entry);
 
                 _skinnedDraws.Add((smr, entry, mesh, Transform.GetWorldMatrix(world, tf)));
             }
@@ -1393,17 +1424,24 @@ namespace GameEditor.Framework.Renderer.Server
             sg_apply_pipeline(_shaderCache.GetPbrSkinningPipeline(pf));
 
             // ── VS params (+ bone matrices) ──
+            // >128-bone skeletons can't fit the finalBonesMatrices[] UBO array, so their bones ride in
+            // the per-character joint texture (use_uniform_skinning=0), uploaded earlier this frame by
+            // RefreshJointTextureIfNeeded. Fall back to the uniform path if the texture isn't ready.
+            bool useTex = entry.UsesTextureSkinning && entry.JointTextureView.id != 0;
             var vs = new PbrSkin.Shaders.pbr_skinning_pbr_vs_params_t
             {
                 view_proj            = viewProj,
                 eye_pos              = cameraPos,
-                use_uniform_skinning = 1,
+                use_uniform_skinning = useTex ? 0 : 1,
             };
-            var bones = entry.Animator?.GetFinalBoneMatrices();
-            if (bones != null)
+            if (!useTex)
             {
-                int bc = Math.Min(Math.Min(entry.BoneCount, bones.Length), Animation.AnimationConstants.MAX_BONES);
-                for (int i = 0; i < bc; i++) vs.finalBonesMatrices[i] = bones[i];
+                var bones = entry.Animator?.GetFinalBoneMatrices();
+                if (bones != null)
+                {
+                    int bc = Math.Min(Math.Min(entry.BoneCount, bones.Length), Animation.AnimationConstants.MAX_BONES);
+                    for (int i = 0; i < bc; i++) vs.finalBonesMatrices[i] = bones[i];
+                }
             }
 
             // ── Light params (same packing as the base PBR path) ──
@@ -1523,8 +1561,9 @@ namespace GameEditor.Framework.Renderer.Server
                     [PbrSkin.Shaders.VIEW_pbr_skinning_u_GGXLUTTexture]            = lut,
                     [PbrSkin.Shaders.VIEW_pbr_skinning_shadow_atlas]              = _shadowAtlas.TextureView,
                     [PbrSkin.Shaders.VIEW_pbr_skinning_cube_shadow_array]         = _cubeShadows.TextureView,
-                    // Joints texture is unused (use_uniform_skinning=1) but the binding must be set.
-                    [PbrSkin.Shaders.VIEW_pbr_skinning_u_jointsSampler_Tex]       = _texCache.PlaceholderWhite,
+                    // Joint texture: real per-character matrices when texture-skinning, else a
+                    // placeholder (the binding must always be set; the uniform path ignores it).
+                    [PbrSkin.Shaders.VIEW_pbr_skinning_u_jointsSampler_Tex]       = useTex ? entry.JointTextureView : _texCache.PlaceholderWhite,
                 },
                 samplers = {
                     [PbrSkin.Shaders.SMP_pbr_skinning_u_BaseColorSampler]         = matSmp,
@@ -1537,7 +1576,7 @@ namespace GameEditor.Framework.Renderer.Server
                     [PbrSkin.Shaders.SMP_pbr_skinning_u_GGXLUTSampler_Raw]        = lutSmp,
                     [PbrSkin.Shaders.SMP_pbr_skinning_shadow_atlas_smp]           = _shadowSampler,
                     [PbrSkin.Shaders.SMP_pbr_skinning_cube_shadow_array_smp]      = _cubeShadowSampler,
-                    [PbrSkin.Shaders.SMP_pbr_skinning_u_jointsSampler_Smp]        = _texCache.DefaultSampler,
+                    [PbrSkin.Shaders.SMP_pbr_skinning_u_jointsSampler_Smp]        = _jointSampler,
                 },
             });
 
@@ -1563,21 +1602,26 @@ namespace GameEditor.Framework.Renderer.Server
             if (blend)           pf |= PipelineFlags.AlphaBlend;
             sg_apply_pipeline(_shaderCache.GetPbrSkinningCsm4Pipeline(pf));
 
+            // >128-bone skeletons take the joint-texture path (see DrawSkinned for the rationale).
+            bool useTex = entry.UsesTextureSkinning && entry.JointTextureView.id != 0;
             var vs = new PbrSkinCsm4.Shaders.pbr_skinning_csm4_pbr_vs_params_t
             {
                 view_proj            = viewProj,
                 eye_pos              = cameraPos,
-                use_uniform_skinning = 1,
+                use_uniform_skinning = useTex ? 0 : 1,
             };
             vs.csm_vp[0] = _csmCascadeVP[0];
             vs.csm_vp[1] = _csmCascadeVP[1];
             vs.csm_vp[2] = _csmCascadeVP[2];
             vs.csm_vp[3] = _csmCascadeVP[3];
-            var bones = entry.Animator?.GetFinalBoneMatrices();
-            if (bones != null)
+            if (!useTex)
             {
-                int bc = Math.Min(Math.Min(entry.BoneCount, bones.Length), Animation.AnimationConstants.MAX_BONES);
-                for (int i = 0; i < bc; i++) vs.finalBonesMatrices[i] = bones[i];
+                var bones = entry.Animator?.GetFinalBoneMatrices();
+                if (bones != null)
+                {
+                    int bc = Math.Min(Math.Min(entry.BoneCount, bones.Length), Animation.AnimationConstants.MAX_BONES);
+                    for (int i = 0; i < bc; i++) vs.finalBonesMatrices[i] = bones[i];
+                }
             }
 
             var lights = new PbrSkinCsm4.Shaders.pbr_skinning_csm4_pbr_light_params_t();
@@ -1706,7 +1750,7 @@ namespace GameEditor.Framework.Renderer.Server
                     [PbrSkinCsm4.Shaders.VIEW_pbr_skinning_csm4_u_GGXLUTTexture]            = lut,
                     [PbrSkinCsm4.Shaders.VIEW_pbr_skinning_csm4_shadow_atlas]              = _shadowAtlas.TextureView,
                     [PbrSkinCsm4.Shaders.VIEW_pbr_skinning_csm4_cube_shadow_array]         = _cubeShadows.TextureView,
-                    [PbrSkinCsm4.Shaders.VIEW_pbr_skinning_csm4_u_jointsSampler_Tex]       = _texCache.PlaceholderWhite,
+                    [PbrSkinCsm4.Shaders.VIEW_pbr_skinning_csm4_u_jointsSampler_Tex]       = useTex ? entry.JointTextureView : _texCache.PlaceholderWhite,
                 },
                 samplers = {
                     [PbrSkinCsm4.Shaders.SMP_pbr_skinning_csm4_u_BaseColorSampler]         = matSmp,
@@ -1719,7 +1763,7 @@ namespace GameEditor.Framework.Renderer.Server
                     [PbrSkinCsm4.Shaders.SMP_pbr_skinning_csm4_u_GGXLUTSampler_Raw]        = lutSmp,
                     [PbrSkinCsm4.Shaders.SMP_pbr_skinning_csm4_shadow_atlas_smp]           = _shadowSampler,
                     [PbrSkinCsm4.Shaders.SMP_pbr_skinning_csm4_cube_shadow_array_smp]      = _cubeShadowSampler,
-                    [PbrSkinCsm4.Shaders.SMP_pbr_skinning_csm4_u_jointsSampler_Smp]        = _texCache.DefaultSampler,
+                    [PbrSkinCsm4.Shaders.SMP_pbr_skinning_csm4_u_jointsSampler_Smp]        = _jointSampler,
                 },
             });
 
@@ -1744,18 +1788,23 @@ namespace GameEditor.Framework.Renderer.Server
             if (blend)           pf |= PipelineFlags.AlphaBlend;
             sg_apply_pipeline(_shaderCache.GetPbrSkinningCsm1Pipeline(pf));
 
+            // >128-bone skeletons take the joint-texture path (see DrawSkinned for the rationale).
+            bool useTex = entry.UsesTextureSkinning && entry.JointTextureView.id != 0;
             var vs = new PbrSkinCsm1.Shaders.pbr_skinning_csm1_pbr_vs_params_t
             {
                 view_proj            = viewProj,
                 eye_pos              = cameraPos,
-                use_uniform_skinning = 1,
+                use_uniform_skinning = useTex ? 0 : 1,
             };
             vs.csm_vp[0] = _directionalShadowViewProj;   // cascade 0 = the slice-0 directional map
-            var bones = entry.Animator?.GetFinalBoneMatrices();
-            if (bones != null)
+            if (!useTex)
             {
-                int bc = Math.Min(Math.Min(entry.BoneCount, bones.Length), Animation.AnimationConstants.MAX_BONES);
-                for (int i = 0; i < bc; i++) vs.finalBonesMatrices[i] = bones[i];
+                var bones = entry.Animator?.GetFinalBoneMatrices();
+                if (bones != null)
+                {
+                    int bc = Math.Min(Math.Min(entry.BoneCount, bones.Length), Animation.AnimationConstants.MAX_BONES);
+                    for (int i = 0; i < bc; i++) vs.finalBonesMatrices[i] = bones[i];
+                }
             }
 
             var lights = new PbrSkinCsm1.Shaders.pbr_skinning_csm1_pbr_light_params_t();
@@ -1884,7 +1933,7 @@ namespace GameEditor.Framework.Renderer.Server
                     [PbrSkinCsm1.Shaders.VIEW_pbr_skinning_csm1_u_GGXLUTTexture]            = lut,
                     [PbrSkinCsm1.Shaders.VIEW_pbr_skinning_csm1_shadow_atlas]              = _shadowAtlas.TextureView,
                     [PbrSkinCsm1.Shaders.VIEW_pbr_skinning_csm1_cube_shadow_array]         = _cubeShadows.TextureView,
-                    [PbrSkinCsm1.Shaders.VIEW_pbr_skinning_csm1_u_jointsSampler_Tex]       = _texCache.PlaceholderWhite,
+                    [PbrSkinCsm1.Shaders.VIEW_pbr_skinning_csm1_u_jointsSampler_Tex]       = useTex ? entry.JointTextureView : _texCache.PlaceholderWhite,
                 },
                 samplers = {
                     [PbrSkinCsm1.Shaders.SMP_pbr_skinning_csm1_u_BaseColorSampler]         = matSmp,
@@ -1897,7 +1946,7 @@ namespace GameEditor.Framework.Renderer.Server
                     [PbrSkinCsm1.Shaders.SMP_pbr_skinning_csm1_u_GGXLUTSampler_Raw]        = lutSmp,
                     [PbrSkinCsm1.Shaders.SMP_pbr_skinning_csm1_shadow_atlas_smp]           = _shadowSampler,
                     [PbrSkinCsm1.Shaders.SMP_pbr_skinning_csm1_cube_shadow_array_smp]      = _cubeShadowSampler,
-                    [PbrSkinCsm1.Shaders.SMP_pbr_skinning_csm1_u_jointsSampler_Smp]        = _texCache.DefaultSampler,
+                    [PbrSkinCsm1.Shaders.SMP_pbr_skinning_csm1_u_jointsSampler_Smp]        = _jointSampler,
                 },
             });
 

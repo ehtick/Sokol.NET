@@ -57,6 +57,13 @@ layout(binding=0) uniform pbr_vs_params {
 
 // Joint-matrix texture (binding=11) — declared unconditionally so that sokol-shdc
 // always sees the binding; the actual fetch is gated by #ifdef SKINNING in animation.glsl.
+// It holds raw mat4 data read with texelFetch only (never filtered), so it MUST be declared
+// unfilterable_float with a nonfiltering sampler. RGBA32F is not a filterable format on GLES3
+// drivers lacking GL_OES_texture_float_linear (e.g. Mali-G52 / Galaxy Tab A8); a plain `float`
+// sample-type trips sokol's VALIDATE_ABND_TEXVIEW_EXPECTED_FILTERABLE_IMAGE panic in
+// sg_apply_bindings on those devices (works on Metal / desktop-WebGL2 / float-linear GLES3).
+@image_sample_type u_jointsSampler_Tex unfilterable_float
+@sampler_type u_jointsSampler_Smp nonfiltering
 layout(binding=11) uniform texture2D u_jointsSampler_Tex;
 layout(binding=11) uniform sampler   u_jointsSampler_Smp;
 

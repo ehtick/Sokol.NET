@@ -77,7 +77,7 @@ public static unsafe class Shaders
                 Bind slot: UB_pbr_skinning_csm1_pbr_camera_params => 4
             Texture 'u_jointsSampler_Tex':
                 Image type: SG_IMAGETYPE_2D
-                Sample type: SG_IMAGESAMPLETYPE_FLOAT
+                Sample type: SG_IMAGESAMPLETYPE_UNFILTERABLE_FLOAT
                 Multisampled: false
                 Bind slot: VIEW_pbr_skinning_csm1_u_jointsSampler_Tex => 11
             Texture 'u_LambertianEnvTexture':
@@ -131,7 +131,7 @@ public static unsafe class Shaders
                 Multisampled: false
                 Bind slot: VIEW_pbr_skinning_csm1_u_EmissiveTexture => 4
             Sampler 'u_jointsSampler_Smp':
-                Type: SG_SAMPLERTYPE_FILTERING
+                Type: SG_SAMPLERTYPE_NONFILTERING
                 Bind slot: SMP_pbr_skinning_csm1_u_jointsSampler_Smp => 11
             Sampler 'u_LambertianEnvSampler_Raw':
                 Type: SG_SAMPLERTYPE_FILTERING
@@ -20455,7 +20455,7 @@ public static unsafe class Shaders
             desc.views[10].texture.multisampled = false;
             desc.views[11].texture.stage = SG_SHADERSTAGE_VERTEX;
             desc.views[11].texture.image_type = SG_IMAGETYPE_2D;
-            desc.views[11].texture.sample_type = SG_IMAGESAMPLETYPE_FLOAT;
+            desc.views[11].texture.sample_type = SG_IMAGESAMPLETYPE_UNFILTERABLE_FLOAT;
             desc.views[11].texture.multisampled = false;
             desc.samplers[0].stage = SG_SHADERSTAGE_FRAGMENT;
             desc.samplers[0].sampler_type = SG_SAMPLERTYPE_FILTERING;
@@ -20478,7 +20478,7 @@ public static unsafe class Shaders
             desc.samplers[10].stage = SG_SHADERSTAGE_FRAGMENT;
             desc.samplers[10].sampler_type = SG_SAMPLERTYPE_COMPARISON;
             desc.samplers[11].stage = SG_SHADERSTAGE_VERTEX;
-            desc.samplers[11].sampler_type = SG_SAMPLERTYPE_FILTERING;
+            desc.samplers[11].sampler_type = SG_SAMPLERTYPE_NONFILTERING;
             desc.texture_sampler_pairs[0].stage = SG_SHADERSTAGE_VERTEX;
             desc.texture_sampler_pairs[0].view_slot = 11;
             desc.texture_sampler_pairs[0].sampler_slot = 11;
@@ -20722,7 +20722,7 @@ public static unsafe class Shaders
             desc.views[10].texture.multisampled = false;
             desc.views[11].texture.stage = SG_SHADERSTAGE_VERTEX;
             desc.views[11].texture.image_type = SG_IMAGETYPE_2D;
-            desc.views[11].texture.sample_type = SG_IMAGESAMPLETYPE_FLOAT;
+            desc.views[11].texture.sample_type = SG_IMAGESAMPLETYPE_UNFILTERABLE_FLOAT;
             desc.views[11].texture.multisampled = false;
             desc.samplers[0].stage = SG_SHADERSTAGE_FRAGMENT;
             desc.samplers[0].sampler_type = SG_SAMPLERTYPE_FILTERING;
@@ -20745,7 +20745,7 @@ public static unsafe class Shaders
             desc.samplers[10].stage = SG_SHADERSTAGE_FRAGMENT;
             desc.samplers[10].sampler_type = SG_SAMPLERTYPE_COMPARISON;
             desc.samplers[11].stage = SG_SHADERSTAGE_VERTEX;
-            desc.samplers[11].sampler_type = SG_SAMPLERTYPE_FILTERING;
+            desc.samplers[11].sampler_type = SG_SAMPLERTYPE_NONFILTERING;
             desc.texture_sampler_pairs[0].stage = SG_SHADERSTAGE_VERTEX;
             desc.texture_sampler_pairs[0].view_slot = 11;
             desc.texture_sampler_pairs[0].sampler_slot = 11;
@@ -20914,7 +20914,7 @@ public static unsafe class Shaders
             desc.views[10].texture.hlsl_register_t_n = 9;
             desc.views[11].texture.stage = SG_SHADERSTAGE_VERTEX;
             desc.views[11].texture.image_type = SG_IMAGETYPE_2D;
-            desc.views[11].texture.sample_type = SG_IMAGESAMPLETYPE_FLOAT;
+            desc.views[11].texture.sample_type = SG_IMAGESAMPLETYPE_UNFILTERABLE_FLOAT;
             desc.views[11].texture.multisampled = false;
             desc.views[11].texture.hlsl_register_t_n = 0;
             desc.samplers[0].stage = SG_SHADERSTAGE_FRAGMENT;
@@ -20948,7 +20948,7 @@ public static unsafe class Shaders
             desc.samplers[10].sampler_type = SG_SAMPLERTYPE_COMPARISON;
             desc.samplers[10].hlsl_register_s_n = 10;
             desc.samplers[11].stage = SG_SHADERSTAGE_VERTEX;
-            desc.samplers[11].sampler_type = SG_SAMPLERTYPE_FILTERING;
+            desc.samplers[11].sampler_type = SG_SAMPLERTYPE_NONFILTERING;
             desc.samplers[11].hlsl_register_s_n = 11;
             desc.texture_sampler_pairs[0].stage = SG_SHADERSTAGE_VERTEX;
             desc.texture_sampler_pairs[0].view_slot = 11;
@@ -21083,7 +21083,7 @@ public static unsafe class Shaders
             desc.views[10].texture.msl_texture_n = 9;
             desc.views[11].texture.stage = SG_SHADERSTAGE_VERTEX;
             desc.views[11].texture.image_type = SG_IMAGETYPE_2D;
-            desc.views[11].texture.sample_type = SG_IMAGESAMPLETYPE_FLOAT;
+            desc.views[11].texture.sample_type = SG_IMAGESAMPLETYPE_UNFILTERABLE_FLOAT;
             desc.views[11].texture.multisampled = false;
             desc.views[11].texture.msl_texture_n = 0;
             desc.samplers[0].stage = SG_SHADERSTAGE_FRAGMENT;
@@ -21117,7 +21117,7 @@ public static unsafe class Shaders
             desc.samplers[10].sampler_type = SG_SAMPLERTYPE_COMPARISON;
             desc.samplers[10].msl_sampler_n = 10;
             desc.samplers[11].stage = SG_SHADERSTAGE_VERTEX;
-            desc.samplers[11].sampler_type = SG_SAMPLERTYPE_FILTERING;
+            desc.samplers[11].sampler_type = SG_SAMPLERTYPE_NONFILTERING;
             desc.samplers[11].msl_sampler_n = 11;
             desc.texture_sampler_pairs[0].stage = SG_SHADERSTAGE_VERTEX;
             desc.texture_sampler_pairs[0].view_slot = 11;
@@ -21252,7 +21252,7 @@ public static unsafe class Shaders
             desc.views[10].texture.msl_texture_n = 9;
             desc.views[11].texture.stage = SG_SHADERSTAGE_VERTEX;
             desc.views[11].texture.image_type = SG_IMAGETYPE_2D;
-            desc.views[11].texture.sample_type = SG_IMAGESAMPLETYPE_FLOAT;
+            desc.views[11].texture.sample_type = SG_IMAGESAMPLETYPE_UNFILTERABLE_FLOAT;
             desc.views[11].texture.multisampled = false;
             desc.views[11].texture.msl_texture_n = 0;
             desc.samplers[0].stage = SG_SHADERSTAGE_FRAGMENT;
@@ -21286,7 +21286,7 @@ public static unsafe class Shaders
             desc.samplers[10].sampler_type = SG_SAMPLERTYPE_COMPARISON;
             desc.samplers[10].msl_sampler_n = 10;
             desc.samplers[11].stage = SG_SHADERSTAGE_VERTEX;
-            desc.samplers[11].sampler_type = SG_SAMPLERTYPE_FILTERING;
+            desc.samplers[11].sampler_type = SG_SAMPLERTYPE_NONFILTERING;
             desc.samplers[11].msl_sampler_n = 11;
             desc.texture_sampler_pairs[0].stage = SG_SHADERSTAGE_VERTEX;
             desc.texture_sampler_pairs[0].view_slot = 11;
