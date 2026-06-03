@@ -37,6 +37,13 @@ namespace GameEditor.Framework.Renderer.Server.Passes
         private sg_view _atlasDummyColorView;
         private sg_image _cubeDummyColorImage;
         private sg_view _cubeDummyColorView;
+        // Joint-matrix texture bindings for the >128-bone skinned caster: a 1×1 sampleable placeholder
+        // (bound but never sampled on the ≤128 uniform path) + a NEAREST/nonfiltering sampler matching
+        // the shader's `nonfiltering` u_jointsSampler_Smp. The real per-character RGBA32F texture comes
+        // from SkinnedCharacterRegistry.Entry on the texture path.
+        private sg_image _jointPlaceholderImage;
+        private sg_view _jointPlaceholderView;
+        private sg_sampler _jointSampler;
         private readonly Dictionary<string, PrimitiveShadowMesh> _primitiveMeshes = new();
         private bool _initialized;
 
@@ -158,6 +165,31 @@ namespace GameEditor.Framework.Renderer.Server.Passes
                 label = "shadow-pass-dummy-color-cube-view"
             });
 
+            // 1×1 sampleable placeholder for the skinned caster's joints-texture slot (never sampled
+            // on the uniform path; the texture path binds the real per-character RGBA32F texture).
+            _jointPlaceholderImage = sg_make_image(new sg_image_desc
+            {
+                width = 1,
+                height = 1,
+                pixel_format = sg_pixel_format.SG_PIXELFORMAT_RGBA8,
+                usage = new sg_image_usage { stream_update = true },
+                label = "shadow-joint-placeholder"
+            });
+            _jointPlaceholderView = sg_make_view(new sg_view_desc
+            {
+                texture = new sg_texture_view_desc { image = _jointPlaceholderImage },
+                label = "shadow-joint-placeholder-view"
+            });
+            _jointSampler = sg_make_sampler(new sg_sampler_desc
+            {
+                min_filter    = sg_filter.SG_FILTER_NEAREST,
+                mag_filter    = sg_filter.SG_FILTER_NEAREST,
+                mipmap_filter = sg_filter.SG_FILTER_NEAREST,
+                wrap_u = sg_wrap.SG_WRAP_CLAMP_TO_EDGE,
+                wrap_v = sg_wrap.SG_WRAP_CLAMP_TO_EDGE,
+                label = "shadow-joint-sampler"
+            });
+
             _initialized = true;
         }
 
@@ -206,6 +238,21 @@ namespace GameEditor.Framework.Renderer.Server.Passes
             {
                 sg_destroy_image(_cubeDummyColorImage);
                 _cubeDummyColorImage = default;
+            }
+            if (_jointPlaceholderView.id != 0)
+            {
+                sg_destroy_view(_jointPlaceholderView);
+                _jointPlaceholderView = default;
+            }
+            if (_jointPlaceholderImage.id != 0)
+            {
+                sg_destroy_image(_jointPlaceholderImage);
+                _jointPlaceholderImage = default;
+            }
+            if (_jointSampler.id != 0)
+            {
+                sg_destroy_sampler(_jointSampler);
+                _jointSampler = default;
             }
 
             foreach (var kv in _primitiveMeshes)
@@ -323,16 +370,24 @@ namespace GameEditor.Framework.Renderer.Server.Passes
                     if (!entry.Meshes.TryGetValue(smr.PrimIndex, out var mesh) || mesh.IndexCount == 0) continue;
                     ref readonly var tf = ref row.Item3.Value;
 
+                    // >128-bone rigs can't fit finalBonesMatrices[128] → cast via the joint texture
+                    // (use_uniform_skinning=0), the same per-character texture the color pass uses
+                    // (uploaded by UpdateSkinnedAnimators before this pass). Else the uniform path.
+                    bool useTex = entry.UsesTextureSkinning && entry.JointTextureView.id != 0;
                     var vsParams = new SkinnedCaster.shadow_caster_vs_params_t
                     {
-                        mvp   = lightViewProj,
-                        model = Transform.GetWorldMatrix(world, tf),
+                        mvp                  = lightViewProj,
+                        model                = Transform.GetWorldMatrix(world, tf),
+                        use_uniform_skinning = useTex ? 0 : 1,
                     };
-                    var bones = entry.Animator?.GetFinalBoneMatrices();
-                    if (bones != null)
+                    if (!useTex)
                     {
-                        int bc = Math.Min(entry.BoneCount, Math.Min(bones.Length, AnimationConstants.MAX_BONES));
-                        for (int b = 0; b < bc; b++) vsParams.finalBonesMatrices[b] = bones[b];
+                        var bones = entry.Animator?.GetFinalBoneMatrices();
+                        if (bones != null)
+                        {
+                            int bc = Math.Min(entry.BoneCount, Math.Min(bones.Length, AnimationConstants.MAX_BONES));
+                            for (int b = 0; b < bc; b++) vsParams.finalBonesMatrices[b] = bones[b];
+                        }
                     }
                     sg_apply_uniforms(SkinnedCaster.UB_shadow_caster_vs_params, SG_RANGE(ref vsParams));
 
@@ -340,6 +395,8 @@ namespace GameEditor.Framework.Renderer.Server.Passes
                     {
                         vertex_buffers = { [0] = mesh.VertexBuffer },
                         index_buffer   = mesh.IndexBuffer,
+                        views    = { [SkinnedCaster.VIEW_u_jointsSampler_Tex] = useTex ? entry.JointTextureView : _jointPlaceholderView },
+                        samplers = { [SkinnedCaster.SMP_u_jointsSampler_Smp]  = _jointSampler },
                     });
                     sg_draw(0, (uint)mesh.IndexCount, 1);
                     draws++;
