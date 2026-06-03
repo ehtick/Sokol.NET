@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -51,6 +52,7 @@ namespace GameEditor.Framework.Core
                     if (phys.TryGetProperty("engine3D", out var e3)) cfg.Physics3D = e3.GetString() ?? cfg.Physics3D;
                     if (phys.TryGetProperty("engine2D", out var e2)) cfg.Physics2D = e2.GetString() ?? cfg.Physics2D;
                 }
+                ReadEnvironment(root, cfg);
 
                 ProjectFolder = projectFolder;
                 Config = cfg;
@@ -85,6 +87,7 @@ namespace GameEditor.Framework.Core
                     if (phys.TryGetProperty("engine3D", out var e3)) cfg.Physics3D = e3.GetString() ?? cfg.Physics3D;
                     if (phys.TryGetProperty("engine2D", out var e2)) cfg.Physics2D = e2.GetString() ?? cfg.Physics2D;
                 }
+                ReadEnvironment(root, cfg);
 
                 Config = cfg;
                 Logger.Info($"Project config loaded from buffer.");
@@ -121,7 +124,15 @@ namespace GameEditor.Framework.Core
                 sb.Append("  \"physics\": {\n");
                 sb.Append($"    \"engine3D\": \"{Esc(config.Physics3D)}\",\n");
                 sb.Append($"    \"engine2D\": \"{Esc(config.Physics2D)}\"\n");
-                sb.Append("  }\n");
+                sb.Append("  },\n");
+                sb.Append($"  \"environmentMode\": \"{Esc(config.EnvironmentMode)}\",\n");
+                sb.Append($"  \"environmentFolder\": \"{Esc(config.EnvironmentFolder)}\",\n");
+                sb.Append($"  \"environmentFaces\": \"{Esc(config.EnvironmentFaces)}\",\n");
+                sb.Append($"  \"environmentIntensity\": {config.EnvironmentIntensity.ToString(CultureInfo.InvariantCulture)},\n");
+                sb.Append($"  \"environmentRotation\": {config.EnvironmentRotation.ToString(CultureInfo.InvariantCulture)},\n");
+                sb.Append($"  \"environmentShowSkybox\": {(config.EnvironmentShowSkybox ? "true" : "false")},\n");
+                sb.Append($"  \"environmentShadowAmbient\": {config.EnvironmentShadowAmbient.ToString(CultureInfo.InvariantCulture)},\n");
+                sb.Append($"  \"environmentCsm4\": {(config.EnvironmentCsm4 ? "true" : "false")}\n");
                 sb.Append('}');
 
                 string json = sb.ToString();
@@ -161,6 +172,20 @@ namespace GameEditor.Framework.Core
 
         public static string GetSokolAppBuilderPath()
             => Path.GetFullPath(Path.Combine(GetSokolNetHome(), "tools", "SokolApplicationBuilder"));
+
+        private static void ReadEnvironment(JsonElement root, ProjectConfig cfg)
+        {
+            if (root.TryGetProperty("environmentMode", out var em))        cfg.EnvironmentMode   = em.GetString()  ?? cfg.EnvironmentMode;
+            if (root.TryGetProperty("environmentFolder", out var ef))      cfg.EnvironmentFolder = ef.GetString()  ?? cfg.EnvironmentFolder;
+            if (root.TryGetProperty("environmentFaces", out var efa))      cfg.EnvironmentFaces  = efa.GetString() ?? cfg.EnvironmentFaces;
+            if (root.TryGetProperty("environmentIntensity", out var ei) && ei.TryGetSingle(out var iv)) cfg.EnvironmentIntensity = iv;
+            if (root.TryGetProperty("environmentRotation", out var er)  && er.TryGetSingle(out var rv)) cfg.EnvironmentRotation  = rv;
+            if (root.TryGetProperty("environmentShowSkybox", out var es) && (es.ValueKind == JsonValueKind.True || es.ValueKind == JsonValueKind.False))
+                cfg.EnvironmentShowSkybox = es.GetBoolean();
+            if (root.TryGetProperty("environmentShadowAmbient", out var esa) && esa.TryGetSingle(out var sav)) cfg.EnvironmentShadowAmbient = sav;
+            if (root.TryGetProperty("environmentCsm4", out var c4) && (c4.ValueKind == JsonValueKind.True || c4.ValueKind == JsonValueKind.False))
+                cfg.EnvironmentCsm4 = c4.GetBoolean();
+        }
 
         private static string Esc(string s) => s.Replace("\\", "\\\\").Replace("\"", "\\\"");
     }

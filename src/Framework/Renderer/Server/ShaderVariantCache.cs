@@ -23,6 +23,8 @@ using static Sokol.SG.sg_pixel_format;
 using static Sokol.SGlue;
 using static blinn_phong_shader_cs.Shaders;
 using PbrShaders = pbr_shader_cs_pbr.Shaders;
+using PbrCsm1 = pbr_csm1_shader_cs_pbr_csm1.Shaders;
+using PbrCsm4 = pbr_csm4_shader_cs_pbr_csm4.Shaders;
 using GameEditor.Framework.Core;
 using GameEditor.Framework.Renderer.Server.Materials;
 
@@ -46,6 +48,14 @@ namespace GameEditor.Framework.Renderer.Server
         // M4: PBR base-variant pipelines, keyed by the same flag combination as blinn.
         private readonly sg_pipeline[] _pbrPipelines = new sg_pipeline[8];
         private sg_shader _pbrShader;
+
+        // M4: PBR + 1-cascade directional-shadow variant (samples the slice-0 shadow map).
+        private readonly sg_pipeline[] _pbrCsm1Pipelines = new sg_pipeline[8];
+        private sg_shader _pbrCsm1Shader;
+
+        // M4: PBR + 4-cascade directional-shadow variant (samples atlas slices 0-3).
+        private readonly sg_pipeline[] _pbrCsm4Pipelines = new sg_pipeline[8];
+        private sg_shader _pbrCsm4Shader;
         private bool _disposed;
 
         // ── lifecycle ────────────────────────────────────────────────────────────────
@@ -78,6 +88,30 @@ namespace GameEditor.Framework.Renderer.Server
                     (flags & PipelineFlags.DoubleSided) != 0,
                     (flags & PipelineFlags.OffscreenRt) != 0);
             }
+
+            // ── M4: PBR CSM1 (1-cascade directional shadow) — same vertex layout as base PBR ──
+            _pbrCsm1Shader = sg_make_shader(PbrCsm1.pbr_csm1_pbr_program_shader_desc(sg_query_backend()));
+            for (int i = 0; i < _pbrCsm1Pipelines.Length; i++)
+            {
+                var flags = (PipelineFlags)i;
+                _pbrCsm1Pipelines[i] = BuildPbrCsm1Pipeline(
+                    _pbrCsm1Shader,
+                    (flags & PipelineFlags.AlphaBlend)  != 0,
+                    (flags & PipelineFlags.DoubleSided) != 0,
+                    (flags & PipelineFlags.OffscreenRt) != 0);
+            }
+
+            // ── M4: PBR CSM4 (4-cascade directional shadow) — same vertex layout as base PBR ──
+            _pbrCsm4Shader = sg_make_shader(PbrCsm4.pbr_csm4_pbr_program_shader_desc(sg_query_backend()));
+            for (int i = 0; i < _pbrCsm4Pipelines.Length; i++)
+            {
+                var flags = (PipelineFlags)i;
+                _pbrCsm4Pipelines[i] = BuildPbrCsm4Pipeline(
+                    _pbrCsm4Shader,
+                    (flags & PipelineFlags.AlphaBlend)  != 0,
+                    (flags & PipelineFlags.DoubleSided) != 0,
+                    (flags & PipelineFlags.OffscreenRt) != 0);
+            }
         }
 
         /// <summary>Look up the cached pipeline for the given flag combination.</summary>
@@ -89,6 +123,16 @@ namespace GameEditor.Framework.Renderer.Server
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public sg_pipeline GetPbrPipeline(PipelineFlags flags)
             => _pbrPipelines[(int)flags & 0x07];
+
+        /// <summary>PBR pipeline that also samples the 1-cascade directional shadow.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public sg_pipeline GetPbrCsm1Pipeline(PipelineFlags flags)
+            => _pbrCsm1Pipelines[(int)flags & 0x07];
+
+        /// <summary>PBR pipeline that also samples the 4-cascade directional shadow.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public sg_pipeline GetPbrCsm4Pipeline(PipelineFlags flags)
+            => _pbrCsm4Pipelines[(int)flags & 0x07];
 
         /// <summary>The shared shader object (for inspecting reflection).</summary>
         public sg_shader Shader => _shaders[0];
@@ -280,6 +324,149 @@ namespace GameEditor.Framework.Renderer.Server
             return sg_make_pipeline(desc);
         }
 
+        // PBR CSM1 pipeline — identical per-vertex (48 B) + per-instance (80 B) layout as the
+        // base PBR pipeline; only the shader and the ATTR_ binding constants differ.
+        private static sg_pipeline BuildPbrCsm1Pipeline(sg_shader shader, bool alpha, bool doubleSide, bool offscreen)
+        {
+            var cullMode = doubleSide ? sg_cull_mode.SG_CULLMODE_NONE : sg_cull_mode.SG_CULLMODE_BACK;
+            var desc = new sg_pipeline_desc
+            {
+                shader       = shader,
+                index_type   = sg_index_type.SG_INDEXTYPE_UINT32,
+                cull_mode    = cullMode,
+                face_winding = sg_face_winding.SG_FACEWINDING_CCW,
+                depth = new sg_depth_state
+                {
+                    pixel_format  = SG_PIXELFORMAT_DEPTH,
+                    compare       = sg_compare_func.SG_COMPAREFUNC_LESS_EQUAL,
+                    write_enabled = !alpha,
+                },
+                label = "pbr-csm1-pip"
+            };
+
+            desc.layout.buffers[0].stride = 48;
+            desc.layout.attrs[PbrCsm1.ATTR_pbr_csm1_pbr_program_position]   = new sg_vertex_attr_state
+            { buffer_index = 0, offset =  0, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT3 };
+            desc.layout.attrs[PbrCsm1.ATTR_pbr_csm1_pbr_program_normal]     = new sg_vertex_attr_state
+            { buffer_index = 0, offset = 12, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT3 };
+            desc.layout.attrs[PbrCsm1.ATTR_pbr_csm1_pbr_program_texcoord_0] = new sg_vertex_attr_state
+            { buffer_index = 0, offset = 24, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT2 };
+            desc.layout.attrs[PbrCsm1.ATTR_pbr_csm1_pbr_program_tangent]    = new sg_vertex_attr_state
+            { buffer_index = 0, offset = 32, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT4 };
+
+            desc.layout.buffers[1].stride    = 80;
+            desc.layout.buffers[1].step_func = sg_vertex_step.SG_VERTEXSTEP_PER_INSTANCE;
+            desc.layout.attrs[PbrCsm1.ATTR_pbr_csm1_pbr_program_in_model_0] = new sg_vertex_attr_state
+            { buffer_index = 1, offset =  0, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT4 };
+            desc.layout.attrs[PbrCsm1.ATTR_pbr_csm1_pbr_program_in_model_1] = new sg_vertex_attr_state
+            { buffer_index = 1, offset = 16, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT4 };
+            desc.layout.attrs[PbrCsm1.ATTR_pbr_csm1_pbr_program_in_model_2] = new sg_vertex_attr_state
+            { buffer_index = 1, offset = 32, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT4 };
+            desc.layout.attrs[PbrCsm1.ATTR_pbr_csm1_pbr_program_in_model_3] = new sg_vertex_attr_state
+            { buffer_index = 1, offset = 48, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT4 };
+            desc.layout.attrs[PbrCsm1.ATTR_pbr_csm1_pbr_program_in_custom]  = new sg_vertex_attr_state
+            { buffer_index = 1, offset = 64, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT4 };
+
+            if (alpha)
+            {
+                desc.colors[0].blend = new sg_blend_state
+                {
+                    enabled          = true,
+                    src_factor_rgb   = sg_blend_factor.SG_BLENDFACTOR_SRC_ALPHA,
+                    dst_factor_rgb   = sg_blend_factor.SG_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+                    src_factor_alpha = sg_blend_factor.SG_BLENDFACTOR_ONE,
+                    dst_factor_alpha = sg_blend_factor.SG_BLENDFACTOR_ZERO,
+                };
+            }
+
+            if (offscreen)
+            {
+                desc.colors[0].pixel_format = SG_PIXELFORMAT_RGBA8;
+                desc.depth.pixel_format     = SG_PIXELFORMAT_DEPTH;
+                desc.sample_count           = 1;
+            }
+            else
+            {
+                var sc = sglue_swapchain();
+                desc.colors[0].pixel_format = sc.color_format;
+                desc.depth.pixel_format     = sc.depth_format;
+                desc.sample_count           = sc.sample_count;
+            }
+
+            return sg_make_pipeline(desc);
+        }
+
+        // PBR CSM4 pipeline — identical layout to base/CSM1; only the shader + ATTR constants differ.
+        private static sg_pipeline BuildPbrCsm4Pipeline(sg_shader shader, bool alpha, bool doubleSide, bool offscreen)
+        {
+            var cullMode = doubleSide ? sg_cull_mode.SG_CULLMODE_NONE : sg_cull_mode.SG_CULLMODE_BACK;
+            var desc = new sg_pipeline_desc
+            {
+                shader       = shader,
+                index_type   = sg_index_type.SG_INDEXTYPE_UINT32,
+                cull_mode    = cullMode,
+                face_winding = sg_face_winding.SG_FACEWINDING_CCW,
+                depth = new sg_depth_state
+                {
+                    pixel_format  = SG_PIXELFORMAT_DEPTH,
+                    compare       = sg_compare_func.SG_COMPAREFUNC_LESS_EQUAL,
+                    write_enabled = !alpha,
+                },
+                label = "pbr-csm4-pip"
+            };
+
+            desc.layout.buffers[0].stride = 48;
+            desc.layout.attrs[PbrCsm4.ATTR_pbr_csm4_pbr_program_position]   = new sg_vertex_attr_state
+            { buffer_index = 0, offset =  0, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT3 };
+            desc.layout.attrs[PbrCsm4.ATTR_pbr_csm4_pbr_program_normal]     = new sg_vertex_attr_state
+            { buffer_index = 0, offset = 12, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT3 };
+            desc.layout.attrs[PbrCsm4.ATTR_pbr_csm4_pbr_program_texcoord_0] = new sg_vertex_attr_state
+            { buffer_index = 0, offset = 24, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT2 };
+            desc.layout.attrs[PbrCsm4.ATTR_pbr_csm4_pbr_program_tangent]    = new sg_vertex_attr_state
+            { buffer_index = 0, offset = 32, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT4 };
+
+            desc.layout.buffers[1].stride    = 80;
+            desc.layout.buffers[1].step_func = sg_vertex_step.SG_VERTEXSTEP_PER_INSTANCE;
+            desc.layout.attrs[PbrCsm4.ATTR_pbr_csm4_pbr_program_in_model_0] = new sg_vertex_attr_state
+            { buffer_index = 1, offset =  0, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT4 };
+            desc.layout.attrs[PbrCsm4.ATTR_pbr_csm4_pbr_program_in_model_1] = new sg_vertex_attr_state
+            { buffer_index = 1, offset = 16, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT4 };
+            desc.layout.attrs[PbrCsm4.ATTR_pbr_csm4_pbr_program_in_model_2] = new sg_vertex_attr_state
+            { buffer_index = 1, offset = 32, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT4 };
+            desc.layout.attrs[PbrCsm4.ATTR_pbr_csm4_pbr_program_in_model_3] = new sg_vertex_attr_state
+            { buffer_index = 1, offset = 48, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT4 };
+            desc.layout.attrs[PbrCsm4.ATTR_pbr_csm4_pbr_program_in_custom]  = new sg_vertex_attr_state
+            { buffer_index = 1, offset = 64, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT4 };
+
+            if (alpha)
+            {
+                desc.colors[0].blend = new sg_blend_state
+                {
+                    enabled          = true,
+                    src_factor_rgb   = sg_blend_factor.SG_BLENDFACTOR_SRC_ALPHA,
+                    dst_factor_rgb   = sg_blend_factor.SG_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+                    src_factor_alpha = sg_blend_factor.SG_BLENDFACTOR_ONE,
+                    dst_factor_alpha = sg_blend_factor.SG_BLENDFACTOR_ZERO,
+                };
+            }
+
+            if (offscreen)
+            {
+                desc.colors[0].pixel_format = SG_PIXELFORMAT_RGBA8;
+                desc.depth.pixel_format     = SG_PIXELFORMAT_DEPTH;
+                desc.sample_count           = 1;
+            }
+            else
+            {
+                var sc = sglue_swapchain();
+                desc.colors[0].pixel_format = sc.color_format;
+                desc.depth.pixel_format     = sc.depth_format;
+                desc.sample_count           = sc.sample_count;
+            }
+
+            return sg_make_pipeline(desc);
+        }
+
         // ── lifecycle ────────────────────────────────────────────────────────────────
 
         public void Shutdown()
@@ -307,6 +494,34 @@ namespace GameEditor.Framework.Renderer.Server
             {
                 sg_destroy_shader(_pbrShader);
                 _pbrShader = default;
+            }
+
+            for (int i = 0; i < _pbrCsm1Pipelines.Length; i++)
+            {
+                if (_pbrCsm1Pipelines[i].id != 0)
+                {
+                    sg_destroy_pipeline(_pbrCsm1Pipelines[i]);
+                    _pbrCsm1Pipelines[i] = default;
+                }
+            }
+            if (_pbrCsm1Shader.id != 0)
+            {
+                sg_destroy_shader(_pbrCsm1Shader);
+                _pbrCsm1Shader = default;
+            }
+
+            for (int i = 0; i < _pbrCsm4Pipelines.Length; i++)
+            {
+                if (_pbrCsm4Pipelines[i].id != 0)
+                {
+                    sg_destroy_pipeline(_pbrCsm4Pipelines[i]);
+                    _pbrCsm4Pipelines[i] = default;
+                }
+            }
+            if (_pbrCsm4Shader.id != 0)
+            {
+                sg_destroy_shader(_pbrCsm4Shader);
+                _pbrCsm4Shader = default;
             }
 
             // Destroy the single shader object (shared across all variants).

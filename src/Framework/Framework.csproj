@@ -47,6 +47,10 @@
     <!-- Tonemap post-process pass -->
     <_TonemapPassGlsl>$(_FrameworkDir)Renderer/Server/shaders/tonemap_pass.glsl</_TonemapPassGlsl>
     <_TonemapPassOut>$(_FrameworkDir)Renderer/Server/shaders/tonemap_pass_shader.cs</_TonemapPassOut>
+    <!-- Skybox (environment cubemap background) — @include tonemapping.glsl -->
+    <_CubemapGlsl>$(_FrameworkDir)Renderer/Server/shaders/cubemap.glsl</_CubemapGlsl>
+    <_CubemapOut>$(_FrameworkDir)Renderer/Server/shaders/cubemap_shader.cs</_CubemapOut>
+    <_TonemappingGlsl>$(_FrameworkDir)Renderer/Server/shaders/tonemapping.glsl</_TonemappingGlsl>
   </PropertyGroup>
 
   <!-- Compile blinn_phong.glsl for ALL supported platforms into a single .cs file.
@@ -78,6 +82,13 @@
           Outputs="$(_TonemapPassOut)">
     <Message Text="Compiling Framework shader: tonemap_pass.glsl (all platforms)" Importance="high" />
     <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_TonemapPassGlsl)&quot; --output &quot;$(_TonemapPassOut)&quot; --module tonemap_pass --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
+  </Target>
+
+  <Target Name="CompileFrameworkCubemapShader" BeforeTargets="BeforeBuild"
+          Inputs="$(_CubemapGlsl);$(_TonemappingGlsl)"
+          Outputs="$(_CubemapOut)">
+    <Message Text="Compiling Framework shader: cubemap.glsl (all platforms)" Importance="high" />
+    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_CubemapGlsl)&quot; --output &quot;$(_CubemapOut)&quot; --module cubemap --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
   </Target>
 
   <!-- PBR shader variants: one .cs file per define combination.

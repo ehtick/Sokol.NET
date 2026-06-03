@@ -13,5 +13,15 @@ namespace GameEditor.Framework.Core
         public int    ScreenHeight  { get; set; } = 720;
         public string Physics3D     { get; set; } = "jolt";
         public string Physics2D     { get; set; } = "box2d";
+
+        // ── Environment / IBL (authored in the editor's Environment panel) ──────────────
+        public string EnvironmentMode      { get; set; } = "cubemap";          // "procedural" | "cubemap"
+        public string EnvironmentFolder    { get; set; } = "skyboxes/skybox";  // Assets-relative cubemap folder
+        public string EnvironmentFaces     { get; set; } = "";                 // 6 per-face overrides, '|'-joined ("" = use folder)
+        public float  EnvironmentIntensity { get; set; } = 1f;
+        public float  EnvironmentRotation  { get; set; } = 0f;                 // degrees about Y
+        public bool   EnvironmentShowSkybox{ get; set; } = true;
+        public float  EnvironmentShadowAmbient { get; set; } = 0.4f;           // 0=physical, 1=shadows fully darken IBL ambient
+        public bool   EnvironmentCsm4       { get; set; } = false;            // 4-cascade directional shadows (else single-fit CSM1)
     }
 }

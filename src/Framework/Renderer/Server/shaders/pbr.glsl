@@ -193,6 +193,7 @@ precision highp float;
 #define DEBUG_BASE_COLOR_FOR_TINT   33
 #define DEBUG_SURFACE_COLOR_BEFORE_MIX 34
 #define DEBUG_CSM_CASCADE           35
+#define DEBUG_SHADOW                36
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 @include fs_constants.glsl
@@ -292,6 +293,7 @@ vec2 applyTextureTransform(vec2 uv, vec2 offset, float rotation, vec2 scale) {
 #define emissive_texcoord              emissive_texcoord
 #define debug_view_enabled             debug_view_enabled
 #define debug_view_mode                debug_view_mode
+#define shadow_ambient_weight          shadow_ambient_weight
 
 // Convenience aliases for the light block.
 #define num_lights  int(ambient_num.w + 0.5)
@@ -476,6 +478,7 @@ void main()
 #endif  // TRANSMISSION
 
     vec3 color = vec3(0.0);
+    float g_minShadow = 1.0;   // diagnostics: min shadow factor across all punctual lights
 
 #ifdef TRANSMISSION
     g_surfaceColorBeforeMix = f_diffuse_ibl + f_specular_ibl;
@@ -499,6 +502,8 @@ void main()
 #endif
     }
 
+    vec3 g_ambient = color;   // IBL/ambient term — captured for optional shadow modulation below.
+
     // ── Clearcoat setup ──────────────────────────────────────────────────────
     vec3  clearcoatNormal         = normalize(v_Normal);
     float clearcoatAlphaRoughness = clearcoat_roughness * clearcoat_roughness;
@@ -519,16 +524,30 @@ void main()
             vec3  h     = normalize(l + v);
             float VdotH = clampedDot(v, h);
 
-            // ── CSM shadow factor for directional light ────────────────────
+            // ── Shadow factor: directional via CSM, spot via the atlas cone slice ──
             float shadow = 1.0;
-#if CSM_CASCADES > 0
             int ltype_i = int(lights_data[i*4+0].w + 0.5);
+#if CSM_CASCADES > 0
             if (ltype_i == LIGHT_TYPE_DIRECTIONAL) {
                 // view_depth = -(u_ViewMatrix * vec4(v_Position,1)).z
                 float vd = -(u_ViewMatrix * vec4(v_Position, 1.0)).z;
-                shadow = sampleCsmShadow(v_Position, vd);
+                shadow = sampleCsmShadow(v_Position, vd, clampedDot(n, l));
             }
 #endif
+#if !defined(TRANSMISSION)
+            if (ltype_i == LIGHT_TYPE_SPOT) {
+                // lights_data[i*4+3].z = spot shadow atlas slice (4-11), or 0 = no shadow.
+                shadow = sample_spot_shadow(lights_data[i*4+3].z, v_Position);
+            }
+#if !defined(SKINNING)
+            else if (ltype_i == LIGHT_TYPE_POINT) {
+                // lights_data[i*4+3].z = point shadow slot (0-3); pos = lights_data[i*4+0].xyz.
+                shadow = sample_point_shadow(int(lights_data[i*4+3].z + 0.5),
+                                             lights_data[i*4+0].xyz, v_Position);
+            }
+#endif
+#endif
+            g_minShadow = min(g_minShadow, shadow);
 
             // ── Base material ─────────────────────────────────────────────
             float NdotL = clampedDot(n, l);
@@ -557,6 +576,13 @@ void main()
             }
         }
     }
+
+    // ── Optional: shadows darken the IBL ambient ──────────────────────────────
+    // Physically, punctual shadows only occlude their own (1/d²-attenuated) contribution,
+    // so on an IBL-lit floor a spot/point shadow is nearly invisible. When enabled, fold
+    // the combined shadow term into the ambient so the shadow reads at any light intensity.
+    // weight == 0 (default) → mix() returns 1.0 → exact no-op on every variant.
+    color -= g_ambient * (1.0 - mix(1.0, g_minShadow, clamp(shadow_ambient_weight, 0.0, 1.0)));
 
     // ── Clearcoat layer ───────────────────────────────────────────────────────
     if (clearcoat_factor > 0.0) {
@@ -598,6 +624,7 @@ void main()
         else if (mode == DEBUG_ROUGHNESS)       color = vec3(perceptualRoughness);
         else if (mode == DEBUG_BASE_COLOR)      color = baseColor.rgb;
         else if (mode == DEBUG_F0)              color = mix(vec3(0.04), baseColor.rgb, metallic);
+        else if (mode == DEBUG_SHADOW)          color = vec3(g_minShadow); // white=lit, black=shadowed
 #if CSM_CASCADES > 0
         else if (mode == DEBUG_CSM_CASCADE) {
             float vd = -(u_ViewMatrix * vec4(v_Position, 1.0)).z;

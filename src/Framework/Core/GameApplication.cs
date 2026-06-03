@@ -8,6 +8,8 @@ using static Sokol.STM;
 using GameEditor.Framework.Scene;
 using GameEditor.Framework.Scripting;
 using GameEditor.Framework.ECS;
+using GameEditor.Framework.Renderer.Server;
+using GameEditor.Framework.Renderer.Server.Lighting;
 
 namespace GameEditor.Framework.Core
 {
@@ -174,6 +176,24 @@ namespace GameEditor.Framework.Core
             });
         }
         
+        /// <summary>
+        /// Applies the project's persisted environment (IBL/skybox, Shadow→Ambient, CSM4) to the
+        /// <see cref="RenderingServer"/>. Standalone/game builds have no Environment panel, so call
+        /// this once after the config is loaded (e.g. from your SceneLoaded handler) to match what
+        /// the editor's Scene view shows. No-op if no config is loaded.
+        /// </summary>
+        public static void ApplyPersistedEnvironment()
+        {
+            var c = Config;
+            if (c == null) return;
+
+            var s = new EnvironmentSettings();
+            EnvironmentSettings.LoadInto(s, c);
+            RenderingServer.ApplyEnvironment(s);
+            RenderingServer.ShadowAmbientWeight = c.EnvironmentShadowAmbient;
+            RenderingServer.EnableCsm4          = c.EnvironmentCsm4;
+        }
+
         // ── Play ─────────────────────────────────────────────────────────────
 
         /// <summary>

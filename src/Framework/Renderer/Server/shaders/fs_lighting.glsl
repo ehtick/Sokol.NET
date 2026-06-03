@@ -52,7 +52,8 @@ vec4 getLightDirectionAndAttenuation(int i, vec3 frag_pos)
 #if CSM_CASCADES > 0
 
 // Returns a 0…1 shadow term for the directional cascade that covers view_depth.
-float sampleCsmShadow(vec3 worldPos, float view_depth)
+// ndotl = saturated dot(surfaceNormal, lightDir); drives the slope-scaled bias.
+float sampleCsmShadow(vec3 worldPos, float view_depth, float ndotl)
 {
     // Choose cascade.
     int cascade = CSM_CASCADES - 1;
@@ -92,7 +93,14 @@ float sampleCsmShadow(vec3 worldPos, float view_depth)
 #else
     float receiver = ndc.z;
 #endif
-    float bias     = csm_bias;
+    // Slope-scaled depth bias (ported from blinn_phong's directional path). A flat bias too
+    // small for grazing-angle floor receivers produces self-shadow stripes (acne) — most
+    // visible with CSM4's wider cascades. csm_bias is the near-perpendicular floor; the slope
+    // term grows the bias as the surface tilts away from the light. Per-cascade scaling is NOT
+    // needed: each cascade's [0,1] depth range scales with its world extent, so a constant
+    // slope-keyed [0,1] bias maps to a near-constant world-space offset on every cascade.
+    float slope    = clamp(1.0 - ndotl, 0.0, 1.0);
+    float bias     = max(csm_bias, 0.012 * slope);
     float slice    = float(cascade);
 
     vec2 texel = 1.0 / vec2(textureSize(sampler2DArray(shadow_atlas, shadow_atlas_smp), 0).xy);
@@ -121,3 +129,93 @@ float sampleCsmShadow(vec3 worldPos, float view_depth)
     }
 }
 #endif  // CSM_CASCADES > 0
+
+// ─── Spot-light shadow sampling ───────────────────────────────────────────────
+// Projects worldPos by the spot cone's atlas-slice VP and 3×3-PCF samples the shared
+// shadow atlas (slices 4-11). Returns 1.0 (lit) for slices outside the spot range, so
+// spot lights without a shadow map contribute no occlusion.
+#if !defined(TRANSMISSION)
+float sample_spot_shadow(float atlas_slice, vec3 worldPos)
+{
+    int local = int(atlas_slice) - 4;
+    if (local < 0 || local >= 8) return 1.0;
+
+    int b = local * 4;
+    mat4 spot_vp = mat4(
+        spot_shadow_vp[b + 0], spot_shadow_vp[b + 1],
+        spot_shadow_vp[b + 2], spot_shadow_vp[b + 3]);
+
+    vec4 clip = spot_vp * vec4(worldPos, 1.0);
+    vec3 ndc  = clip.xyz / max(clip.w, 1e-5);
+#if !SOKOL_GLSL
+    ndc.y = -ndc.y;
+    if (ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) return 1.0;
+    float receiver = ndc.z;
+#else
+    if (ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 || ndc.z < -1.0 || ndc.z > 1.0) return 1.0;
+    float receiver = ndc.z * 0.5 + 0.5;
+#endif
+
+    vec2  uv    = ndc.xy * 0.5 + 0.5;
+    float bias  = 0.0015;
+    vec2  texel = 1.0 / vec2(textureSize(sampler2DArray(shadow_atlas, shadow_atlas_smp), 0).xy);
+
+    float vis = 0.0;
+    for (int y = -1; y <= 1; y++)
+    for (int x = -1; x <= 1; x++) {
+        vec2 suv = uv + vec2(float(x), float(y)) * texel * 2.5;
+        vis += texture(sampler2DArrayShadow(shadow_atlas, shadow_atlas_smp),
+                       vec4(suv, atlas_slice, receiver - bias));
+    }
+    return vis / 9.0;
+}
+
+// ─── Point-light shadow sampling ──────────────────────────────────────────────
+// Picks the cube face from the light→fragment direction, projects by that face's VP,
+// and 3×3-PCF samples cube_shadow_array (slice = slot*6 + face). 1.0 (lit) for invalid
+// slots, so point lights without a shadow map contribute no occlusion.
+// Excluded from SKINNING variants (binding 11 is the joints texture there).
+#if !defined(SKINNING)
+float sample_point_shadow(int point_slot, vec3 light_pos, vec3 worldPos)
+{
+    if (point_slot < 0 || point_slot >= 4) return 1.0;
+
+    vec3 to_frag = worldPos - light_pos;
+    vec3 a = abs(to_frag);
+    int face;
+    if (a.x >= a.y && a.x >= a.z)      face = to_frag.x > 0.0 ? 0 : 1;
+    else if (a.y >= a.x && a.y >= a.z) face = to_frag.y > 0.0 ? 2 : 3;
+    else                               face = to_frag.z > 0.0 ? 4 : 5;
+
+    int li = point_slot * 24 + face * 4;
+    mat4 face_vp = mat4(
+        point_shadow_vp[li + 0], point_shadow_vp[li + 1],
+        point_shadow_vp[li + 2], point_shadow_vp[li + 3]);
+
+    vec4 clip = face_vp * vec4(worldPos, 1.0);
+    vec3 ndc  = clip.xyz / max(clip.w, 1e-5);
+#if !SOKOL_GLSL
+    ndc.y = -ndc.y;
+    if (ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) return 1.0;
+    float receiver = ndc.z;
+#else
+    if (ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 || ndc.z < -1.0 || ndc.z > 1.0) return 1.0;
+    float receiver = ndc.z * 0.5 + 0.5;
+#endif
+
+    vec2  uv    = ndc.xy * 0.5 + 0.5;
+    float bias  = 0.0015;
+    float slice = float(point_slot * 6 + face);
+    vec2  texel = 1.0 / vec2(textureSize(sampler2DArray(cube_shadow_array, cube_shadow_array_smp), 0).xy);
+
+    float vis2 = 0.0;
+    for (int y = -1; y <= 1; y++)
+    for (int x = -1; x <= 1; x++) {
+        vec2 suv = uv + vec2(float(x), float(y)) * texel;
+        vis2 += texture(sampler2DArrayShadow(cube_shadow_array, cube_shadow_array_smp),
+                        vec4(suv, slice, receiver - bias));
+    }
+    return vis2 / 9.0;
+}
+#endif  // !SKINNING
+#endif  // !TRANSMISSION

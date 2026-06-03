@@ -78,6 +78,8 @@ layout(binding=1) uniform pbr_material_params {
     // Debug
     float debug_view_enabled;
     float debug_view_mode;
+    // Game-style punch: 0 = off (physical), 1 = shadows fully darken the IBL ambient.
+    float shadow_ambient_weight;
 };
 
 // ─── Lights (binding=2) — packed GpuLight[32] ────────────────────────────────
@@ -174,12 +176,22 @@ layout(binding=8)  uniform sampler         u_TransmissionSampler_Raw;
 // Joint-matrix and morph-target textures are VS-only (animation.glsl); no FS
 // declarations needed here.
 
-// CSM shadow atlas (binding=10, 2D array + shadow sampler).
-// Binding 10 is free in VS (which only uses 9=morph, 11=joints) and free in FS
-// for all M4 variants (TRANSMISSION, if ever added, would need a different slot).
-#if CSM_CASCADES > 0
+// Shadow atlas (binding=10, 2D array + shadow sampler) — slices 0-3 are directional CSM
+// cascades, slices 4-11 are spot-light shadow maps. Declared for every NON-transmission
+// variant so both the directional CSM path AND the punctual spot-shadow path can sample it
+// (binding 10 is otherwise the transmission framebuffer; those variants do no shadowing).
+#if !defined(TRANSMISSION)
 layout(binding=10) uniform texture2DArray  shadow_atlas;
 layout(binding=10) uniform samplerShadow   shadow_atlas_smp;
+#endif
+
+// Point-light cube shadows: 6 faces per light packed as 2D-array slices (slot*6 + face).
+// Reuses binding 11 — the joints texture there is VS-only and stripped in non-skinning
+// variants (sampler slots cap at 0..11, so this can't go higher). SKINNING variants keep
+// joints at 11 and forgo PBR point shadows (acceptable: skinning isn't wired yet).
+#if !defined(SKINNING) && !defined(TRANSMISSION)
+layout(binding=11) uniform texture2DArray  cube_shadow_array;
+layout(binding=11) uniform samplerShadow   cube_shadow_array_smp;
 #endif
 
 // Combined-sampler macros required by ibl.glsl

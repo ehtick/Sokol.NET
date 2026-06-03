@@ -14,6 +14,10 @@ namespace GameEditor.Framework.Renderer
         public Vector3 EyePos { get; private set; }
         public Matrix4x4 ViewProj => View * Proj;
 
+        /// <summary>Perspective near/far planes — needed by CSM cascade fitting.</summary>
+        public float NearZ => _nearZ;
+        public float FarZ  => _farZ;
+
         private Vector3 _center = Vector3.Zero;
         private float _distance = 5f;
         private float _yaw = 0f;

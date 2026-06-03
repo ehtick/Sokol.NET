@@ -120,7 +120,11 @@ public class ComboBox : Widget
     {
         float itemH      = ThemeManager.Current.InputHeight;
         float totalH     = _items.Count * itemH;
-        float sp         = ScreenPosition.Y;
+        // Use the popup anchor (the true screen Y captured at open) — the dropdown is RENDERED
+        // relative to it (see PopupOffsetFromCurrentScreenPosition), and in a docked panel it
+        // differs from ScreenPosition.Y. Deciding the flip on ScreenPosition.Y while drawing at
+        // the anchor made bottom-of-window combos open downward and clip off-screen.
+        float sp         = _hasPopupAnchor ? _popupAnchorScreenPos.Y : ScreenPosition.Y;
         float screenH    = Screen.Instance.LogicalHeight;
         float availBelow = screenH - (sp + Bounds.Height) - 4f;
         float availAbove = sp - 4f;

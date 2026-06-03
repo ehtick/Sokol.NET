@@ -78,13 +78,11 @@ namespace GameEditor.Framework.Renderer.Server.Lighting
                 _corners[i] = new Vector3(w.X, w.Y, w.Z) / w.W;
             }
 
-            // Light basis (right-handed, -Z toward scene).
+            // Light direction the shadow camera looks along (into the scene).
             var lightFwd   = Vector3.Normalize(lightDir);
             var worldUp    = Math.Abs(Vector3.Dot(lightFwd, Vector3.UnitY)) < 0.999f
                            ? Vector3.UnitY
                            : Vector3.UnitX;
-            var lightRight = Vector3.Normalize(Vector3.Cross(worldUp, lightFwd));
-            var lightUp2   = Vector3.Cross(lightFwd, lightRight);
 
             float prevSplit = nearClip;
             float rangeInv  = 1f / (shadowRange - nearClip);
@@ -115,53 +113,53 @@ namespace GameEditor.Framework.Renderer.Server.Lighting
                     sliceCorners[i + 4] = Vector3.Lerp(n, f, tFar);
                 }
 
-                // ── Bounding box in light space ───────────────────────────────
+                // ── Stable light view: a right-handed look-at along lightFwd ──
+                // (System.Numerics CreateLookAt + CreateOrthographicOffCenter expect the scene
+                //  in FRONT at -Z. The previous hand-built basis placed it at +Z, so every
+                //  cascade clipped to empty — no shadows. Measure the slice AABB in THIS view.)
+                Vector3 centroid = Vector3.Zero;
+                for (int i = 0; i < 8; i++) centroid += sliceCorners[i];
+                centroid /= 8f;
+
+                float radius = 0f;
+                for (int i = 0; i < 8; i++)
+                    radius = MathF.Max(radius, Vector3.Distance(centroid, sliceCorners[i]));
+
+                // Eye behind the slice (toward the light) so all casters are in front.
+                Vector3 eye   = centroid - lightFwd * (radius + 1f);
+                var lightView = Matrix4x4.CreateLookAt(eye, centroid, worldUp);
+
                 float minX = float.MaxValue, maxX = float.MinValue;
                 float minY = float.MaxValue, maxY = float.MinValue;
                 float minZ = float.MaxValue, maxZ = float.MinValue;
                 for (int i = 0; i < 8; i++)
                 {
-                    float lx = Vector3.Dot(sliceCorners[i], lightRight);
-                    float ly = Vector3.Dot(sliceCorners[i], lightUp2);
-                    float lz = Vector3.Dot(sliceCorners[i], lightFwd);
-                    if (lx < minX) minX = lx;  if (lx > maxX) maxX = lx;
-                    if (ly < minY) minY = ly;  if (ly > maxY) maxY = ly;
-                    if (lz < minZ) minZ = lz;  if (lz > maxZ) maxZ = lz;
+                    Vector3 v = Vector3.Transform(sliceCorners[i], lightView); // view space, -Z forward
+                    if (v.X < minX) minX = v.X;  if (v.X > maxX) maxX = v.X;
+                    if (v.Y < minY) minY = v.Y;  if (v.Y > maxY) maxY = v.Y;
+                    if (v.Z < minZ) minZ = v.Z;  if (v.Z > maxZ) maxZ = v.Z;
                 }
 
-                // Pull near plane back so geometry behind the slice can still cast shadows.
-                float depthRange = maxZ - minZ;
-                minZ -= depthRange * NearPullback;
-
-                // ── Texel snapping (eliminates shimmering on camera movement) ──
+                // ── Texel snapping (eliminates shimmer on camera movement) ──
                 float worldPerTexelX = (maxX - minX) / shadowMapSize;
                 float worldPerTexelY = (maxY - minY) / shadowMapSize;
-                minX = MathF.Floor(minX / worldPerTexelX) * worldPerTexelX;
-                minY = MathF.Floor(minY / worldPerTexelY) * worldPerTexelY;
-                maxX = minX + MathF.Ceiling((maxX - minX) / worldPerTexelX) * worldPerTexelX;
-                maxY = minY + MathF.Ceiling((maxY - minY) / worldPerTexelY) * worldPerTexelY;
+                if (worldPerTexelX > 0f)
+                {
+                    minX = MathF.Floor(minX / worldPerTexelX) * worldPerTexelX;
+                    maxX = MathF.Ceiling(maxX / worldPerTexelX) * worldPerTexelX;
+                }
+                if (worldPerTexelY > 0f)
+                {
+                    minY = MathF.Floor(minY / worldPerTexelY) * worldPerTexelY;
+                    maxY = MathF.Ceiling(maxY / worldPerTexelY) * worldPerTexelY;
+                }
 
-                // ── Light view matrix ─────────────────────────────────────────
-                // Place light eye at the far extent so the ortho near is 0.
-                float centerLx = (minX + maxX) * 0.5f;
-                float centerLy = (minY + maxY) * 0.5f;
-                var lightEye   = lightRight * centerLx
-                               + lightUp2   * centerLy
-                               + lightFwd   * minZ;
+                // View-Z is negative in front: near = -maxZ (closest), far = -minZ (farthest).
+                // Pull the near plane toward the light so casters in front of the slice register.
+                float near = MathF.Max(0.01f, -maxZ - radius * NearPullback);
+                float far  = -minZ + 1f;
 
-                var lightView = new Matrix4x4(
-                    lightRight.X, lightUp2.X, lightFwd.X, 0f,
-                    lightRight.Y, lightUp2.Y, lightFwd.Y, 0f,
-                    lightRight.Z, lightUp2.Z, lightFwd.Z, 0f,
-                    -Vector3.Dot(lightRight, lightEye),
-                    -Vector3.Dot(lightUp2,   lightEye),
-                    -Vector3.Dot(lightFwd,   lightEye), 1f);
-
-                var lightProj = Matrix4x4.CreateOrthographicOffCenter(
-                    minX - centerLx, maxX - centerLx,
-                    minY - centerLy, maxY - centerLy,
-                    0f, maxZ - minZ);
-
+                var lightProj = Matrix4x4.CreateOrthographicOffCenter(minX, maxX, minY, maxY, near, far);
                 CascadeVP[c] = lightView * lightProj;
                 prevSplit    = splitDepth;
             }

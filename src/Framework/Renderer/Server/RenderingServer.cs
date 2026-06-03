@@ -21,6 +21,8 @@ using static Sokol.SG;
 using static Sokol.Utils;
 using static blinn_phong_shader_cs.Shaders;
 using static pbr_shader_cs_pbr.Shaders;
+using Csm1 = pbr_csm1_shader_cs_pbr_csm1;
+using Csm4 = pbr_csm4_shader_cs_pbr_csm4;
 using GameEditor.Framework.Core;
 using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
@@ -52,9 +54,22 @@ namespace GameEditor.Framework.Renderer.Server
         private static readonly ShadowPass         _shadowPass  = new();
         private static readonly ShadowDebugPass     _shadowDebugPass = new();
         private static readonly TonemapPass         _tonemapPass = new();
+        private static readonly SkyboxPass          _skyboxPass  = new();
         private static readonly RenderView?[]      _views       = new RenderView[RenderingConstants.MAX_VIEWS];
         private static sg_sampler _shadowSampler;
         private static sg_sampler _cubeShadowSampler;
+
+        // M4: active Image-Based Lighting environment (procedural or skybox cubemap).
+        // Bound to every PbrMaterial draw; use_ibl flips on whenever it is loaded.
+        private static EnvironmentMap? _environment;
+        // The settings that produced _environment (authored in the editor, persisted per-project).
+        private static EnvironmentSettings? _envSettings;
+        // Bumped on every ApplyEnvironment so a slow async cubemap load can't clobber a newer env.
+        private static int _envGeneration;
+
+        // One-shot IBL diagnostics: logs the first few PBR draws (use_ibl state, material
+        // metallic/roughness, bound env view ids) so a "no reflections" report is debuggable.
+        private static int _pbrIblLogCount;
 
         // ── Per-frame scratch (pre-allocated – zero hot-path allocations) ────────────────
 
@@ -123,6 +138,31 @@ namespace GameEditor.Framework.Renderer.Server
         public static int ShadowQuality { get; set; } = 1;
 
         /// <summary>
+        /// When true (and a Scene-view camera frustum is supplied), the directional shadow uses
+        /// 4-cascade CSM for PBR surfaces. When false, the proven single caster-fit map (CSM1) is
+        /// used for both PBR and blinn-phong. Default OFF: the single-fit map is what blinn-phong
+        /// receivers (e.g. the floor) sample, and a single CSM cascade can't cover the whole scene.
+        /// </summary>
+        public static bool EnableCsm4 { get; set; } = false;
+
+        /// <summary>
+        /// PBR debug visualisation (pbr.glsl debug_view_mode). 0 = DEBUG_NONE (normal shading);
+        /// e.g. 35 = DEBUG_CSM_CASCADE (cascades coloured red/green/blue/yellow), 12 = metallic,
+        /// 13 = roughness, 14 = base colour, 4 = shading normal. Applied to all PBR variants.
+        /// Transient debug aid — not persisted.
+        /// </summary>
+        public static int PbrDebugViewMode { get; set; } = 0;
+
+        /// <summary>
+        /// Game-style "shadows darken ambient" weight (pbr.glsl shadow_ambient_weight), 0..1.
+        /// 0 (default) = physically correct: punctual shadows only occlude their own
+        /// 1/d²-attenuated contribution (so a spot/point shadow on an IBL-lit floor is faint).
+        /// &gt;0 folds the combined shadow term into the IBL ambient so the shadow reads at any
+        /// light intensity. Applied to all PBR variants. Transient — not persisted.
+        /// </summary>
+        public static float ShadowAmbientWeight { get; set; } = 0.4f;
+
+        /// <summary>
         /// When true, draws a debug overlay showing one shadow atlas slice in the scene view.
         /// Toggle from code or via the editor debug toolbar.
         /// </summary>
@@ -131,6 +171,29 @@ namespace GameEditor.Framework.Renderer.Server
         /// <summary>Atlas slice to visualise (0–3 directional cascades, 4–11 spot lights).</summary>
         public static int ShadowAtlasDebugSlice { get; set; } = 4;
         private static Matrix4x4 _directionalShadowViewProj;
+
+        // ── M4: Cascaded Shadow Maps (directional) ───────────────────────────────────────
+        private static readonly CsmComputer _csm = new();
+        private static readonly Matrix4x4[] _csmCascadeVP = new Matrix4x4[CsmComputer.MaxCascades];
+        private static Vector4 _csmSplitDepths;     // per-cascade view-space far edge
+        private static Matrix4x4 _csmCameraView;    // for fragment cascade selection (u_ViewMatrix)
+        private static int _csmCascadeCount;        // 0 = none, 1 = single-fit (CSM1), 4 = CSM4
+
+        /// <summary>
+        /// Camera data the renderer needs to fit Cascaded Shadow Maps to the visible frustum.
+        /// Supplied for the Scene view (full perspective data); omitting it falls back to the
+        /// camera-independent single-fit directional shadow (CSM1).
+        /// </summary>
+        public readonly struct CsmCamera
+        {
+            public readonly Matrix4x4 View;
+            public readonly Matrix4x4 Proj;
+            public readonly float Near;
+            public readonly float Far;
+            public CsmCamera(in Matrix4x4 view, in Matrix4x4 proj, float near, float far)
+            { View = view; Proj = proj; Near = near; Far = far; }
+        }
+
         private static readonly Entity[] _spotShadowTopEntities = new Entity[ShadowAtlas.SpotSlices];
         private static readonly float[] _spotShadowTopScores = new float[ShadowAtlas.SpotSlices];
         private static readonly Matrix4x4[] _spotShadowViewProj = new Matrix4x4[ShadowAtlas.SpotSlices];
@@ -153,6 +216,7 @@ namespace GameEditor.Framework.Renderer.Server
             _shadowPass.Init();
             _shadowDebugPass.Init();
             _tonemapPass.Init();
+            _skyboxPass.Init();
             _shadowSampler = sg_make_sampler(new sg_sampler_desc
             {
                 min_filter = sg_filter.SG_FILTER_NEAREST,
@@ -172,6 +236,11 @@ namespace GameEditor.Framework.Renderer.Server
                 label = "cube-shadow-array-sampler"
             });
             _initialized = true;
+
+            // Build the default environment (cubemap from "skyboxes/skybox", procedural
+            // fallback if the faces are missing). The editor overrides this with the
+            // project's persisted EnvironmentSettings once a project is open.
+            ApplyEnvironment(new EnvironmentSettings());
         }
 
         public static void Shutdown()
@@ -186,8 +255,11 @@ namespace GameEditor.Framework.Renderer.Server
             _shadowPass.Shutdown();
             _shadowDebugPass.Shutdown();
             _tonemapPass.Shutdown();
+            _skyboxPass.Shutdown();
             _cubeShadows.Shutdown();
             _shadowAtlas.Shutdown();
+            _environment?.Dispose();
+            _environment = null;
             if (_shadowSampler.id != 0)
             {
                 sg_destroy_sampler(_shadowSampler);
@@ -259,12 +331,12 @@ namespace GameEditor.Framework.Renderer.Server
             FrameProfiler.BeginFrame();
         }
 
-        public static void RenderShadowMaps(in Matrix4x4 viewProj)
+        public static void RenderShadowMaps(in Matrix4x4 viewProj, CsmCamera? csm = null)
         {
             if (!_initialized) return;
 
             FrameProfiler.Begin(FrameProfiler.Zone.ShadowPass);
-            CollectLightsAndShadows(ECSWorld.Instance, in viewProj, renderShadowPasses: true);
+            CollectLightsAndShadows(ECSWorld.Instance, in viewProj, renderShadowPasses: true, csm);
             FrameProfiler.End(FrameProfiler.Zone.ShadowPass);
         }
 
@@ -284,11 +356,96 @@ namespace GameEditor.Framework.Renderer.Server
             _tonemapPass.Render(hdrColorView, exposure, tonemapType);
         }
 
+        /// <summary>When true, <see cref="RenderSkybox"/> draws the IBL environment cubemap.</summary>
+        public static bool ShowSkybox { get; set; } = true;
+
+        /// <summary>
+        /// Draws the loaded IBL environment cubemap as the scene background. Call inside an
+        /// active pass, BEFORE geometry (it never writes depth, so geometry layers on top).
+        /// No-op when no environment is loaded or <see cref="ShowSkybox"/> is false.
+        /// Tonemap matches the PBR forward path (ACES Narkowicz, exposure 1) for an LDR target.
+        /// </summary>
+        public static void RenderSkybox(in Matrix4x4 viewProj, bool offscreen = true)
+        {
+            if (!_initialized || !ShowSkybox) return;
+            if (_environment is { IsLoaded: true } env)
+                _skyboxPass.Render(in viewProj, env, offscreen, exposure: 1f, tonemapType: 1);
+        }
+
+        // ── Environment authoring ─────────────────────────────────────────────────────────
+
+        /// <summary>The settings backing the current environment (copy; safe to mutate).</summary>
+        public static EnvironmentSettings CurrentEnvironmentSettings
+            => (_envSettings ?? new EnvironmentSettings()).Clone();
+
+        /// <summary>
+        /// Applies an <see cref="EnvironmentSettings"/>: rebuilds the IBL environment only when the
+        /// source (mode / cubemap folder / per-face overrides) changes; intensity, Y-rotation, and
+        /// the skybox toggle update in place so the editor sliders stay live. Cubemap loads are
+        /// async — the previous environment stays visible until the new faces are ready.
+        /// </summary>
+        public static void ApplyEnvironment(EnvironmentSettings settings, bool forceRebuild = false)
+        {
+            if (!_initialized) return;
+            int gen = ++_envGeneration;   // invalidates any in-flight async cubemap load
+            bool rebuild = forceRebuild || _environment == null || _envSettings == null || settings.RequiresRebuild(_envSettings);
+            _envSettings = settings.Clone();
+            ShowSkybox   = settings.ShowSkybox;
+
+            float rotRad = settings.RotationDegrees * (MathF.PI / 180f);
+
+            if (!rebuild && _environment != null)
+            {
+                _environment.Intensity = settings.Intensity;
+                _environment.Rotation  = Matrix4x4.CreateRotationY(rotRad);
+                return;
+            }
+
+            if (settings.Mode == EnvironmentMode.Procedural)
+            {
+                var env = EnvironmentMap.CreateProcedural("procedural-ibl");
+                env.Intensity = settings.Intensity;
+                env.Rotation  = Matrix4x4.CreateRotationY(rotRad);
+                SwapEnvironment(env);
+                _pbrIblLogCount = 0;
+                return;
+            }
+
+            // Cubemap: bootstrap a procedural env only if nothing is showing yet, then load the
+            // faces async and swap on success (a missing/failed set leaves the current env intact).
+            if (_environment == null)
+            {
+                var boot = EnvironmentMap.CreateProcedural("procedural-ibl");
+                boot.Intensity = settings.Intensity;
+                boot.Rotation  = Matrix4x4.CreateRotationY(rotRad);
+                SwapEnvironment(boot);
+            }
+            float intensity = settings.Intensity;
+            IblSkyboxLoader.LoadAsync(settings.CubemapFolder, settings.FaceOverrides, env =>
+            {
+                if (env == null) return;
+                if (gen != _envGeneration) { env.Dispose(); return; } // superseded by a newer ApplyEnvironment
+                env.Intensity = intensity;
+                env.Rotation  = Matrix4x4.CreateRotationY(rotRad);
+                SwapEnvironment(env);
+                _pbrIblLogCount = 0;
+                Logger.Info("[IBL] environment set to skybox cubemap");
+            });
+        }
+
+        private static void SwapEnvironment(EnvironmentMap env)
+        {
+            var old = _environment;
+            _environment = env;
+            old?.Dispose();
+        }
+
         public static void SubmitView(
             in Matrix4x4 viewProj,
             PipelineFlags basePipelineFlags = PipelineFlags.OffscreenRt,
             int viewIndex = 0,
-            bool allowShadowPassRendering = true)
+            bool allowShadowPassRendering = true,
+            CsmCamera? csm = null)
         {
             if (!_initialized) return;
             var world = ECSWorld.Instance;
@@ -298,8 +455,10 @@ namespace GameEditor.Framework.Renderer.Server
             var cameraPos = new Vector3(invVP.M41, invVP.M42, invVP.M43);
 
             // ── 1. Collect lights and shadow matrices ───────────────────────────────────
+            // Re-derives the same CSM cascades RenderShadowMaps computed (cheap, no re-render),
+            // so the color pass binds matching cascade VPs + split depths.
 
-            CollectLightsAndShadows(world, in viewProj, allowShadowPassRendering);
+            CollectLightsAndShadows(world, in viewProj, allowShadowPassRendering, csm);
 
             // ── 2. Extract draw commands ──────────────────────────────────────────────────
 
@@ -505,17 +664,32 @@ namespace GameEditor.Framework.Renderer.Server
                 // PBR materials are applied whole-group (no per-sub-mesh .mtl override).
                 if (mat is PbrMaterial pbrMat)
                 {
-                    if (!pbrSharedBuilt)
-                    {
-                        BuildPbrSharedUniforms(in viewProj, cameraPos,
-                            out pbrVs, out pbrLights, out pbrCam, out pbrIbl);
-                        pbrSharedBuilt = true;
-                    }
-
                     int pbrInstByteOffset = instanceBaseByteOffset
                                           + instanceOffset * Unsafe.SizeOf<InstanceData>();
-                    DrawPbrGroup(pbrMat, mesh, groupSize, pbrInstByteOffset, basePipelineFlags,
-                        in pbrVs, in pbrLights, in pbrCam, in pbrIbl);
+
+                    // Pick the shadow-receiving variant: CSM4 (4 cascades, slices 0-3) when the
+                    // camera supplied frustum data, else CSM1 (single slice-0 map), else no shadow.
+                    if (_csmCascadeCount == 4)
+                    {
+                        DrawPbrCsm4Group(pbrMat, mesh, groupSize, pbrInstByteOffset,
+                            basePipelineFlags, in viewProj, cameraPos);
+                    }
+                    else if (_hasDirectionalShadow)
+                    {
+                        DrawPbrCsm1Group(pbrMat, mesh, groupSize, pbrInstByteOffset,
+                            basePipelineFlags, in viewProj, cameraPos);
+                    }
+                    else
+                    {
+                        if (!pbrSharedBuilt)
+                        {
+                            BuildPbrSharedUniforms(in viewProj, cameraPos,
+                                out pbrVs, out pbrLights, out pbrCam, out pbrIbl);
+                            pbrSharedBuilt = true;
+                        }
+                        DrawPbrGroup(pbrMat, mesh, groupSize, pbrInstByteOffset, basePipelineFlags,
+                            in pbrVs, in pbrLights, in pbrCam, in pbrIbl);
+                    }
 
                     instanceOffset += groupSize;
                     i += groupSize;
@@ -616,7 +790,7 @@ namespace GameEditor.Framework.Renderer.Server
 
         // ── Helpers ──────────────────────────────────────────────────────────────────────
 
-        private static void CollectLightsAndShadows(ECSWorld world, in Matrix4x4 cameraViewProj, bool renderShadowPasses)
+        private static void CollectLightsAndShadows(ECSWorld world, in Matrix4x4 cameraViewProj, bool renderShadowPasses, CsmCamera? csm = null)
         {
             Matrix4x4.Invert(cameraViewProj, out var _invCamVP);
             Vector3 cameraPos = new Vector3(_invCamVP.M41, _invCamVP.M42, _invCamVP.M43);
@@ -625,6 +799,7 @@ namespace GameEditor.Framework.Renderer.Server
             _spotShadowTopCount = 0;
             _pointShadowTopCount = 0;
             _hasDirectionalShadow = false;
+            _csmCascadeCount = 0;
             _directionalShadowViewProj = Matrix4x4.Identity;
             for (int si = 0; si < _spotShadowViewProj.Length; si++)
                 _spotShadowViewProj[si] = Matrix4x4.Identity;
@@ -703,10 +878,29 @@ namespace GameEditor.Framework.Renderer.Server
                 }
             }
 
-            if (hasDirectionalShadowLight && TryComputeCasterBounds(world, out var casterMin, out var casterMax))
+            if (hasDirectionalShadowLight && csm.HasValue && EnableCsm4)
             {
+                // ── CSM4: fit 4 cascades to the camera frustum, render into atlas slices 0-3 ──
+                var cc = csm.Value;
+                _csm.Compute(cc.View, cc.Proj, cc.Near, cc.Far,
+                    bestDirectionalShadowLight.Direction, ShadowAtlas.SliceSize, CsmComputer.MaxCascades);
+                for (int c = 0; c < CsmComputer.MaxCascades; c++) _csmCascadeVP[c] = _csm.CascadeVP[c];
+                _csmSplitDepths = new Vector4(_csm.SplitDepths[0], _csm.SplitDepths[1],
+                                              _csm.SplitDepths[2], _csm.SplitDepths[3]);
+                _csmCameraView             = cc.View;
+                _csmCascadeCount           = CsmComputer.MaxCascades;
+                _directionalShadowViewProj = _csmCascadeVP[0];   // blinn-phong samples slice 0 = cascade 0
+                _hasDirectionalShadow      = true;
+                if (renderShadowPasses)
+                    _stats.ShadowDrawCalls += _shadowPass.RenderDirectionalCsmCounted(
+                        world, _meshReg, _shadowAtlas, 0, _csmCascadeVP.AsSpan(0, CsmComputer.MaxCascades));
+            }
+            else if (hasDirectionalShadowLight && TryComputeCasterBounds(world, out var casterMin, out var casterMax))
+            {
+                // ── CSM1: single caster-fit map (camera-independent) into atlas slice 0 ──
                 _directionalShadowViewProj = BuildDirectionalShadowViewProj(in bestDirectionalShadowLight, casterMin, casterMax);
-                _hasDirectionalShadow = true;
+                _csmCascadeCount           = 1;
+                _hasDirectionalShadow      = true;
                 if (renderShadowPasses)
                     _stats.ShadowDrawCalls += _shadowPass.RenderDirectionalCounted(world, _meshReg, _shadowAtlas, 0, in _directionalShadowViewProj);
             }
@@ -875,21 +1069,43 @@ namespace GameEditor.Framework.Renderer.Server
                 lights.lights_data[b + 2] = span[l].ColorIntensity;
                 lights.lights_data[b + 3] = span[l].SpotShadow;
             }
-            // Base variant reads only ambient_num.w (= light count); ambient colour comes
-            // from pbr_rendering_flags.ambient_strength. spot/point shadow VPs stay zeroed
-            // (the base variant samples no punctual shadows — that is a later increment).
+            // ambient_num.w = light count; ambient colour comes from
+            // pbr_rendering_flags.ambient_strength. (Point shadows still pending.)
+            // Spot-light shadow VPs (atlas slices 4-11) so PBR surfaces receive spot shadows.
+            for (int si = 0; si < ShadowAtlas.SpotSlices; si++)
+            {
+                int sb = si * 4;
+                var sm = _spotShadowViewProj[si];
+                lights.spot_shadow_vp[sb + 0] = new Vector4(sm.M11, sm.M12, sm.M13, sm.M14);
+                lights.spot_shadow_vp[sb + 1] = new Vector4(sm.M21, sm.M22, sm.M23, sm.M24);
+                lights.spot_shadow_vp[sb + 2] = new Vector4(sm.M31, sm.M32, sm.M33, sm.M34);
+                lights.spot_shadow_vp[sb + 3] = new Vector4(sm.M41, sm.M42, sm.M43, sm.M44);
+            }
+            // Point-light shadow VPs (cube faces; slice = slot*6 + face) for PBR point shadows.
+            for (int pi = 0; pi < _pointShadowViewProj.Length; pi++)
+            {
+                int pb = pi * 4;
+                var pm = _pointShadowViewProj[pi];
+                lights.point_shadow_vp[pb + 0] = new Vector4(pm.M11, pm.M12, pm.M13, pm.M14);
+                lights.point_shadow_vp[pb + 1] = new Vector4(pm.M21, pm.M22, pm.M23, pm.M24);
+                lights.point_shadow_vp[pb + 2] = new Vector4(pm.M31, pm.M32, pm.M33, pm.M34);
+                lights.point_shadow_vp[pb + 3] = new Vector4(pm.M41, pm.M42, pm.M43, pm.M44);
+            }
             lights.ambient_num = new Vector4(0f, 0f, 0f, n);
 
             cam = new pbr_pbr_camera_params_t { u_Camera = cameraPos };
 
-            // IBL is disabled in this increment (use_ibl=0). The block must still be valid
-            // because ibl.glsl statically references these fields.
+            // IBL view-constants. When an environment is loaded these feed the GGX-mip
+            // LOD math (u_MipCount) and irradiance/specular scaling (u_EnvIntensity);
+            // u_View/Projection/Model are only consumed by the TRANSMISSION path (unused
+            // in the base variant) so they stay identity here.
+            bool iblActive = _environment is { IsLoaded: true };
             ibl = new pbr_pbr_ibl_params_t
             {
-                u_EnvIntensity      = 1f,
+                u_EnvIntensity      = iblActive ? _environment!.Intensity : 1f,
                 u_EnvBlurNormalized = 0f,
-                u_MipCount          = 1,
-                u_EnvRotation       = Matrix4x4.Identity,
+                u_MipCount          = iblActive ? _environment!.MipCount : 1,
+                u_EnvRotation       = iblActive ? _environment!.Rotation : Matrix4x4.Identity,
                 u_ViewMatrix        = Matrix4x4.Identity,
                 u_ProjectionMatrix  = Matrix4x4.Identity,
                 u_ModelMatrix       = Matrix4x4.Identity,
@@ -937,15 +1153,19 @@ namespace GameEditor.Framework.Renderer.Server
                 normal_tex_scale             = Vector2.One,
                 occlusion_tex_scale          = Vector2.One,
                 emissive_tex_scale           = Vector2.One,
+                debug_view_enabled           = PbrDebugViewMode != 0 ? 1f : 0f,
+                debug_view_mode              = PbrDebugViewMode,
+                shadow_ambient_weight        = ShadowAmbientWeight,
             };
 
+            bool iblActive = _environment is { IsLoaded: true };
             var flags = new pbr_pbr_rendering_flags_t
             {
-                use_ibl             = 0,
+                use_ibl             = iblActive ? 1 : 0,
                 use_punctual_lights = 1,
                 alphamode           = mat.AlphaMode,
                 linear_output       = 0,      // LDR RGBA8 target → tonemap + sRGB in-shader
-                ambient_strength    = 0.25f,
+                ambient_strength    = 0.4f,   // dielectric diffuse ambient (pbr.glsl:489) + IBL-off fallback
             };
 
             sg_apply_uniforms(UB_pbr_pbr_vs_params,       SG_RANGE(ref Unsafe.AsRef(in vs)));
@@ -960,10 +1180,26 @@ namespace GameEditor.Framework.Renderer.Server
             sg_view normalMap = mat.NormalMap.id            != 0 ? mat.NormalMap            : _texCache.PlaceholderNormal;
             sg_view occlusion = mat.OcclusionMap.id         != 0 ? mat.OcclusionMap         : _texCache.PlaceholderWhite;
             sg_view emissive  = mat.EmissiveMap.id          != 0 ? mat.EmissiveMap          : _texCache.PlaceholderBlack;
-            sg_view cube      = _texCache.PlaceholderCube;
-            sg_view lut       = _texCache.PlaceholderWhite;
-            sg_sampler matSmp = mat.Sampler.id != 0 ? mat.Sampler : _texCache.DefaultSampler;
-            sg_sampler iblSmp = _texCache.DefaultSampler;
+            // IBL env slots: real prefiltered cubes + BRDF LUT when an environment is
+            // loaded, else placeholders (never sampled because use_ibl == 0).
+            sg_view ggxEnv    = iblActive ? _environment!.SpecularCubeView : _texCache.PlaceholderCube;
+            sg_view lambEnv   = iblActive ? _environment!.DiffuseCubeView  : _texCache.PlaceholderCube;
+            sg_view lut       = iblActive ? _environment!.GgxLutView        : _texCache.PlaceholderWhite;
+            sg_sampler matSmp  = mat.Sampler.id != 0 ? mat.Sampler : _texCache.DefaultSampler;
+            sg_sampler cubeSmp = iblActive ? _environment!.CubeSampler : _texCache.DefaultSampler;
+            sg_sampler lutSmp  = iblActive ? _environment!.LutSampler  : _texCache.DefaultSampler;
+
+            // One-shot IBL diagnostics (first few PBR groups only — avoids per-frame spam).
+            if (_pbrIblLogCount < 6)
+            {
+                _pbrIblLogCount++;
+                Logger.Info(
+                    $"[IBL] PBR draw #{_pbrIblLogCount}: use_ibl={flags.use_ibl} envLoaded={iblActive} " +
+                    $"metallic={mat.MetallicFactor:0.##} roughness={mat.RoughnessFactor:0.##} " +
+                    $"mrTex={(mat.MetallicRoughnessMap.id != 0 ? 1 : 0)} " +
+                    $"baseColor=({mat.BaseColorFactor.X:0.##},{mat.BaseColorFactor.Y:0.##},{mat.BaseColorFactor.Z:0.##}) " +
+                    $"views[ggx={ggxEnv.id} lambert={lambEnv.id} lut={lut.id}] mipCount={(iblActive ? _environment!.MipCount : 0)}");
+            }
 
             foreach (MeshSubResource sub in mesh.SubMeshes)
             {
@@ -981,9 +1217,11 @@ namespace GameEditor.Framework.Renderer.Server
                         [VIEW_pbr_u_NormalTexture]            = normalMap,
                         [VIEW_pbr_u_OcclusionTexture]         = occlusion,
                         [VIEW_pbr_u_EmissiveTexture]          = emissive,
-                        [VIEW_pbr_u_GGXEnvTexture]            = cube,
-                        [VIEW_pbr_u_LambertianEnvTexture]     = cube,
+                        [VIEW_pbr_u_GGXEnvTexture]            = ggxEnv,
+                        [VIEW_pbr_u_LambertianEnvTexture]     = lambEnv,
                         [VIEW_pbr_u_GGXLUTTexture]            = lut,
+                        [VIEW_pbr_shadow_atlas]              = _shadowAtlas.TextureView,
+                        [VIEW_pbr_cube_shadow_array]         = _cubeShadows.TextureView,
                     },
                     samplers = {
                         [SMP_pbr_u_BaseColorSampler]         = matSmp,
@@ -991,9 +1229,378 @@ namespace GameEditor.Framework.Renderer.Server
                         [SMP_pbr_u_NormalSampler]            = matSmp,
                         [SMP_pbr_u_OcclusionSampler]         = matSmp,
                         [SMP_pbr_u_EmissiveSampler]          = matSmp,
-                        [SMP_pbr_u_GGXEnvSampler_Raw]        = iblSmp,
-                        [SMP_pbr_u_LambertianEnvSampler_Raw] = iblSmp,
-                        [SMP_pbr_u_GGXLUTSampler_Raw]        = iblSmp,
+                        [SMP_pbr_u_GGXEnvSampler_Raw]        = cubeSmp,
+                        [SMP_pbr_u_LambertianEnvSampler_Raw] = cubeSmp,
+                        [SMP_pbr_u_GGXLUTSampler_Raw]        = lutSmp,
+                        [SMP_pbr_shadow_atlas_smp]           = _shadowSampler,
+                        [SMP_pbr_cube_shadow_array_smp]      = _cubeShadowSampler,
+                    },
+                });
+
+                sg_draw(0u, (uint)sub.IndexCount, (uint)groupSize);
+                _stats.DrawCalls++;
+            }
+        }
+
+        /// <summary>
+        /// Draws a PBR group through the 1-cascade-CSM variant so the surface receives the
+        /// directional shadow already rendered to atlas slice 0. Mirrors <see cref="DrawPbrGroup"/>
+        /// but with the pbr_csm1 uniform/binding set, plus the CSM params + shadow atlas. Builds
+        /// its own (csm1-typed) blocks from the same source data.
+        /// </summary>
+        private static void DrawPbrCsm1Group(
+            PbrMaterial mat, MeshResource mesh, int groupSize, int instanceByteOffset,
+            PipelineFlags basePipelineFlags, in Matrix4x4 viewProj, Vector3 cameraPos)
+        {
+            bool blend = mat.AlphaMode == 2;
+            PipelineFlags pf = basePipelineFlags;
+            if (mat.DoubleSided) pf |= PipelineFlags.DoubleSided;
+            if (blend)           pf |= PipelineFlags.AlphaBlend;
+            sg_apply_pipeline(_shaderCache.GetPbrCsm1Pipeline(pf));
+
+            var vs = new Csm1.Shaders.pbr_csm1_pbr_vs_params_t
+            {
+                view_proj            = viewProj,
+                eye_pos              = cameraPos,
+                use_uniform_skinning = 1,
+            };
+            vs.csm_vp[0] = _directionalShadowViewProj;   // cascade 0 = the slice-0 directional map
+
+            var lights = new Csm1.Shaders.pbr_csm1_pbr_light_params_t();
+            int n = _lightBuf.Count;
+            var span = _lightBuf.ActiveSpan;
+            for (int l = 0; l < n; l++)
+            {
+                int b = l * 4;
+                lights.lights_data[b + 0] = span[l].PositionType;
+                lights.lights_data[b + 1] = span[l].DirectionRange;
+                lights.lights_data[b + 2] = span[l].ColorIntensity;
+                lights.lights_data[b + 3] = span[l].SpotShadow;
+            }
+            // Spot-light shadow VPs (atlas slices 4-11) so PBR surfaces receive spot shadows.
+            for (int si = 0; si < ShadowAtlas.SpotSlices; si++)
+            {
+                int sb = si * 4;
+                var sm = _spotShadowViewProj[si];
+                lights.spot_shadow_vp[sb + 0] = new Vector4(sm.M11, sm.M12, sm.M13, sm.M14);
+                lights.spot_shadow_vp[sb + 1] = new Vector4(sm.M21, sm.M22, sm.M23, sm.M24);
+                lights.spot_shadow_vp[sb + 2] = new Vector4(sm.M31, sm.M32, sm.M33, sm.M34);
+                lights.spot_shadow_vp[sb + 3] = new Vector4(sm.M41, sm.M42, sm.M43, sm.M44);
+            }
+            // Point-light shadow VPs (cube faces; slice = slot*6 + face) for PBR point shadows.
+            for (int pi = 0; pi < _pointShadowViewProj.Length; pi++)
+            {
+                int pb = pi * 4;
+                var pm = _pointShadowViewProj[pi];
+                lights.point_shadow_vp[pb + 0] = new Vector4(pm.M11, pm.M12, pm.M13, pm.M14);
+                lights.point_shadow_vp[pb + 1] = new Vector4(pm.M21, pm.M22, pm.M23, pm.M24);
+                lights.point_shadow_vp[pb + 2] = new Vector4(pm.M31, pm.M32, pm.M33, pm.M34);
+                lights.point_shadow_vp[pb + 3] = new Vector4(pm.M41, pm.M42, pm.M43, pm.M44);
+            }
+            lights.ambient_num = new Vector4(0f, 0f, 0f, n);
+
+            var cam = new Csm1.Shaders.pbr_csm1_pbr_camera_params_t { u_Camera = cameraPos };
+
+            bool iblActive = _environment is { IsLoaded: true };
+            var ibl = new Csm1.Shaders.pbr_csm1_pbr_ibl_params_t
+            {
+                u_EnvIntensity      = iblActive ? _environment!.Intensity : 1f,
+                u_EnvBlurNormalized = 0f,
+                u_MipCount          = iblActive ? _environment!.MipCount : 1,
+                u_EnvRotation       = iblActive ? _environment!.Rotation : Matrix4x4.Identity,
+                u_ViewMatrix        = Matrix4x4.Identity,
+                u_ProjectionMatrix  = Matrix4x4.Identity,
+                u_ModelMatrix       = Matrix4x4.Identity,
+            };
+
+            var matParams = new Csm1.Shaders.pbr_csm1_pbr_material_params_t
+            {
+                base_color_factor          = mat.BaseColorFactor,
+                emissive_factor            = mat.EmissiveFactor,
+                metallic_factor            = mat.MetallicFactor,
+                roughness_factor           = mat.RoughnessFactor,
+                has_base_color_tex         = mat.BaseColorMap.id         != 0 ? 1f : 0f,
+                has_metallic_roughness_tex = mat.MetallicRoughnessMap.id != 0 ? 1f : 0f,
+                has_normal_tex             = mat.NormalMap.id            != 0 ? 1f : 0f,
+                has_occlusion_tex          = mat.OcclusionMap.id         != 0 ? 1f : 0f,
+                has_emissive_tex           = mat.EmissiveMap.id          != 0 ? 1f : 0f,
+                alpha_cutoff               = mat.AlphaCutoff,
+                emissive_strength          = mat.EmissiveStrength,
+                occlusion_strength         = mat.OcclusionStrength,
+                ior                        = 1.5f,
+                normal_map_scale           = mat.NormalMapScale,
+                base_color_tex_scale         = Vector2.One,
+                metallic_roughness_tex_scale = Vector2.One,
+                normal_tex_scale             = Vector2.One,
+                occlusion_tex_scale          = Vector2.One,
+                emissive_tex_scale           = Vector2.One,
+                debug_view_enabled           = PbrDebugViewMode != 0 ? 1f : 0f,
+                debug_view_mode              = PbrDebugViewMode,
+                shadow_ambient_weight        = ShadowAmbientWeight,
+            };
+
+            var flags = new Csm1.Shaders.pbr_csm1_pbr_rendering_flags_t
+            {
+                use_ibl             = iblActive ? 1 : 0,
+                use_punctual_lights = 1,
+                alphamode           = mat.AlphaMode,
+                linear_output       = 0,
+                ambient_strength    = 0.4f,
+            };
+
+            int pcf = ShadowQuality >= 2 ? 25 : (ShadowQuality >= 1 ? 9 : 1);
+            var csm = new Csm1.Shaders.pbr_csm1_pbr_csm_params_t
+            {
+                csm_split_depths = new Vector4(1e9f, 1e9f, 1e9f, 1e9f), // CSM1 → always cascade 0
+                csm_bias         = CsmBiasForBackend(),
+                csm_blend_band   = 0f,
+                csm_pcf_taps     = pcf,
+            };
+
+            sg_apply_uniforms(Csm1.Shaders.UB_pbr_csm1_pbr_vs_params,       SG_RANGE(ref vs));
+            sg_apply_uniforms(Csm1.Shaders.UB_pbr_csm1_pbr_material_params, SG_RANGE(ref matParams));
+            sg_apply_uniforms(Csm1.Shaders.UB_pbr_csm1_pbr_light_params,    SG_RANGE(ref lights));
+            sg_apply_uniforms(Csm1.Shaders.UB_pbr_csm1_pbr_ibl_params,      SG_RANGE(ref ibl));
+            sg_apply_uniforms(Csm1.Shaders.UB_pbr_csm1_pbr_camera_params,   SG_RANGE(ref cam));
+            sg_apply_uniforms(Csm1.Shaders.UB_pbr_csm1_pbr_rendering_flags, SG_RANGE(ref flags));
+            sg_apply_uniforms(Csm1.Shaders.UB_pbr_csm1_pbr_csm_params,      SG_RANGE(ref csm));
+
+            sg_view baseColor = mat.BaseColorMap.id         != 0 ? mat.BaseColorMap         : _texCache.PlaceholderWhite;
+            sg_view metalRgh  = mat.MetallicRoughnessMap.id != 0 ? mat.MetallicRoughnessMap : _texCache.PlaceholderWhite;
+            sg_view normalMap = mat.NormalMap.id            != 0 ? mat.NormalMap            : _texCache.PlaceholderNormal;
+            sg_view occlusion = mat.OcclusionMap.id         != 0 ? mat.OcclusionMap         : _texCache.PlaceholderWhite;
+            sg_view emissive  = mat.EmissiveMap.id          != 0 ? mat.EmissiveMap          : _texCache.PlaceholderBlack;
+            sg_view ggxEnv    = iblActive ? _environment!.SpecularCubeView : _texCache.PlaceholderCube;
+            sg_view lambEnv   = iblActive ? _environment!.DiffuseCubeView  : _texCache.PlaceholderCube;
+            sg_view lut       = iblActive ? _environment!.GgxLutView        : _texCache.PlaceholderWhite;
+            sg_sampler matSmp  = mat.Sampler.id != 0 ? mat.Sampler : _texCache.DefaultSampler;
+            sg_sampler cubeSmp = iblActive ? _environment!.CubeSampler : _texCache.DefaultSampler;
+            sg_sampler lutSmp  = iblActive ? _environment!.LutSampler  : _texCache.DefaultSampler;
+
+            foreach (MeshSubResource sub in mesh.SubMeshes)
+            {
+                if (sub.IndexCount == 0 || sub.VertexBuffer.id == 0 || sub.IndexBuffer.id == 0)
+                    continue;
+
+                sg_apply_bindings(new sg_bindings
+                {
+                    vertex_buffers        = { [0] = sub.VertexBuffer, [1] = _instanceBuf.Buffer },
+                    vertex_buffer_offsets = { [1] = instanceByteOffset },
+                    index_buffer          = sub.IndexBuffer,
+                    views = {
+                        [Csm1.Shaders.VIEW_pbr_csm1_u_BaseColorTexture]         = baseColor,
+                        [Csm1.Shaders.VIEW_pbr_csm1_u_MetallicRoughnessTexture] = metalRgh,
+                        [Csm1.Shaders.VIEW_pbr_csm1_u_NormalTexture]            = normalMap,
+                        [Csm1.Shaders.VIEW_pbr_csm1_u_OcclusionTexture]         = occlusion,
+                        [Csm1.Shaders.VIEW_pbr_csm1_u_EmissiveTexture]          = emissive,
+                        [Csm1.Shaders.VIEW_pbr_csm1_u_GGXEnvTexture]            = ggxEnv,
+                        [Csm1.Shaders.VIEW_pbr_csm1_u_LambertianEnvTexture]     = lambEnv,
+                        [Csm1.Shaders.VIEW_pbr_csm1_u_GGXLUTTexture]            = lut,
+                        [Csm1.Shaders.VIEW_pbr_csm1_shadow_atlas]               = _shadowAtlas.TextureView,
+                        [Csm1.Shaders.VIEW_pbr_csm1_cube_shadow_array]          = _cubeShadows.TextureView,
+                    },
+                    samplers = {
+                        [Csm1.Shaders.SMP_pbr_csm1_u_BaseColorSampler]         = matSmp,
+                        [Csm1.Shaders.SMP_pbr_csm1_u_MetallicRoughnessSampler] = matSmp,
+                        [Csm1.Shaders.SMP_pbr_csm1_u_NormalSampler]            = matSmp,
+                        [Csm1.Shaders.SMP_pbr_csm1_u_OcclusionSampler]         = matSmp,
+                        [Csm1.Shaders.SMP_pbr_csm1_u_EmissiveSampler]          = matSmp,
+                        [Csm1.Shaders.SMP_pbr_csm1_u_GGXEnvSampler_Raw]        = cubeSmp,
+                        [Csm1.Shaders.SMP_pbr_csm1_u_LambertianEnvSampler_Raw] = cubeSmp,
+                        [Csm1.Shaders.SMP_pbr_csm1_u_GGXLUTSampler_Raw]        = lutSmp,
+                        [Csm1.Shaders.SMP_pbr_csm1_shadow_atlas_smp]           = _shadowSampler,
+                        [Csm1.Shaders.SMP_pbr_csm1_cube_shadow_array_smp]      = _cubeShadowSampler,
+                    },
+                });
+
+                sg_draw(0u, (uint)sub.IndexCount, (uint)groupSize);
+                _stats.DrawCalls++;
+            }
+        }
+
+        // Constant depth bias for the shadow comparison, tuned per backend (plan §CSM table).
+        private static float CsmBiasForBackend() => sg_query_backend() switch
+        {
+            Sokol.SG.sg_backend.SG_BACKEND_METAL_MACOS or
+            Sokol.SG.sg_backend.SG_BACKEND_METAL_IOS or
+            Sokol.SG.sg_backend.SG_BACKEND_METAL_SIMULATOR or
+            Sokol.SG.sg_backend.SG_BACKEND_D3D11   => 0.0005f,
+            Sokol.SG.sg_backend.SG_BACKEND_GLCORE  => 0.0008f,
+            Sokol.SG.sg_backend.SG_BACKEND_GLES3   => 0.0015f,
+            _                                      => 0.001f,
+        };
+
+        /// <summary>
+        /// Draws a PBR group through the 4-cascade-CSM variant. Mirrors <see cref="DrawPbrCsm1Group"/>
+        /// but binds all four cascade VPs (atlas slices 0-3), the PSSM split depths, and the camera
+        /// view matrix (for per-fragment cascade selection). Uses the same shadow atlas + comparison
+        /// sampler. State comes from the CSM cascades computed in <see cref="CollectLightsAndShadows"/>.
+        /// </summary>
+        private static void DrawPbrCsm4Group(
+            PbrMaterial mat, MeshResource mesh, int groupSize, int instanceByteOffset,
+            PipelineFlags basePipelineFlags, in Matrix4x4 viewProj, Vector3 cameraPos)
+        {
+            bool blend = mat.AlphaMode == 2;
+            PipelineFlags pf = basePipelineFlags;
+            if (mat.DoubleSided) pf |= PipelineFlags.DoubleSided;
+            if (blend)           pf |= PipelineFlags.AlphaBlend;
+            sg_apply_pipeline(_shaderCache.GetPbrCsm4Pipeline(pf));
+
+            var vs = new Csm4.Shaders.pbr_csm4_pbr_vs_params_t
+            {
+                view_proj            = viewProj,
+                eye_pos              = cameraPos,
+                use_uniform_skinning = 1,
+            };
+            vs.csm_vp[0] = _csmCascadeVP[0];
+            vs.csm_vp[1] = _csmCascadeVP[1];
+            vs.csm_vp[2] = _csmCascadeVP[2];
+            vs.csm_vp[3] = _csmCascadeVP[3];
+
+            var lights = new Csm4.Shaders.pbr_csm4_pbr_light_params_t();
+            int n = _lightBuf.Count;
+            var span = _lightBuf.ActiveSpan;
+            for (int l = 0; l < n; l++)
+            {
+                int b = l * 4;
+                lights.lights_data[b + 0] = span[l].PositionType;
+                lights.lights_data[b + 1] = span[l].DirectionRange;
+                lights.lights_data[b + 2] = span[l].ColorIntensity;
+                lights.lights_data[b + 3] = span[l].SpotShadow;
+            }
+            // Spot-light shadow VPs (atlas slices 4-11) so PBR surfaces receive spot shadows.
+            for (int si = 0; si < ShadowAtlas.SpotSlices; si++)
+            {
+                int sb = si * 4;
+                var sm = _spotShadowViewProj[si];
+                lights.spot_shadow_vp[sb + 0] = new Vector4(sm.M11, sm.M12, sm.M13, sm.M14);
+                lights.spot_shadow_vp[sb + 1] = new Vector4(sm.M21, sm.M22, sm.M23, sm.M24);
+                lights.spot_shadow_vp[sb + 2] = new Vector4(sm.M31, sm.M32, sm.M33, sm.M34);
+                lights.spot_shadow_vp[sb + 3] = new Vector4(sm.M41, sm.M42, sm.M43, sm.M44);
+            }
+            // Point-light shadow VPs (cube faces; slice = slot*6 + face) for PBR point shadows.
+            for (int pi = 0; pi < _pointShadowViewProj.Length; pi++)
+            {
+                int pb = pi * 4;
+                var pm = _pointShadowViewProj[pi];
+                lights.point_shadow_vp[pb + 0] = new Vector4(pm.M11, pm.M12, pm.M13, pm.M14);
+                lights.point_shadow_vp[pb + 1] = new Vector4(pm.M21, pm.M22, pm.M23, pm.M24);
+                lights.point_shadow_vp[pb + 2] = new Vector4(pm.M31, pm.M32, pm.M33, pm.M34);
+                lights.point_shadow_vp[pb + 3] = new Vector4(pm.M41, pm.M42, pm.M43, pm.M44);
+            }
+            lights.ambient_num = new Vector4(0f, 0f, 0f, n);
+
+            var cam = new Csm4.Shaders.pbr_csm4_pbr_camera_params_t { u_Camera = cameraPos };
+
+            bool iblActive = _environment is { IsLoaded: true };
+            var ibl = new Csm4.Shaders.pbr_csm4_pbr_ibl_params_t
+            {
+                u_EnvIntensity      = iblActive ? _environment!.Intensity : 1f,
+                u_EnvBlurNormalized = 0f,
+                u_MipCount          = iblActive ? _environment!.MipCount : 1,
+                u_EnvRotation       = iblActive ? _environment!.Rotation : Matrix4x4.Identity,
+                u_ViewMatrix        = _csmCameraView,   // cascade selection by view-space depth
+                u_ProjectionMatrix  = Matrix4x4.Identity,
+                u_ModelMatrix       = Matrix4x4.Identity,
+            };
+
+            var matParams = new Csm4.Shaders.pbr_csm4_pbr_material_params_t
+            {
+                base_color_factor          = mat.BaseColorFactor,
+                emissive_factor            = mat.EmissiveFactor,
+                metallic_factor            = mat.MetallicFactor,
+                roughness_factor           = mat.RoughnessFactor,
+                has_base_color_tex         = mat.BaseColorMap.id         != 0 ? 1f : 0f,
+                has_metallic_roughness_tex = mat.MetallicRoughnessMap.id != 0 ? 1f : 0f,
+                has_normal_tex             = mat.NormalMap.id            != 0 ? 1f : 0f,
+                has_occlusion_tex          = mat.OcclusionMap.id         != 0 ? 1f : 0f,
+                has_emissive_tex           = mat.EmissiveMap.id          != 0 ? 1f : 0f,
+                alpha_cutoff               = mat.AlphaCutoff,
+                emissive_strength          = mat.EmissiveStrength,
+                occlusion_strength         = mat.OcclusionStrength,
+                ior                        = 1.5f,
+                normal_map_scale           = mat.NormalMapScale,
+                base_color_tex_scale         = Vector2.One,
+                metallic_roughness_tex_scale = Vector2.One,
+                normal_tex_scale             = Vector2.One,
+                occlusion_tex_scale          = Vector2.One,
+                emissive_tex_scale           = Vector2.One,
+                debug_view_enabled           = PbrDebugViewMode != 0 ? 1f : 0f,
+                debug_view_mode              = PbrDebugViewMode,
+                shadow_ambient_weight        = ShadowAmbientWeight,
+            };
+
+            var flags = new Csm4.Shaders.pbr_csm4_pbr_rendering_flags_t
+            {
+                use_ibl             = iblActive ? 1 : 0,
+                use_punctual_lights = 1,
+                alphamode           = mat.AlphaMode,
+                linear_output       = 0,
+                ambient_strength    = 0.4f,
+            };
+
+            int pcf = ShadowQuality >= 2 ? 25 : (ShadowQuality >= 1 ? 9 : 1);
+            var csm = new Csm4.Shaders.pbr_csm4_pbr_csm_params_t
+            {
+                csm_split_depths = _csmSplitDepths,
+                csm_bias         = CsmBiasForBackend(),
+                csm_blend_band   = 0f,
+                csm_pcf_taps     = pcf,
+            };
+
+            sg_apply_uniforms(Csm4.Shaders.UB_pbr_csm4_pbr_vs_params,       SG_RANGE(ref vs));
+            sg_apply_uniforms(Csm4.Shaders.UB_pbr_csm4_pbr_material_params, SG_RANGE(ref matParams));
+            sg_apply_uniforms(Csm4.Shaders.UB_pbr_csm4_pbr_light_params,    SG_RANGE(ref lights));
+            sg_apply_uniforms(Csm4.Shaders.UB_pbr_csm4_pbr_ibl_params,      SG_RANGE(ref ibl));
+            sg_apply_uniforms(Csm4.Shaders.UB_pbr_csm4_pbr_camera_params,   SG_RANGE(ref cam));
+            sg_apply_uniforms(Csm4.Shaders.UB_pbr_csm4_pbr_rendering_flags, SG_RANGE(ref flags));
+            sg_apply_uniforms(Csm4.Shaders.UB_pbr_csm4_pbr_csm_params,      SG_RANGE(ref csm));
+
+            sg_view baseColor = mat.BaseColorMap.id         != 0 ? mat.BaseColorMap         : _texCache.PlaceholderWhite;
+            sg_view metalRgh  = mat.MetallicRoughnessMap.id != 0 ? mat.MetallicRoughnessMap : _texCache.PlaceholderWhite;
+            sg_view normalMap = mat.NormalMap.id            != 0 ? mat.NormalMap            : _texCache.PlaceholderNormal;
+            sg_view occlusion = mat.OcclusionMap.id         != 0 ? mat.OcclusionMap         : _texCache.PlaceholderWhite;
+            sg_view emissive  = mat.EmissiveMap.id          != 0 ? mat.EmissiveMap          : _texCache.PlaceholderBlack;
+            sg_view ggxEnv    = iblActive ? _environment!.SpecularCubeView : _texCache.PlaceholderCube;
+            sg_view lambEnv   = iblActive ? _environment!.DiffuseCubeView  : _texCache.PlaceholderCube;
+            sg_view lut       = iblActive ? _environment!.GgxLutView        : _texCache.PlaceholderWhite;
+            sg_sampler matSmp  = mat.Sampler.id != 0 ? mat.Sampler : _texCache.DefaultSampler;
+            sg_sampler cubeSmp = iblActive ? _environment!.CubeSampler : _texCache.DefaultSampler;
+            sg_sampler lutSmp  = iblActive ? _environment!.LutSampler  : _texCache.DefaultSampler;
+
+            foreach (MeshSubResource sub in mesh.SubMeshes)
+            {
+                if (sub.IndexCount == 0 || sub.VertexBuffer.id == 0 || sub.IndexBuffer.id == 0)
+                    continue;
+
+                sg_apply_bindings(new sg_bindings
+                {
+                    vertex_buffers        = { [0] = sub.VertexBuffer, [1] = _instanceBuf.Buffer },
+                    vertex_buffer_offsets = { [1] = instanceByteOffset },
+                    index_buffer          = sub.IndexBuffer,
+                    views = {
+                        [Csm4.Shaders.VIEW_pbr_csm4_u_BaseColorTexture]         = baseColor,
+                        [Csm4.Shaders.VIEW_pbr_csm4_u_MetallicRoughnessTexture] = metalRgh,
+                        [Csm4.Shaders.VIEW_pbr_csm4_u_NormalTexture]            = normalMap,
+                        [Csm4.Shaders.VIEW_pbr_csm4_u_OcclusionTexture]         = occlusion,
+                        [Csm4.Shaders.VIEW_pbr_csm4_u_EmissiveTexture]          = emissive,
+                        [Csm4.Shaders.VIEW_pbr_csm4_u_GGXEnvTexture]            = ggxEnv,
+                        [Csm4.Shaders.VIEW_pbr_csm4_u_LambertianEnvTexture]     = lambEnv,
+                        [Csm4.Shaders.VIEW_pbr_csm4_u_GGXLUTTexture]            = lut,
+                        [Csm4.Shaders.VIEW_pbr_csm4_shadow_atlas]               = _shadowAtlas.TextureView,
+                        [Csm4.Shaders.VIEW_pbr_csm4_cube_shadow_array]          = _cubeShadows.TextureView,
+                    },
+                    samplers = {
+                        [Csm4.Shaders.SMP_pbr_csm4_u_BaseColorSampler]         = matSmp,
+                        [Csm4.Shaders.SMP_pbr_csm4_u_MetallicRoughnessSampler] = matSmp,
+                        [Csm4.Shaders.SMP_pbr_csm4_u_NormalSampler]            = matSmp,
+                        [Csm4.Shaders.SMP_pbr_csm4_u_OcclusionSampler]         = matSmp,
+                        [Csm4.Shaders.SMP_pbr_csm4_u_EmissiveSampler]          = matSmp,
+                        [Csm4.Shaders.SMP_pbr_csm4_u_GGXEnvSampler_Raw]        = cubeSmp,
+                        [Csm4.Shaders.SMP_pbr_csm4_u_LambertianEnvSampler_Raw] = cubeSmp,
+                        [Csm4.Shaders.SMP_pbr_csm4_u_GGXLUTSampler_Raw]        = lutSmp,
+                        [Csm4.Shaders.SMP_pbr_csm4_shadow_atlas_smp]           = _shadowSampler,
+                        [Csm4.Shaders.SMP_pbr_csm4_cube_shadow_array_smp]      = _cubeShadowSampler,
                     },
                 });
 
