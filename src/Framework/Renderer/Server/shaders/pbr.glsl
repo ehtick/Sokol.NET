@@ -546,13 +546,13 @@ void main()
 #if !defined(TRANSMISSION)
             if (ltype_i == LIGHT_TYPE_SPOT) {
                 // lights_data[i*4+3].z = spot shadow atlas slice (4-11), or 0 = no shadow.
-                shadow = sample_spot_shadow(lights_data[i*4+3].z, v_Position);
+                shadow = sample_spot_shadow(lights_data[i*4+3].z, v_Position, n);
             }
 #if !defined(SKINNING)
             else if (ltype_i == LIGHT_TYPE_POINT) {
                 // lights_data[i*4+3].z = point shadow slot (0-3); pos = lights_data[i*4+0].xyz.
                 shadow = sample_point_shadow(int(lights_data[i*4+3].z + 0.5),
-                                             lights_data[i*4+0].xyz, v_Position);
+                                             lights_data[i*4+0].xyz, v_Position, n);
             }
 #endif
 #endif

@@ -133,7 +133,11 @@ float sampleCsmShadow(vec3 worldPos, float view_depth, float ndotl)
 // shadow atlas (slices 4-11). Returns 1.0 (lit) for slices outside the spot range, so
 // spot lights without a shadow map contribute no occlusion.
 #if !defined(TRANSMISSION)
-float sample_spot_shadow(float atlas_slice, vec3 worldPos)
+// Normal-offset world units for punctual shadows (same idea as CSM_NORMAL_OFFSET): push the
+// receiver off its surface so it doesn't self-shadow, which lets the depth bias stay small and
+// avoids the acne rings a close point/spot light produces. Tune if acne/leak reappears.
+#define PUNCTUAL_NORMAL_OFFSET 0.05
+float sample_spot_shadow(float atlas_slice, vec3 worldPos, vec3 nrm)
 {
     int local = int(atlas_slice) - 4;
     if (local < 0 || local >= 8) return 1.0;
@@ -143,7 +147,7 @@ float sample_spot_shadow(float atlas_slice, vec3 worldPos)
         spot_shadow_vp[b + 0], spot_shadow_vp[b + 1],
         spot_shadow_vp[b + 2], spot_shadow_vp[b + 3]);
 
-    vec4 clip = spot_vp * vec4(worldPos, 1.0);
+    vec4 clip = spot_vp * vec4(worldPos + nrm * PUNCTUAL_NORMAL_OFFSET, 1.0);
     vec3 ndc  = clip.xyz / max(clip.w, 1e-5);
 #if !SOKOL_GLSL
     ndc.y = -ndc.y;
@@ -155,7 +159,7 @@ float sample_spot_shadow(float atlas_slice, vec3 worldPos)
 #endif
 
     vec2  uv    = ndc.xy * 0.5 + 0.5;
-    float bias  = 0.0015;
+    float bias  = 0.0006;
     vec2  texel = 1.0 / vec2(textureSize(sampler2DArray(shadow_atlas, shadow_atlas_smp), 0).xy);
 
     float vis = 0.0;
@@ -174,10 +178,12 @@ float sample_spot_shadow(float atlas_slice, vec3 worldPos)
 // slots, so point lights without a shadow map contribute no occlusion.
 // Excluded from SKINNING variants (binding 11 is the joints texture there).
 #if !defined(SKINNING)
-float sample_point_shadow(int point_slot, vec3 light_pos, vec3 worldPos)
+float sample_point_shadow(int point_slot, vec3 light_pos, vec3 worldPos, vec3 nrm)
 {
     if (point_slot < 0 || point_slot >= 4) return 1.0;
 
+    // Face selection uses the true position; the depth sample uses a normal-offset position
+    // (avoids the self-shadow acne rings of a close point light).
     vec3 to_frag = worldPos - light_pos;
     vec3 a = abs(to_frag);
     int face;
@@ -190,7 +196,7 @@ float sample_point_shadow(int point_slot, vec3 light_pos, vec3 worldPos)
         point_shadow_vp[li + 0], point_shadow_vp[li + 1],
         point_shadow_vp[li + 2], point_shadow_vp[li + 3]);
 
-    vec4 clip = face_vp * vec4(worldPos, 1.0);
+    vec4 clip = face_vp * vec4(worldPos + nrm * PUNCTUAL_NORMAL_OFFSET, 1.0);
     vec3 ndc  = clip.xyz / max(clip.w, 1e-5);
 #if !SOKOL_GLSL
     ndc.y = -ndc.y;
@@ -202,7 +208,7 @@ float sample_point_shadow(int point_slot, vec3 light_pos, vec3 worldPos)
 #endif
 
     vec2  uv    = ndc.xy * 0.5 + 0.5;
-    float bias  = 0.0015;
+    float bias  = 0.0006;
     float slice = float(point_slot * 6 + face);
     vec2  texel = 1.0 / vec2(textureSize(sampler2DArray(cube_shadow_array, cube_shadow_array_smp), 0).xy);
 
