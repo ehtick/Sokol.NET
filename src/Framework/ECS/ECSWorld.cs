@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using Frent;
 using Frent.Core;
 using Frent.Systems;
@@ -11,6 +12,12 @@ namespace GameEditor.Framework.ECS
     {
         private World _world;
         private readonly List<Entity> _entities = new();
+
+        // Parent→children index: maps a parent entity to its DIRECT children (entities whose
+        // Transform.Parent == it). Kept in sync inside AddComponent<Transform> — the single write
+        // path every Parent change passes through — so DestroyEntity can walk a subtree in
+        // O(subtree) instead of rescanning the whole world per node. Empty lists are not retained.
+        private readonly Dictionary<Entity, List<Entity>> _children = new();
 
         public static ECSWorld Instance { get; private set; } = new ECSWorld();
 
@@ -31,32 +38,84 @@ namespace GameEditor.Framework.ECS
         {
             if (!e.IsAlive) return;   // already gone (e.g. deleted as another entity's descendant)
 
-            // Cascade to descendants. A child links to its parent only via Transform.Parent (there
-            // is no children list), so gather the entity + everything beneath it before deleting.
-            // Without this, deleting a parent in the Hierarchy orphaned its children — they kept a
-            // dangling Parent and were never ForgetEntity'd in the renderer (so their GPU state lingered).
+            // Detach the deleted root from its (surviving) parent's child list.
+            if (TryGetComponent<Transform>(e, out var rootTr) && rootTr.Parent.HasValue)
+                RemoveChildLink(rootTr.Parent.Value, e);
+
+            // Cascade to descendants — children of a deleted parent are deleted too (standard
+            // scene-graph semantics), and each gets an EntityDestroyed event so the renderer forgets
+            // its GPU state. Walks the parent→children index, so it is O(subtree) — not a per-node
+            // scan of the whole world. `deleting` doubles as the visited set (guards cycles/dupes) and
+            // the membership test for the single batched _entities removal below.
             var toDelete = new List<Entity> { e };
-            var seen = new HashSet<Entity> { e };
+            var deleting = new HashSet<Entity> { e };
             for (int i = 0; i < toDelete.Count; i++)
             {
-                Entity parent = toDelete[i];
-                foreach (var c in _entities)
+                if (!_children.TryGetValue(toDelete[i], out var kids)) continue;
+                foreach (var c in kids)
                 {
-                    if (seen.Contains(c)) continue;
-                    if (TryGetComponent<Transform>(c, out var tr) && tr.Parent.HasValue && tr.Parent.Value.Equals(parent))
+                    if (deleting.Contains(c)) continue;   // already queued (also breaks any parent cycle)
+                    // Trust the index but verify the live link, so a (hypothetical) stale entry can
+                    // never delete a non-child — at worst it is skipped. Appended → its own children
+                    // are visited in a later iteration of this same loop.
+                    if (c.IsAlive && TryGetComponent<Transform>(c, out var ct)
+                        && ct.Parent.HasValue && ct.Parent.Value.Equals(toDelete[i]))
                     {
-                        seen.Add(c);
-                        toDelete.Add(c);   // appended → its own children are visited in a later iteration
+                        deleting.Add(c);
+                        toDelete.Add(c);
                     }
                 }
             }
 
             foreach (var d in toDelete)
             {
-                _entities.Remove(d);
+                _children.Remove(d);   // its children (if any) are also in the delete set
                 EventBus.RaiseEntityDestroyed(d);
                 if (d.IsAlive) d.Delete();
             }
+            // One batched O(n) pass — a per-entity List.Remove is O(n) each, i.e. O(subtree·n) for a
+            // big subtree (the very stutter this index is meant to avoid).
+            _entities.RemoveAll(deleting.Contains);
+        }
+
+        // ── Parent→children index maintenance ────────────────────────────────────────────────
+        private void AddChildLink(Entity parent, Entity child)
+        {
+            if (!_children.TryGetValue(parent, out var list))
+                _children[parent] = list = new List<Entity>();
+            // No Contains() guard: a child has exactly one parent, and AddComponent removes it from
+            // its old parent's list before adding it to the new one (and no-ops when unchanged), so a
+            // child is never double-listed under one parent. Keeping this O(1) is what makes building
+            // a wide node (thousands of direct children) linear instead of quadratic.
+            list.Add(child);
+        }
+
+        private void RemoveChildLink(Entity parent, Entity child)
+        {
+            if (_children.TryGetValue(parent, out var list))
+            {
+                list.Remove(child);
+                if (list.Count == 0) _children.Remove(parent);
+            }
+        }
+
+        /// <summary>Direct children of <paramref name="e"/> (entities whose Transform.Parent == e).
+        /// O(1) lookup backed by the maintained index; empty if none.</summary>
+        public IReadOnlyList<Entity> GetChildren(Entity e)
+            => _children.TryGetValue(e, out var list) ? list : System.Array.Empty<Entity>();
+
+        /// <summary>Rebuilds the parent→children index from scratch (O(entities)). Only needed after a
+        /// BULK structural change that wrote Transforms through the raw Frent API instead of
+        /// <see cref="AddComponent{T}"/> — currently just entity duplication, which the per-write index
+        /// maintenance in AddComponent can't observe. The create / glTF-import / deserialize / reparent
+        /// paths all go through AddComponent and keep the index current incrementally; they must NOT
+        /// call this (it would be wasted work).</summary>
+        public void RebuildHierarchyIndex()
+        {
+            _children.Clear();
+            foreach (var e in _entities)
+                if (e.IsAlive && TryGetComponent<Transform>(e, out var tr) && tr.Parent.HasValue)
+                    AddChildLink(tr.Parent.Value, e);
         }
 
         // Return the concrete List<Entity> to avoid IReadOnlyList<T> generic interface
@@ -112,7 +171,30 @@ namespace GameEditor.Framework.ECS
 
         public void AddComponent<T>(Entity e, T component) where T : struct
         {
-            if (e.Has<T>())
+            bool present = e.Has<T>();
+
+            // Keep the parent→children index in sync whenever a Transform's Parent changes. EVERY
+            // Parent write in the codebase — reparent (Hierarchy/EditorState), glTF import, scene
+            // deserialize, play-mode ALC sync — lands here as a whole-Transform overwrite, so this one
+            // chokepoint maintains the index with no cooperation from the mutation sites. The
+            // typeof(T)==typeof(Transform) test is a JIT constant per generic instantiation (entirely
+            // elided for other component types); Unsafe.As reinterprets without boxing so the per-frame
+            // ALC write-back stays zero-alloc, and a no-op when the Parent is unchanged.
+            if (typeof(T) == typeof(Transform))
+            {
+                Entity? newParent = Unsafe.As<T, Transform>(ref component).Parent;
+                Entity? oldParent = present ? Unsafe.As<T, Transform>(ref e.Get<T>()).Parent : null;
+                bool sameParent = (oldParent.HasValue && newParent.HasValue)
+                                  ? oldParent.Value.Equals(newParent.Value)
+                                  : oldParent.HasValue == newParent.HasValue;
+                if (!sameParent)
+                {
+                    if (oldParent.HasValue) RemoveChildLink(oldParent.Value, e);
+                    if (newParent.HasValue) AddChildLink(newParent.Value, e);
+                }
+            }
+
+            if (present)
                 e.Get<T>() = component;
             else
                 e.Add(component);
@@ -193,6 +275,7 @@ namespace GameEditor.Framework.ECS
                 if (e.IsAlive) e.Delete();
             }
             _entities.Clear();
+            _children.Clear();
             _world.Dispose();
             _world = new World();
         }

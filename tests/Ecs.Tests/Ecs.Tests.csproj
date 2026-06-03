@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Headless tests for the ECSWorld parent→children index + cascade DestroyEntity
+    (src/Framework/ECS/ECSWorld.cs). NO Sokol / native / graphics: the only runtime dependency is
+    Frent (the pure-C# ECS) plus its source generator. The code under test is compiled in directly
+    (ECSWorld.cs + EventBus.cs); Transform / NameTag / ActiveFlag are lean test doubles in
+    TestComponents.cs, since the index/cascade logic depends solely on Transform.Parent and the real
+    Transform would drag in the physics/graphics layer.
+
+    Run:  dotnet test tests/Ecs.Tests
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <!-- enable: the production sources under test (ECSWorld.cs) rely on implicit System usings,
+         matching how Framework.csproj compiles them. -->
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <PublishAot>false</PublishAot>
+    <!-- ECSWorld.cs xml-doc <see cref> targets (RenderingServer etc.) aren't compiled here. -->
+    <NoWarn>$(NoWarn);CS1574;CS1580;CS1584</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="3.2.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.13.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../ext/Frent/Frent/Frent.csproj" />
+    <ProjectReference Include="../../ext/Frent/Frent.Generator/Frent.Generator.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!-- The real production code under test, pulled in directly (no Framework.dll reference). -->
+  <ItemGroup>
+    <Compile Include="../../src/Framework/ECS/ECSWorld.cs" />
+    <Compile Include="../../src/Framework/Core/EventBus.cs" />
+  </ItemGroup>
+
+</Project>
