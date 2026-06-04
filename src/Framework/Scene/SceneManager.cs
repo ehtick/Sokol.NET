@@ -472,9 +472,14 @@ namespace GameEditor.Framework.Scene
                 string charKey = skmr.CharacterKey;
                 if (string.IsNullOrEmpty(charKey)) continue;
                 if (SkinnedCharacterRegistry.TryGet(charKey, out var entry) && entry.Meshes.Count > 0) continue;
-                if (!_pendingGltfPreloads.Add(charKey)) continue;
-                string capturedKey = charKey;
-                RenderingServer.PreloadGltfAsync(capturedKey, () => _pendingGltfPreloads.Remove(capturedKey));
+                // CharacterKey is the glTF FILE for single-skin ("<file>") but "<file>#skin{i}" /
+                // "<file>#morph" for multi-skin models — preload the FILE (before '#'); one preload
+                // repopulates ALL of that file's character entries (every skin).
+                int hash = charKey.IndexOf('#');
+                string file = hash > 0 ? charKey.Substring(0, hash) : charKey;
+                if (!_pendingGltfPreloads.Add(file)) continue;
+                string captured = file;
+                RenderingServer.PreloadGltfAsync(captured, () => _pendingGltfPreloads.Remove(captured));
             }
         }
 

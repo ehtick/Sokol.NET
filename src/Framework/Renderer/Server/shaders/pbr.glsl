@@ -45,6 +45,9 @@ layout(location=0) in vec3 position;
 layout(location=1) in vec3 normal;
 layout(location=2) in vec2 texcoord_0;
 layout(location=3) in vec4 tangent;       // xyz tangent, w = handedness (+1/-1)
+// loc 9 (not 11): the STATIC pipeline uses locations 0-8, so texcoord_1 must sit at 9 to keep the
+// attribute list gap-free (sokol requires contiguous attrs). Skinned joints/weights move to 10/11.
+layout(location=9) in vec2 texcoord_1;    // 2nd UV set (e.g. glTF AO maps); (0,0) when the mesh has none
 
 // Per-instance (buffer 1)
 layout(location=4) in vec4 in_model_0;
@@ -53,10 +56,10 @@ layout(location=6) in vec4 in_model_2;
 layout(location=7) in vec4 in_model_3;
 layout(location=8) in vec4 in_custom;    // rgb = tint, a = lod_fade
 
-// Joints/weights — added only for skinned variants (no conflict with locs 4-8)
+// Joints/weights — added only for skinned variants (locs 10/11, after texcoord_1 at 9)
 #ifdef SKINNING
-layout(location=9)  in vec4 joints_0;
-layout(location=10) in vec4 weights_0;
+layout(location=10) in vec4 joints_0;
+layout(location=11) in vec4 weights_0;
 #endif
 
 // VS uniforms — this include also defines CSM_CASCADES (before the out declarations below).
@@ -122,7 +125,7 @@ void main()
     v_TBN     = mat3(tangentW, bitangentW, normalW);
 
     v_TexCoord0 = texcoord_0;
-    v_TexCoord1 = vec2(0.0);   // texcoord_1 not in Framework base vertex; extend later
+    v_TexCoord1 = texcoord_1;  // 2nd UV set (e.g. AO); the vertex carries (0,0) if the mesh has none
     v_Color     = vec4(1.0);   // no vertex color in base layout
     v_Custom    = in_custom;
 

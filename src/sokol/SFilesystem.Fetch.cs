@@ -34,6 +34,11 @@ namespace Sokol
         private static readonly object _fetchLock = new object();
 
         private const int MAX_CONCURRENT_REQUESTS = 64;
+        // sfetch request-pool SLOTS (small per-request structs, NOT the 1 MB buffers). Decoupled from —
+        // and much larger than — MAX_CONCURRENT_REQUESTS so a burst of queued loads (e.g. a scene with a
+        // dozen glTFs; FishAndShark alone fetches 23 images) doesn't exhaust the pool. The C# layer still
+        // caps ACTIVE requests + the 1 MB buffer pool at MAX_CONCURRENT_REQUESTS, so memory is unchanged.
+        private const int SFETCH_MAX_REQUESTS = 1024;
         private const int NUM_CHANNELS = 2;
         private const int NUM_LANES = 4;
         private const int DEFAULT_BUFFER_SIZE = 1024 * 1024;
@@ -55,7 +60,7 @@ namespace Sokol
 
             sfetch_setup(new sfetch_desc_t()
             {
-                max_requests = MAX_CONCURRENT_REQUESTS,
+                max_requests = SFETCH_MAX_REQUESTS,
                 num_channels = NUM_CHANNELS,
                 num_lanes = NUM_LANES,
                 logger = {

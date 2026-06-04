@@ -13,15 +13,16 @@ using GameEditor.Framework.Core;
 
 namespace GameEditor.Framework.Renderer.Server.Resources
 {
-    /// <summary>Interleaved vertex: position + normal + UV + tangent (32 B).</summary>
+    /// <summary>Interleaved vertex: position + normal + UV0 + tangent + UV1 (56 B).</summary>
     public struct ObjVertex
     {
-        public Vector3 Position;  // 12 B
-        public Vector3 Normal;    // 12 B
-        public Vector2 Uv;        //  8 B
-        public Vector4 Tangent;   // 16 B — xyz = tangent direction; w = bitangent sign (+1/-1)
+        public Vector3 Position;  // 12 B  @0
+        public Vector3 Normal;    // 12 B  @12
+        public Vector2 Uv;        //  8 B  @24  (TEXCOORD_0)
+        public Vector4 Tangent;   // 16 B  @32 — xyz = tangent direction; w = bitangent sign (+1/-1)
+        public Vector2 Uv1;       //  8 B  @48  (TEXCOORD_1 — 2nd UV set, e.g. glTF AO maps; (0,0) for OBJ)
 
-        public const int SizeBytes = 12 + 12 + 8 + 16; // 48 B
+        public const int SizeBytes = 12 + 12 + 8 + 16 + 8; // 56 B
     }
 
     /// <summary>Sub-mesh for one material section of an OBJ file.</summary>

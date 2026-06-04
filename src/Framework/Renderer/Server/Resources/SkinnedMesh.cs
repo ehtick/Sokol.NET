@@ -14,12 +14,13 @@ namespace GameEditor.Framework.Renderer.Server.Resources
     {
         public Vector3 Position; // @0
         public Vector3 Normal;   // @12
-        public Vector2 Uv;       // @24
+        public Vector2 Uv;       // @24  (TEXCOORD_0)
         public Vector4 Tangent;  // @32
         public Vector4 Joints;   // @48  (4 joint indices, as floats)
         public Vector4 Weights;  // @64  (4 blend weights)
+        public Vector2 Uv1;      // @80  (TEXCOORD_1 — 2nd UV set; (0,0) if absent)
 
-        public const int SizeBytes = 12 + 12 + 8 + 16 + 16 + 16; // 80 B
+        public const int SizeBytes = 12 + 12 + 8 + 16 + 16 + 16 + 8; // 88 B
     }
 
     /// <summary>

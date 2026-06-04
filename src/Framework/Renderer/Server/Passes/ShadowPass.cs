@@ -77,7 +77,7 @@ namespace GameEditor.Framework.Renderer.Server.Passes
                 label = "shadow-caster-pipeline"
             };
 
-            desc.layout.buffers[0].stride = 48;
+            desc.layout.buffers[0].stride = 56;   // ObjVertex now carries TEXCOORD_1; caster reads position only
             desc.layout.attrs[ATTR_shadow_caster_in_pos] = new sg_vertex_attr_state
             {
                 buffer_index = 0,
@@ -112,7 +112,7 @@ namespace GameEditor.Framework.Renderer.Server.Passes
                 },
                 label = "shadow-caster-skinned-pipeline"
             };
-            sdesc.layout.buffers[0].stride = 80;
+            sdesc.layout.buffers[0].stride = 88;   // SkinnedVertex now carries TEXCOORD_1; caster reads pos+joints+weights
             sdesc.layout.attrs[SkinnedCaster.ATTR_shadow_caster_in_pos]    = new sg_vertex_attr_state
             { buffer_index = 0, offset =  0, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT3 };
             sdesc.layout.attrs[SkinnedCaster.ATTR_shadow_caster_joints_0]  = new sg_vertex_attr_state

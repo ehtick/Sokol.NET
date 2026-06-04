@@ -39,22 +39,38 @@ namespace GameEditor.Framework.Renderer.Server.Animation
         public bool HasAnimations => Animations.Count > 0;
 
         /// <summary>Extracts skin + animation data from a parsed glTF. Buffers must be loaded.</summary>
-        public static CGltfSkinExtractor Extract(cgltf_data* data)
+        // <paramref name="skinIndex"/> selects WHICH skin to extract (a glTF can have several — e.g.
+        // FishAndShark's fish + shark). Each call builds its OWN node tree + bone map + skin-filtered
+        // clips, so per-skin animators are fully independent (no shared-node-tree contention).
+        // skinIndex &lt; 0 (or no skins) → node/morph-weight animation only.
+        public static CGltfSkinExtractor Extract(cgltf_data* data, int skinIndex = 0)
         {
             var e = new CGltfSkinExtractor();
-            e.Process(data);
+            e.Process(data, skinIndex);
             return e;
         }
 
-        private void Process(cgltf_data* data)
+        private void Process(cgltf_data* data, int skinIndex)
         {
-            // Step 1 — skins → joint names + (skin 0) bone-info map.
+            // Step 1a — joint names of EVERY skin. ProcessAnimationsForCharacter treats a non-bone,
+            // non-joint channel as a "node animation"; so a channel targeting ANOTHER character's joint
+            // must be in this set, or it leaks into this character's clips (e.g. the shark binding the
+            // fish's clip → wrong/no motion). Only THIS skin's bones go in BoneInfoMap below.
             for (int si = 0; si < (int)data->skins_count; si++)
             {
-                cgltf_skin* skin = &data->skins[si];
-                var (bim, bc) = ProcessSkin(skin, si);
-                foreach (var n in bim.Keys) SkinnedNodeNames.Add(n);
-                if (si == 0) { BoneInfoMap = bim; BoneCount = bc; }
+                cgltf_skin* sk = &data->skins[si];
+                for (int ji = 0; ji < (int)sk->joints_count; ji++)
+                {
+                    string? jn = PtrToStr(sk->joints[ji]->name);
+                    if (jn != null) SkinnedNodeNames.Add(jn);
+                }
+            }
+
+            // Step 1b — the requested skin → bone-info map (only that skin's bones).
+            if (skinIndex >= 0 && skinIndex < (int)data->skins_count)
+            {
+                var (bim, bc) = ProcessSkin(&data->skins[skinIndex], skinIndex);
+                BoneInfoMap = bim; BoneCount = bc;
             }
 
             // Step 2 — scene node tree → CGltfNode hierarchy (one node per glTF node).

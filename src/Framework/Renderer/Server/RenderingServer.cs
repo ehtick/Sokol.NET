@@ -246,6 +246,9 @@ namespace GameEditor.Framework.Renderer.Server
         {
             if (_initialized) return;
             EventBus.EntityDestroyed += ForgetEntity;
+            // Re-attach rigid/node animation players after a scene loads (entities exist + the
+            // NodeAnimationRegistry has been repopulated by the asset/scene preloads).
+            EventBus.SceneLoaded += AttachSceneNodeAnimations;
             _texCache.Init();
             _shaderCache.Init();
             _shadowAtlas.Init();
@@ -302,6 +305,7 @@ namespace GameEditor.Framework.Renderer.Server
         {
             if (!_initialized) return;
             EventBus.EntityDestroyed -= ForgetEntity;
+            EventBus.SceneLoaded -= AttachSceneNodeAnimations;
             _initialized = false;
             _instanceBuf.Dispose();
             _transmissionInstanceBuf.Dispose();
@@ -379,8 +383,11 @@ namespace GameEditor.Framework.Renderer.Server
         public static void PreloadGltfAsync(string assetsRelativePath, Action? onComplete = null)
         {
             if (!_initialized) { onComplete?.Invoke(); return; }
+            // After the preload registers resources (incl. node-animation clips), re-attach node
+            // players — covers a glTF whose preload finishes AFTER the SceneLoaded hook already ran.
             GameEditor.Framework.Renderer.Server.Assets.GltfImporter.PreloadAsync(
-                assetsRelativePath, _meshReg, _matReg, _texCache, ECSWorld.Instance, onComplete);
+                assetsRelativePath, _meshReg, _matReg, _texCache, ECSWorld.Instance,
+                () => { onComplete?.Invoke(); AttachSceneNodeAnimations(); });
         }
 
         // ── Frame loop ───────────────────────────────────────────────────────────────────
@@ -392,6 +399,9 @@ namespace GameEditor.Framework.Renderer.Server
             _skinnedInstanceBuf.BeginFrame();
             _transmissionInstanceBuf.BeginFrame();
             _animationFrame++;
+            // Advance rigid/node animations (e.g. watch hands) into their entity Transforms BEFORE
+            // SubmitView reads them. Once per CPU frame regardless of view count.
+            UpdateNodeAnimations();
             _lightBuf.Reset();
             _stats.Reset();
             _drawCount = 0;
@@ -1330,12 +1340,30 @@ namespace GameEditor.Framework.Renderer.Server
                 occlusion_strength         = mat.OcclusionStrength,
                 ior                        = 1.5f,
                 normal_map_scale           = mat.NormalMapScale,
-                // Base UV path uses texcoord set 0 with identity texture transforms.
-                base_color_tex_scale         = Vector2.One,
-                metallic_roughness_tex_scale = Vector2.One,
-                normal_tex_scale             = Vector2.One,
-                occlusion_tex_scale          = Vector2.One,
-                emissive_tex_scale           = Vector2.One,
+                // KHR_texture_transform (offset/rotation/scale) + per-texture coordinate set —
+                // filled from the material (was hardcoded identity, which broke tiled normal maps).
+                base_color_texcoord             = mat.BaseColorTexcoord,
+                base_color_tex_offset           = mat.BaseColorTexOffset,
+                base_color_tex_rotation         = mat.BaseColorTexRotation,
+                base_color_tex_scale            = mat.BaseColorTexScale,
+                metallic_roughness_texcoord     = mat.MetallicRoughnessTexcoord,
+                metallic_roughness_tex_offset   = mat.MetallicRoughnessTexOffset,
+                metallic_roughness_tex_rotation = mat.MetallicRoughnessTexRotation,
+                metallic_roughness_tex_scale    = mat.MetallicRoughnessTexScale,
+                normal_texcoord                 = mat.NormalTexcoord,
+                normal_tex_offset               = mat.NormalTexOffset,
+                normal_tex_rotation             = mat.NormalTexRotation,
+                normal_tex_scale                = mat.NormalTexScale,
+                occlusion_texcoord              = mat.OcclusionTexcoord,
+                occlusion_tex_offset            = mat.OcclusionTexOffset,
+                occlusion_tex_rotation          = mat.OcclusionTexRotation,
+                occlusion_tex_scale             = mat.OcclusionTexScale,
+                emissive_texcoord               = mat.EmissiveTexcoord,
+                emissive_tex_offset             = mat.EmissiveTexOffset,
+                emissive_tex_rotation           = mat.EmissiveTexRotation,
+                emissive_tex_scale              = mat.EmissiveTexScale,
+                clearcoat_factor                = mat.ClearcoatFactor,
+                clearcoat_roughness             = mat.ClearcoatRoughness,
                 debug_view_enabled           = PbrDebugViewMode != 0 ? 1f : 0f,
                 debug_view_mode              = PbrDebugViewMode,
                 shadow_ambient_weight        = ShadowAmbientWeight,
@@ -1578,11 +1606,30 @@ namespace GameEditor.Framework.Renderer.Server
                 emissive_strength          = mat.EmissiveStrength,
                 occlusion_strength         = mat.OcclusionStrength,
                 normal_map_scale           = mat.NormalMapScale,
-                base_color_tex_scale         = Vector2.One,
-                metallic_roughness_tex_scale = Vector2.One,
-                normal_tex_scale             = Vector2.One,
-                occlusion_tex_scale          = Vector2.One,
-                emissive_tex_scale           = Vector2.One,
+                // KHR_texture_transform (offset/rotation/scale) + per-texture coordinate set —
+                // filled from the material (was hardcoded identity, which broke tiled normal maps).
+                base_color_texcoord             = mat.BaseColorTexcoord,
+                base_color_tex_offset           = mat.BaseColorTexOffset,
+                base_color_tex_rotation         = mat.BaseColorTexRotation,
+                base_color_tex_scale            = mat.BaseColorTexScale,
+                metallic_roughness_texcoord     = mat.MetallicRoughnessTexcoord,
+                metallic_roughness_tex_offset   = mat.MetallicRoughnessTexOffset,
+                metallic_roughness_tex_rotation = mat.MetallicRoughnessTexRotation,
+                metallic_roughness_tex_scale    = mat.MetallicRoughnessTexScale,
+                normal_texcoord                 = mat.NormalTexcoord,
+                normal_tex_offset               = mat.NormalTexOffset,
+                normal_tex_rotation             = mat.NormalTexRotation,
+                normal_tex_scale                = mat.NormalTexScale,
+                occlusion_texcoord              = mat.OcclusionTexcoord,
+                occlusion_tex_offset            = mat.OcclusionTexOffset,
+                occlusion_tex_rotation          = mat.OcclusionTexRotation,
+                occlusion_tex_scale             = mat.OcclusionTexScale,
+                emissive_texcoord               = mat.EmissiveTexcoord,
+                emissive_tex_offset             = mat.EmissiveTexOffset,
+                emissive_tex_rotation           = mat.EmissiveTexRotation,
+                emissive_tex_scale              = mat.EmissiveTexScale,
+                clearcoat_factor                = mat.ClearcoatFactor,
+                clearcoat_roughness             = mat.ClearcoatRoughness,
                 thickness_tex_scale          = Vector2.One,
                 // KHR transmission / volume / ior
                 transmission_factor   = mat.TransmissionFactor,
@@ -1682,6 +1729,63 @@ namespace GameEditor.Framework.Renderer.Server
 
                 sg_draw(0u, (uint)sub.IndexCount, 1u);
                 _stats.DrawCalls++;
+            }
+        }
+
+        // Rigid/node animation (e.g. ChronographWatch hands): samples each NodeAnimationPlayer's clip
+        // and writes the result into the owning entity's Transform. Runs once per CPU frame at
+        // BeginFrame, before any SubmitView reads the Transform. Independent of the skinned path.
+        private static void UpdateNodeAnimations()
+        {
+            var world = ECSWorld.Instance;
+            if (!world.HasAnyComponent<Animation.NodeAnimationPlayer>()) return;
+            float dt = (float)Sokol.SApp.sapp_frame_duration();
+            foreach (var row in world.Query<ActiveFlag, Animation.NodeAnimationPlayer, Transform>()
+                                     .EnumerateWithEntities<ActiveFlag, Animation.NodeAnimationPlayer, Transform>())
+            {
+                if (!row.Item1.Value.Active) continue;
+                Entity e = row.Entity;
+                ref var player = ref world.GetComponent<Animation.NodeAnimationPlayer>(e);
+                var clip = player.Clip;
+                if (!player.Playing || clip == null || !clip.HasAnyChannel) continue;
+
+                player.Time += dt;
+                if (clip.Duration > 0f)
+                {
+                    if (player.Loop) { player.Time %= clip.Duration; if (player.Time < 0f) player.Time += clip.Duration; }
+                    else if (player.Time > clip.Duration) player.Time = clip.Duration;
+                }
+
+                clip.Sample(player.Time, out var t, out var r, out var s);
+                ref var tf = ref world.GetComponent<Transform>(e);
+                tf.Position = t;
+                tf.Rotation = r;
+                tf.Scale    = s;
+            }
+        }
+
+        /// <summary>
+        /// (Re)attaches <see cref="Animation.NodeAnimationPlayer"/> to scene entities whose source glTF
+        /// has registered node-TRS clips (matched by MeshRenderer→glTF path + the entity's NameTag name).
+        /// Idempotent. Runs on scene load + after each glTF preload so rigid/node animation (e.g. the
+        /// ChronographWatch hands) survives a cold scene reload without being serialized — mirroring how
+        /// skinned entities re-resolve from SkinnedCharacterRegistry.
+        /// </summary>
+        public static void AttachSceneNodeAnimations()
+        {
+            if (!_initialized) return;
+            var world = ECSWorld.Instance;
+            // Match by entity NAME (= glTF node name; round-tripped via NameTag). NOT by MeshRenderer:
+            // a multi-primitive animated node (e.g. the watch's "Hand Seconds") has its mesh on CHILD
+            // entities, so the animated node entity itself carries only a Transform. Animating that
+            // parent Transform rotates the mesh children through the hierarchy.
+            foreach (Entity e in world.Entities)
+            {
+                if (world.TryGetComponent<Animation.NodeAnimationPlayer>(e, out _)) continue;
+                if (!world.TryGetComponent<NameTag>(e, out var nt)) continue;
+                var clip = Animation.NodeAnimationRegistry.ResolveAnyByName(nt.Name);
+                if (clip != null)
+                    world.AddComponent(e, new Animation.NodeAnimationPlayer { Clip = clip, Time = 0f, Playing = true, Loop = true });
             }
         }
 
@@ -1899,11 +2003,30 @@ namespace GameEditor.Framework.Renderer.Server
                 occlusion_strength         = mat.OcclusionStrength,
                 ior                        = 1.5f,
                 normal_map_scale           = mat.NormalMapScale,
-                base_color_tex_scale         = Vector2.One,
-                metallic_roughness_tex_scale = Vector2.One,
-                normal_tex_scale             = Vector2.One,
-                occlusion_tex_scale          = Vector2.One,
-                emissive_tex_scale           = Vector2.One,
+                // KHR_texture_transform (offset/rotation/scale) + per-texture coordinate set —
+                // filled from the material (was hardcoded identity, which broke tiled normal maps).
+                base_color_texcoord             = mat.BaseColorTexcoord,
+                base_color_tex_offset           = mat.BaseColorTexOffset,
+                base_color_tex_rotation         = mat.BaseColorTexRotation,
+                base_color_tex_scale            = mat.BaseColorTexScale,
+                metallic_roughness_texcoord     = mat.MetallicRoughnessTexcoord,
+                metallic_roughness_tex_offset   = mat.MetallicRoughnessTexOffset,
+                metallic_roughness_tex_rotation = mat.MetallicRoughnessTexRotation,
+                metallic_roughness_tex_scale    = mat.MetallicRoughnessTexScale,
+                normal_texcoord                 = mat.NormalTexcoord,
+                normal_tex_offset               = mat.NormalTexOffset,
+                normal_tex_rotation             = mat.NormalTexRotation,
+                normal_tex_scale                = mat.NormalTexScale,
+                occlusion_texcoord              = mat.OcclusionTexcoord,
+                occlusion_tex_offset            = mat.OcclusionTexOffset,
+                occlusion_tex_rotation          = mat.OcclusionTexRotation,
+                occlusion_tex_scale             = mat.OcclusionTexScale,
+                emissive_texcoord               = mat.EmissiveTexcoord,
+                emissive_tex_offset             = mat.EmissiveTexOffset,
+                emissive_tex_rotation           = mat.EmissiveTexRotation,
+                emissive_tex_scale              = mat.EmissiveTexScale,
+                clearcoat_factor                = mat.ClearcoatFactor,
+                clearcoat_roughness             = mat.ClearcoatRoughness,
                 debug_view_enabled           = PbrDebugViewMode != 0 ? 1f : 0f,
                 debug_view_mode              = PbrDebugViewMode,
                 shadow_ambient_weight        = ShadowAmbientWeight,
@@ -2078,11 +2201,30 @@ namespace GameEditor.Framework.Renderer.Server
                 occlusion_strength         = mat.OcclusionStrength,
                 ior                        = 1.5f,
                 normal_map_scale           = mat.NormalMapScale,
-                base_color_tex_scale         = Vector2.One,
-                metallic_roughness_tex_scale = Vector2.One,
-                normal_tex_scale             = Vector2.One,
-                occlusion_tex_scale          = Vector2.One,
-                emissive_tex_scale           = Vector2.One,
+                // KHR_texture_transform (offset/rotation/scale) + per-texture coordinate set —
+                // filled from the material (was hardcoded identity, which broke tiled normal maps).
+                base_color_texcoord             = mat.BaseColorTexcoord,
+                base_color_tex_offset           = mat.BaseColorTexOffset,
+                base_color_tex_rotation         = mat.BaseColorTexRotation,
+                base_color_tex_scale            = mat.BaseColorTexScale,
+                metallic_roughness_texcoord     = mat.MetallicRoughnessTexcoord,
+                metallic_roughness_tex_offset   = mat.MetallicRoughnessTexOffset,
+                metallic_roughness_tex_rotation = mat.MetallicRoughnessTexRotation,
+                metallic_roughness_tex_scale    = mat.MetallicRoughnessTexScale,
+                normal_texcoord                 = mat.NormalTexcoord,
+                normal_tex_offset               = mat.NormalTexOffset,
+                normal_tex_rotation             = mat.NormalTexRotation,
+                normal_tex_scale                = mat.NormalTexScale,
+                occlusion_texcoord              = mat.OcclusionTexcoord,
+                occlusion_tex_offset            = mat.OcclusionTexOffset,
+                occlusion_tex_rotation          = mat.OcclusionTexRotation,
+                occlusion_tex_scale             = mat.OcclusionTexScale,
+                emissive_texcoord               = mat.EmissiveTexcoord,
+                emissive_tex_offset             = mat.EmissiveTexOffset,
+                emissive_tex_rotation           = mat.EmissiveTexRotation,
+                emissive_tex_scale              = mat.EmissiveTexScale,
+                clearcoat_factor                = mat.ClearcoatFactor,
+                clearcoat_roughness             = mat.ClearcoatRoughness,
                 debug_view_enabled           = PbrDebugViewMode != 0 ? 1f : 0f,
                 debug_view_mode              = PbrDebugViewMode,
                 shadow_ambient_weight        = ShadowAmbientWeight,
@@ -2261,11 +2403,30 @@ namespace GameEditor.Framework.Renderer.Server
                 occlusion_strength         = mat.OcclusionStrength,
                 ior                        = 1.5f,
                 normal_map_scale           = mat.NormalMapScale,
-                base_color_tex_scale         = Vector2.One,
-                metallic_roughness_tex_scale = Vector2.One,
-                normal_tex_scale             = Vector2.One,
-                occlusion_tex_scale          = Vector2.One,
-                emissive_tex_scale           = Vector2.One,
+                // KHR_texture_transform (offset/rotation/scale) + per-texture coordinate set —
+                // filled from the material (was hardcoded identity, which broke tiled normal maps).
+                base_color_texcoord             = mat.BaseColorTexcoord,
+                base_color_tex_offset           = mat.BaseColorTexOffset,
+                base_color_tex_rotation         = mat.BaseColorTexRotation,
+                base_color_tex_scale            = mat.BaseColorTexScale,
+                metallic_roughness_texcoord     = mat.MetallicRoughnessTexcoord,
+                metallic_roughness_tex_offset   = mat.MetallicRoughnessTexOffset,
+                metallic_roughness_tex_rotation = mat.MetallicRoughnessTexRotation,
+                metallic_roughness_tex_scale    = mat.MetallicRoughnessTexScale,
+                normal_texcoord                 = mat.NormalTexcoord,
+                normal_tex_offset               = mat.NormalTexOffset,
+                normal_tex_rotation             = mat.NormalTexRotation,
+                normal_tex_scale                = mat.NormalTexScale,
+                occlusion_texcoord              = mat.OcclusionTexcoord,
+                occlusion_tex_offset            = mat.OcclusionTexOffset,
+                occlusion_tex_rotation          = mat.OcclusionTexRotation,
+                occlusion_tex_scale             = mat.OcclusionTexScale,
+                emissive_texcoord               = mat.EmissiveTexcoord,
+                emissive_tex_offset             = mat.EmissiveTexOffset,
+                emissive_tex_rotation           = mat.EmissiveTexRotation,
+                emissive_tex_scale              = mat.EmissiveTexScale,
+                clearcoat_factor                = mat.ClearcoatFactor,
+                clearcoat_roughness             = mat.ClearcoatRoughness,
                 debug_view_enabled           = PbrDebugViewMode != 0 ? 1f : 0f,
                 debug_view_mode              = PbrDebugViewMode,
                 shadow_ambient_weight        = ShadowAmbientWeight,
@@ -2462,11 +2623,30 @@ namespace GameEditor.Framework.Renderer.Server
                 occlusion_strength         = mat.OcclusionStrength,
                 ior                        = 1.5f,
                 normal_map_scale           = mat.NormalMapScale,
-                base_color_tex_scale         = Vector2.One,
-                metallic_roughness_tex_scale = Vector2.One,
-                normal_tex_scale             = Vector2.One,
-                occlusion_tex_scale          = Vector2.One,
-                emissive_tex_scale           = Vector2.One,
+                // KHR_texture_transform (offset/rotation/scale) + per-texture coordinate set —
+                // filled from the material (was hardcoded identity, which broke tiled normal maps).
+                base_color_texcoord             = mat.BaseColorTexcoord,
+                base_color_tex_offset           = mat.BaseColorTexOffset,
+                base_color_tex_rotation         = mat.BaseColorTexRotation,
+                base_color_tex_scale            = mat.BaseColorTexScale,
+                metallic_roughness_texcoord     = mat.MetallicRoughnessTexcoord,
+                metallic_roughness_tex_offset   = mat.MetallicRoughnessTexOffset,
+                metallic_roughness_tex_rotation = mat.MetallicRoughnessTexRotation,
+                metallic_roughness_tex_scale    = mat.MetallicRoughnessTexScale,
+                normal_texcoord                 = mat.NormalTexcoord,
+                normal_tex_offset               = mat.NormalTexOffset,
+                normal_tex_rotation             = mat.NormalTexRotation,
+                normal_tex_scale                = mat.NormalTexScale,
+                occlusion_texcoord              = mat.OcclusionTexcoord,
+                occlusion_tex_offset            = mat.OcclusionTexOffset,
+                occlusion_tex_rotation          = mat.OcclusionTexRotation,
+                occlusion_tex_scale             = mat.OcclusionTexScale,
+                emissive_texcoord               = mat.EmissiveTexcoord,
+                emissive_tex_offset             = mat.EmissiveTexOffset,
+                emissive_tex_rotation           = mat.EmissiveTexRotation,
+                emissive_tex_scale              = mat.EmissiveTexScale,
+                clearcoat_factor                = mat.ClearcoatFactor,
+                clearcoat_roughness             = mat.ClearcoatRoughness,
                 debug_view_enabled           = PbrDebugViewMode != 0 ? 1f : 0f,
                 debug_view_mode              = PbrDebugViewMode,
                 shadow_ambient_weight        = ShadowAmbientWeight,
@@ -2634,11 +2814,30 @@ namespace GameEditor.Framework.Renderer.Server
                 occlusion_strength         = mat.OcclusionStrength,
                 ior                        = 1.5f,
                 normal_map_scale           = mat.NormalMapScale,
-                base_color_tex_scale         = Vector2.One,
-                metallic_roughness_tex_scale = Vector2.One,
-                normal_tex_scale             = Vector2.One,
-                occlusion_tex_scale          = Vector2.One,
-                emissive_tex_scale           = Vector2.One,
+                // KHR_texture_transform (offset/rotation/scale) + per-texture coordinate set —
+                // filled from the material (was hardcoded identity, which broke tiled normal maps).
+                base_color_texcoord             = mat.BaseColorTexcoord,
+                base_color_tex_offset           = mat.BaseColorTexOffset,
+                base_color_tex_rotation         = mat.BaseColorTexRotation,
+                base_color_tex_scale            = mat.BaseColorTexScale,
+                metallic_roughness_texcoord     = mat.MetallicRoughnessTexcoord,
+                metallic_roughness_tex_offset   = mat.MetallicRoughnessTexOffset,
+                metallic_roughness_tex_rotation = mat.MetallicRoughnessTexRotation,
+                metallic_roughness_tex_scale    = mat.MetallicRoughnessTexScale,
+                normal_texcoord                 = mat.NormalTexcoord,
+                normal_tex_offset               = mat.NormalTexOffset,
+                normal_tex_rotation             = mat.NormalTexRotation,
+                normal_tex_scale                = mat.NormalTexScale,
+                occlusion_texcoord              = mat.OcclusionTexcoord,
+                occlusion_tex_offset            = mat.OcclusionTexOffset,
+                occlusion_tex_rotation          = mat.OcclusionTexRotation,
+                occlusion_tex_scale             = mat.OcclusionTexScale,
+                emissive_texcoord               = mat.EmissiveTexcoord,
+                emissive_tex_offset             = mat.EmissiveTexOffset,
+                emissive_tex_rotation           = mat.EmissiveTexRotation,
+                emissive_tex_scale              = mat.EmissiveTexScale,
+                clearcoat_factor                = mat.ClearcoatFactor,
+                clearcoat_roughness             = mat.ClearcoatRoughness,
                 debug_view_enabled           = PbrDebugViewMode != 0 ? 1f : 0f,
                 debug_view_mode              = PbrDebugViewMode,
                 shadow_ambient_weight        = ShadowAmbientWeight,
@@ -2819,11 +3018,30 @@ namespace GameEditor.Framework.Renderer.Server
                 occlusion_strength         = mat.OcclusionStrength,
                 ior                        = 1.5f,
                 normal_map_scale           = mat.NormalMapScale,
-                base_color_tex_scale         = Vector2.One,
-                metallic_roughness_tex_scale = Vector2.One,
-                normal_tex_scale             = Vector2.One,
-                occlusion_tex_scale          = Vector2.One,
-                emissive_tex_scale           = Vector2.One,
+                // KHR_texture_transform (offset/rotation/scale) + per-texture coordinate set —
+                // filled from the material (was hardcoded identity, which broke tiled normal maps).
+                base_color_texcoord             = mat.BaseColorTexcoord,
+                base_color_tex_offset           = mat.BaseColorTexOffset,
+                base_color_tex_rotation         = mat.BaseColorTexRotation,
+                base_color_tex_scale            = mat.BaseColorTexScale,
+                metallic_roughness_texcoord     = mat.MetallicRoughnessTexcoord,
+                metallic_roughness_tex_offset   = mat.MetallicRoughnessTexOffset,
+                metallic_roughness_tex_rotation = mat.MetallicRoughnessTexRotation,
+                metallic_roughness_tex_scale    = mat.MetallicRoughnessTexScale,
+                normal_texcoord                 = mat.NormalTexcoord,
+                normal_tex_offset               = mat.NormalTexOffset,
+                normal_tex_rotation             = mat.NormalTexRotation,
+                normal_tex_scale                = mat.NormalTexScale,
+                occlusion_texcoord              = mat.OcclusionTexcoord,
+                occlusion_tex_offset            = mat.OcclusionTexOffset,
+                occlusion_tex_rotation          = mat.OcclusionTexRotation,
+                occlusion_tex_scale             = mat.OcclusionTexScale,
+                emissive_texcoord               = mat.EmissiveTexcoord,
+                emissive_tex_offset             = mat.EmissiveTexOffset,
+                emissive_tex_rotation           = mat.EmissiveTexRotation,
+                emissive_tex_scale              = mat.EmissiveTexScale,
+                clearcoat_factor                = mat.ClearcoatFactor,
+                clearcoat_roughness             = mat.ClearcoatRoughness,
                 debug_view_enabled           = PbrDebugViewMode != 0 ? 1f : 0f,
                 debug_view_mode              = PbrDebugViewMode,
                 shadow_ambient_weight        = ShadowAmbientWeight,
@@ -2993,11 +3211,30 @@ namespace GameEditor.Framework.Renderer.Server
                 occlusion_strength         = mat.OcclusionStrength,
                 ior                        = 1.5f,
                 normal_map_scale           = mat.NormalMapScale,
-                base_color_tex_scale         = Vector2.One,
-                metallic_roughness_tex_scale = Vector2.One,
-                normal_tex_scale             = Vector2.One,
-                occlusion_tex_scale          = Vector2.One,
-                emissive_tex_scale           = Vector2.One,
+                // KHR_texture_transform (offset/rotation/scale) + per-texture coordinate set —
+                // filled from the material (was hardcoded identity, which broke tiled normal maps).
+                base_color_texcoord             = mat.BaseColorTexcoord,
+                base_color_tex_offset           = mat.BaseColorTexOffset,
+                base_color_tex_rotation         = mat.BaseColorTexRotation,
+                base_color_tex_scale            = mat.BaseColorTexScale,
+                metallic_roughness_texcoord     = mat.MetallicRoughnessTexcoord,
+                metallic_roughness_tex_offset   = mat.MetallicRoughnessTexOffset,
+                metallic_roughness_tex_rotation = mat.MetallicRoughnessTexRotation,
+                metallic_roughness_tex_scale    = mat.MetallicRoughnessTexScale,
+                normal_texcoord                 = mat.NormalTexcoord,
+                normal_tex_offset               = mat.NormalTexOffset,
+                normal_tex_rotation             = mat.NormalTexRotation,
+                normal_tex_scale                = mat.NormalTexScale,
+                occlusion_texcoord              = mat.OcclusionTexcoord,
+                occlusion_tex_offset            = mat.OcclusionTexOffset,
+                occlusion_tex_rotation          = mat.OcclusionTexRotation,
+                occlusion_tex_scale             = mat.OcclusionTexScale,
+                emissive_texcoord               = mat.EmissiveTexcoord,
+                emissive_tex_offset             = mat.EmissiveTexOffset,
+                emissive_tex_rotation           = mat.EmissiveTexRotation,
+                emissive_tex_scale              = mat.EmissiveTexScale,
+                clearcoat_factor                = mat.ClearcoatFactor,
+                clearcoat_roughness             = mat.ClearcoatRoughness,
                 debug_view_enabled           = PbrDebugViewMode != 0 ? 1f : 0f,
                 debug_view_mode              = PbrDebugViewMode,
                 shadow_ambient_weight        = ShadowAmbientWeight,
@@ -3184,11 +3421,30 @@ namespace GameEditor.Framework.Renderer.Server
                 occlusion_strength         = mat.OcclusionStrength,
                 ior                        = 1.5f,
                 normal_map_scale           = mat.NormalMapScale,
-                base_color_tex_scale         = Vector2.One,
-                metallic_roughness_tex_scale = Vector2.One,
-                normal_tex_scale             = Vector2.One,
-                occlusion_tex_scale          = Vector2.One,
-                emissive_tex_scale           = Vector2.One,
+                // KHR_texture_transform (offset/rotation/scale) + per-texture coordinate set —
+                // filled from the material (was hardcoded identity, which broke tiled normal maps).
+                base_color_texcoord             = mat.BaseColorTexcoord,
+                base_color_tex_offset           = mat.BaseColorTexOffset,
+                base_color_tex_rotation         = mat.BaseColorTexRotation,
+                base_color_tex_scale            = mat.BaseColorTexScale,
+                metallic_roughness_texcoord     = mat.MetallicRoughnessTexcoord,
+                metallic_roughness_tex_offset   = mat.MetallicRoughnessTexOffset,
+                metallic_roughness_tex_rotation = mat.MetallicRoughnessTexRotation,
+                metallic_roughness_tex_scale    = mat.MetallicRoughnessTexScale,
+                normal_texcoord                 = mat.NormalTexcoord,
+                normal_tex_offset               = mat.NormalTexOffset,
+                normal_tex_rotation             = mat.NormalTexRotation,
+                normal_tex_scale                = mat.NormalTexScale,
+                occlusion_texcoord              = mat.OcclusionTexcoord,
+                occlusion_tex_offset            = mat.OcclusionTexOffset,
+                occlusion_tex_rotation          = mat.OcclusionTexRotation,
+                occlusion_tex_scale             = mat.OcclusionTexScale,
+                emissive_texcoord               = mat.EmissiveTexcoord,
+                emissive_tex_offset             = mat.EmissiveTexOffset,
+                emissive_tex_rotation           = mat.EmissiveTexRotation,
+                emissive_tex_scale              = mat.EmissiveTexScale,
+                clearcoat_factor                = mat.ClearcoatFactor,
+                clearcoat_roughness             = mat.ClearcoatRoughness,
                 debug_view_enabled           = PbrDebugViewMode != 0 ? 1f : 0f,
                 debug_view_mode              = PbrDebugViewMode,
                 shadow_ambient_weight        = ShadowAmbientWeight,

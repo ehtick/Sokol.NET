@@ -314,7 +314,7 @@ namespace GameEditor.Framework.Renderer.Server
 
             // ── Per-vertex attributes (buffer slot 0) ────────────────────────────────
             // ObjVertex layout: vec3 pos + vec3 normal + vec2 uv + vec4 tangent = 48 B
-            desc.layout.buffers[0].stride = 48;
+            desc.layout.buffers[0].stride = 56;   // ObjVertex: pos+normal+uv0+tangent+uv1
             desc.layout.attrs[ATTR_blinn_phong_in_pos]     = new sg_vertex_attr_state
             {
                 buffer_index = 0, offset =  0,
@@ -423,7 +423,7 @@ namespace GameEditor.Framework.Renderer.Server
             };
 
             // Per-vertex attributes (buffer slot 0) — PbrVertex 48 B: pos+normal+uv+tangent.
-            desc.layout.buffers[0].stride = 48;
+            desc.layout.buffers[0].stride = 56;   // ObjVertex: pos+normal+uv0+tangent+uv1
             desc.layout.attrs[PbrShaders.ATTR_pbr_pbr_program_position]   = new sg_vertex_attr_state
             { buffer_index = 0, offset =  0, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT3 };
             desc.layout.attrs[PbrShaders.ATTR_pbr_pbr_program_normal]     = new sg_vertex_attr_state
@@ -432,6 +432,8 @@ namespace GameEditor.Framework.Renderer.Server
             { buffer_index = 0, offset = 24, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT2 };
             desc.layout.attrs[PbrShaders.ATTR_pbr_pbr_program_tangent]    = new sg_vertex_attr_state
             { buffer_index = 0, offset = 32, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT4 };
+            desc.layout.attrs[PbrShaders.ATTR_pbr_pbr_program_texcoord_1] = new sg_vertex_attr_state
+            { buffer_index = 0, offset = 48, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT2 };
 
             // Per-instance attributes (buffer slot 1) — InstanceData 80 B: mat4 model + vec4 custom.
             desc.layout.buffers[1].stride    = 80;
@@ -498,7 +500,7 @@ namespace GameEditor.Framework.Renderer.Server
             };
 
             // Per-vertex attributes (buffer slot 0) — SkinnedVertex 80 B.
-            desc.layout.buffers[0].stride = 80;
+            desc.layout.buffers[0].stride = 88;   // SkinnedVertex: +uv1 (TEXCOORD_1)
             desc.layout.attrs[PbrSkinning.ATTR_pbr_skinning_pbr_program_position]   = new sg_vertex_attr_state
             { buffer_index = 0, offset =  0, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT3 };
             desc.layout.attrs[PbrSkinning.ATTR_pbr_skinning_pbr_program_normal]     = new sg_vertex_attr_state
@@ -511,6 +513,8 @@ namespace GameEditor.Framework.Renderer.Server
             { buffer_index = 0, offset = 48, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT4 };
             desc.layout.attrs[PbrSkinning.ATTR_pbr_skinning_pbr_program_weights_0]  = new sg_vertex_attr_state
             { buffer_index = 0, offset = 64, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT4 };
+            desc.layout.attrs[PbrSkinning.ATTR_pbr_skinning_pbr_program_texcoord_1] = new sg_vertex_attr_state
+            { buffer_index = 0, offset = 80, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT2 };
 
             // Per-instance attributes (buffer slot 1) — InstanceData 80 B: mat4 model + vec4 custom.
             desc.layout.buffers[1].stride    = 80;
@@ -575,7 +579,7 @@ namespace GameEditor.Framework.Renderer.Server
                 label = "pbr-csm1-pip"
             };
 
-            desc.layout.buffers[0].stride = 48;
+            desc.layout.buffers[0].stride = 56;   // ObjVertex: pos+normal+uv0+tangent+uv1
             desc.layout.attrs[PbrCsm1.ATTR_pbr_csm1_pbr_program_position]   = new sg_vertex_attr_state
             { buffer_index = 0, offset =  0, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT3 };
             desc.layout.attrs[PbrCsm1.ATTR_pbr_csm1_pbr_program_normal]     = new sg_vertex_attr_state
@@ -584,6 +588,8 @@ namespace GameEditor.Framework.Renderer.Server
             { buffer_index = 0, offset = 24, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT2 };
             desc.layout.attrs[PbrCsm1.ATTR_pbr_csm1_pbr_program_tangent]    = new sg_vertex_attr_state
             { buffer_index = 0, offset = 32, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT4 };
+            desc.layout.attrs[PbrCsm1.ATTR_pbr_csm1_pbr_program_texcoord_1] = new sg_vertex_attr_state
+            { buffer_index = 0, offset = 48, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT2 };
 
             desc.layout.buffers[1].stride    = 80;
             desc.layout.buffers[1].step_func = sg_vertex_step.SG_VERTEXSTEP_PER_INSTANCE;
@@ -646,7 +652,7 @@ namespace GameEditor.Framework.Renderer.Server
                 label = "pbr-csm4-pip"
             };
 
-            desc.layout.buffers[0].stride = 48;
+            desc.layout.buffers[0].stride = 56;   // ObjVertex: pos+normal+uv0+tangent+uv1
             desc.layout.attrs[PbrCsm4.ATTR_pbr_csm4_pbr_program_position]   = new sg_vertex_attr_state
             { buffer_index = 0, offset =  0, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT3 };
             desc.layout.attrs[PbrCsm4.ATTR_pbr_csm4_pbr_program_normal]     = new sg_vertex_attr_state
@@ -655,6 +661,8 @@ namespace GameEditor.Framework.Renderer.Server
             { buffer_index = 0, offset = 24, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT2 };
             desc.layout.attrs[PbrCsm4.ATTR_pbr_csm4_pbr_program_tangent]    = new sg_vertex_attr_state
             { buffer_index = 0, offset = 32, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT4 };
+            desc.layout.attrs[PbrCsm4.ATTR_pbr_csm4_pbr_program_texcoord_1] = new sg_vertex_attr_state
+            { buffer_index = 0, offset = 48, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT2 };
 
             desc.layout.buffers[1].stride    = 80;
             desc.layout.buffers[1].step_func = sg_vertex_step.SG_VERTEXSTEP_PER_INSTANCE;
@@ -720,7 +728,7 @@ namespace GameEditor.Framework.Renderer.Server
                 label = "pbr-transmission-pip"
             };
 
-            desc.layout.buffers[0].stride = 48;
+            desc.layout.buffers[0].stride = 56;   // ObjVertex: pos+normal+uv0+tangent+uv1
             desc.layout.attrs[PbrTransmission.ATTR_pbr_transmission_pbr_program_position]   = new sg_vertex_attr_state
             { buffer_index = 0, offset =  0, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT3 };
             desc.layout.attrs[PbrTransmission.ATTR_pbr_transmission_pbr_program_normal]     = new sg_vertex_attr_state
@@ -729,6 +737,8 @@ namespace GameEditor.Framework.Renderer.Server
             { buffer_index = 0, offset = 24, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT2 };
             desc.layout.attrs[PbrTransmission.ATTR_pbr_transmission_pbr_program_tangent]    = new sg_vertex_attr_state
             { buffer_index = 0, offset = 32, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT4 };
+            desc.layout.attrs[PbrTransmission.ATTR_pbr_transmission_pbr_program_texcoord_1] = new sg_vertex_attr_state
+            { buffer_index = 0, offset = 48, format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT2 };
 
             desc.layout.buffers[1].stride    = 80;
             desc.layout.buffers[1].step_func = sg_vertex_step.SG_VERTEXSTEP_PER_INSTANCE;

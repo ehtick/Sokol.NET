@@ -97,6 +97,10 @@ namespace GameEditor.Framework.Renderer.Server.Materials
         // ── Index of refraction (KHR_materials_ior) ──────────────────────────────
         public float   Ior                  = 1.5f;
 
+        // ── Clearcoat (KHR_materials_clearcoat) — thin glossy coat (e.g. car paint) ──
+        public float   ClearcoatFactor      = 0f;
+        public float   ClearcoatRoughness   = 0f;
+
         // ── Convenience helpers ──────────────────────────────────────────────
         public bool HasBaseColorMap         => !string.IsNullOrEmpty(BaseColorMapPath);
         public bool HasMetallicRoughnessMap => !string.IsNullOrEmpty(MetallicRoughnessMapPath);

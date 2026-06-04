@@ -268,6 +268,8 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                 // identity bones, so one draw path covers skinning, morphing, and both — and their
                 // animated morph weights come from the shared CGltfAnimator. Their static 48 B
                 // registration is skipped so we don't create unused mesh GPU buffers.
+                // A mesh takes the skinned/morph path when some node references it WITH A SKIN or it has
+                // MORPH TARGETS. Static meshes in the same model are still built (BuildNodes runs too).
                 var charMeshPtrs = new HashSet<IntPtr>();
                 for (int ni = 0; ni < (int)_data->nodes_count; ni++)
                 {
@@ -282,10 +284,49 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                 // SkinnedCharacterRegistry ALWAYS — even in preload (_buildEntities == false) — so a
                 // cold scene reload repopulates the registry that the already-deserialized
                 // SkinnedMeshRenderer entities resolve against. Entity creation stays gated.
-                if (charMeshPtrs.Count > 0)
-                    return BuildSkinnedNodes(_buildEntities);
+                // Rigid/node animation clips for animated NON-joint nodes (skeleton joints are driven by
+                // CGltfAnimator, so exclude them). Runs for skinned models too — a mixed scene
+                // (e.g. LittleTokio) animates its static props via node TRS.
+                if (_data->animations_count > 0)
+                    BuildNodeAnimationClips(CollectJointNodeNames());
 
-                return _buildEntities ? BuildNodes(primKeysByMesh, primMatsByMesh) : (Entity?)null;
+                if (!_buildEntities)
+                {
+                    // Preload (scene reload): registries only — BuildSkinnedNodes repopulates
+                    // SkinnedCharacterRegistry; static meshes + node clips are already registered.
+                    if (charMeshPtrs.Count > 0) BuildSkinnedNodes(false, default);
+                    return null;
+                }
+
+                // Full import: ONE container; skinned/morph flat + static-mesh hierarchy + node anim.
+                string rootName = Path.GetFileNameWithoutExtension(_path);
+                Entity container = _world.CreateEntity(string.IsNullOrEmpty(rootName) ? "GltfModel" : rootName);
+
+                if (charMeshPtrs.Count > 0)
+                    BuildSkinnedNodes(true, container);
+
+                // Static meshes + transform hierarchy + NodeAnimationPlayer under the SAME container.
+                // ImportNode attaches MeshRenderer only to STATIC mesh nodes (skinned/morph nodes have
+                // empty primKeys), so a mixed model renders both. Pure-static models use only this walk.
+                BuildNodes(container, primKeysByMesh, primMatsByMesh);
+                return container;
+            }
+
+            // Names of every skeleton-joint node across all skins — these are driven by CGltfAnimator,
+            // so node animation must NOT also drive them (would double-apply / fight the skinning).
+            private HashSet<string> CollectJointNodeNames()
+            {
+                var joints = new HashSet<string>(StringComparer.Ordinal);
+                for (int si = 0; si < (int)_data->skins_count; si++)
+                {
+                    cgltf_skin* skin = &_data->skins[si];
+                    for (int ji = 0; ji < (int)skin->joints_count; ji++)
+                    {
+                        string? jn = PtrToStr(skin->joints[ji]->name);
+                        if (jn != null) joints.Add(jn);
+                    }
+                }
+                return joints;
             }
 
             // Registers every primitive as a MeshResource ("<file>#m{i}p{j}") and every material as a
@@ -342,15 +383,21 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                     primKeysByMesh[(IntPtr)mesh] = keys.ToArray();
                     primMatsByMesh[(IntPtr)mesh] = mats.ToArray();
                 }
+
+                // Rigid/node animation (e.g. ChronographWatch hands). Done here — in BOTH import and
+                // preload — so the NodeAnimationRegistry is repopulated on a cold scene reload, exactly
+                // like SkinnedCharacterRegistry. The call is in BuildScene (after this) so it can pass
+                // the skeleton joint names to exclude — runs for skinned models too (their rigid-
+                // animated static props, e.g. LittleTokio, still need node animation).
             }
 
-            // Builds the ECS node hierarchy under one container entity (full import only).
+            // Builds the ECS node hierarchy (Transform + parent for every node; MeshRenderer for STATIC
+            // mesh nodes; NodeAnimationPlayer for animated non-joint nodes) under the given container.
             private Entity BuildNodes(
+                Entity container,
                 Dictionary<IntPtr, string[]> primKeysByMesh, Dictionary<IntPtr, string[]> primMatsByMesh)
             {
                 cgltf_data* data = _data;
-                string rootName = Path.GetFileNameWithoutExtension(_path);
-                Entity container = _world.CreateEntity(string.IsNullOrEmpty(rootName) ? "GltfModel" : rootName);
 
                 if (data->scene != null)
                 {
@@ -376,34 +423,44 @@ namespace GameEditor.Framework.Renderer.Server.Assets
             // own transform is ignored (per the glTF skinning spec — the joints place the mesh); the
             // entity sits at identity under the container and the bone matrices (joint globals from
             // the scene root) do the placement.
-            private Entity? BuildSkinnedNodes(bool buildEntities)
+            private Entity? BuildSkinnedNodes(bool buildEntities, Entity container)
             {
                 cgltf_data* data = _data;
-                Entity container = default;
-                if (buildEntities)
+                int nSkins = (int)data->skins_count;
+                bool multiSkin = nSkins > 1;
+
+                // Character key per skin index (-1 = morph-only / no skin). Single-skin and pure-morph
+                // models keep the LEGACY key "<path>" (no saved-scene breakage); only multi-skin models
+                // (FishAndShark: fish + shark) split into "<path>#skin{i}" so each skin gets its OWN
+                // skeleton + animator + meshes. The draw path resolves SkinnedMeshRenderer.CharacterKey,
+                // so multiple characters per model are already supported.
+                string KeyFor(int si) => si < 0 ? (nSkins == 0 ? _path : $"{_path}#morph")
+                                                : (multiSkin ? $"{_path}#skin{si}" : _path);
+
+                // One extractor + registry Entry per character, created lazily (keyed by skin index).
+                var entries       = new Dictionary<int, SkinnedCharacterRegistry.Entry>();
+                var nodeIndexMaps = new Dictionary<int, Dictionary<string, int>>();
+                var runningPrims  = new Dictionary<int, int>();
+
+                SkinnedCharacterRegistry.Entry EnsureCharacter(int si)
                 {
-                    string rootName = Path.GetFileNameWithoutExtension(_path);
-                    container = _world.CreateEntity(string.IsNullOrEmpty(rootName) ? "GltfModel" : rootName);
+                    if (entries.TryGetValue(si, out var existing)) return existing;
+                    var ex = CGltfSkinExtractor.Extract(data, si);   // si < 0 → no-skin (morph/node) clips
+                    var ent = SkinnedCharacterRegistry.GetOrCreateFresh(KeyFor(si));
+                    ent.BoneCount = ex.BoneCount;
+                    ent.Animator  = ex.HasAnimations
+                        ? new CGltfAnimator(ex.Animations[0], ex.Nodes, ex.BoneCount, ex.BoneInfoMap)
+                        : null;
+                    var nim = new Dictionary<string, int>();
+                    foreach (var rn in ex.Nodes)
+                        if (!string.IsNullOrEmpty(rn.NodeName)) nim.TryAdd(rn.NodeName!, rn.NodeIndex);
+                    nodeIndexMaps[si] = nim;
+                    runningPrims[si]  = 0;
+                    entries[si]       = ent;
+                    return ent;
                 }
 
-                // Live GPU meshes + the shared animator persist in the registry (keyed by path) so
-                // the character survives scene save/load + the Play→Stop snapshot; the component
-                // stores only serializable keys.
-                var extractor = CGltfSkinExtractor.Extract(data);
-                var entry = SkinnedCharacterRegistry.GetOrCreateFresh(_path);
-                entry.BoneCount = extractor.BoneCount;
-                entry.Animator  = extractor.HasAnimations
-                    ? new CGltfAnimator(extractor.Animations[0], extractor.Nodes, extractor.BoneCount, extractor.BoneInfoMap)
-                    : null;
-
-                // node name → CGltfSkinExtractor node index. The animator keys animated morph weights by
-                // that DFS index, so each morphed primitive records its owning node's index for lookup.
-                var nodeNameToIndex = new Dictionary<string, int>();
-                foreach (var rn in extractor.Nodes)
-                    if (!string.IsNullOrEmpty(rn.NodeName))
-                        nodeNameToIndex.TryAdd(rn.NodeName!, rn.NodeIndex);
-
-                int runningPrim = 0;
+                int totalPrims = 0;
                 for (int ni = 0; ni < (int)data->nodes_count; ni++)
                 {
                     cgltf_node* node = &data->nodes[ni];
@@ -412,6 +469,9 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                     bool nodeMorphed = MeshHasMorphTargets(node->mesh);
                     if (!nodeSkinned && !nodeMorphed) continue;   // pure-static mesh on a character model — skip
                     string nodeName = PtrToStr(node->name) ?? "SkinnedMesh";
+                    int skinIdx = nodeSkinned ? (int)(node->skin - data->skins) : -1;
+                    var entry = EnsureCharacter(skinIdx);
+                    var nodeNameToIndex = nodeIndexMaps[skinIdx];
 
                     // Skinned meshes are placed by their joints (node transform ignored, per the glTF
                     // skinning spec). A morph-only mesh has no joints, so it is placed by the node's own
@@ -437,7 +497,8 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                         if (prim->type != cgltf_primitive_type.cgltf_primitive_type_triangles) continue;
                         if (!BuildSkinnedPrimitive(prim, out SkinnedVertex[] sverts, out uint[] sidx, out Aabb sbounds)) continue;
 
-                        int primIndex = runningPrim++;
+                        int primIndex = runningPrims[skinIdx]++;
+                        totalPrims++;
                         var skinnedMesh = SkinnedMesh.Create(sverts, sidx, in sbounds, $"{nodeName}_p{pi}");
 
                         // Morph targets: build the immutable displacement texture once; record the node
@@ -463,7 +524,7 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                         _world.AddComponent(e, nodeTransform);
                         _world.AddComponent(e, new SkinnedMeshRenderer
                         {
-                            CharacterKey    = _path,
+                            CharacterKey    = KeyFor(skinIdx),
                             PrimIndex       = primIndex,
                             MaterialKey     = matKey,
                             Visible         = true,
@@ -473,7 +534,7 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                     }
                 }
 
-                Logger.Info($"[glTF] character {(buildEntities ? "import" : "preload")} '{_path}': {extractor.BoneCount} bones, {extractor.Animations.Count} anim(s), {runningPrim} prim(s)");
+                Logger.Info($"[glTF] character {(buildEntities ? "import" : "preload")} '{_path}': {entries.Count} character(s), {totalPrims} prim(s)");
                 return buildEntities ? container : (Entity?)null;
             }
 
@@ -507,6 +568,12 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                 // Transform already exists (CreateEntity) → AddComponent overwrites with no structural
                 // change, so adding MeshRenderer afterwards is safe.
                 _world.AddComponent(entity, new Transform { Position = pos, Rotation = rot, Scale = scale, Parent = parent });
+
+                // Rigid/node animation: if this node has a registered TRS clip, drive its Transform.
+                // (Resolved by node name from NodeAnimationRegistry, populated in RegisterResources.)
+                var nodeClip = NodeAnimationRegistry.Resolve(_path, name);
+                if (nodeClip != null)
+                    _world.AddComponent(entity, new NodeAnimationPlayer { Clip = nodeClip, Time = 0f, Playing = true, Loop = true });
 
                 if (node->mesh != null && primKeysByMesh.TryGetValue((IntPtr)node->mesh, out var primKeys))
                 {
@@ -606,7 +673,153 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                                                         mat->volume.attenuation_color[1],
                                                         mat->volume.attenuation_color[2]);
                 }
+
+                // ── KHR_materials_clearcoat (thin glossy coat — e.g. car paint) ──
+                if (mat->has_clearcoat != 0)
+                {
+                    m.ClearcoatFactor    = mat->clearcoat.clearcoat_factor;
+                    m.ClearcoatRoughness = mat->clearcoat.clearcoat_roughness_factor;
+                }
+
+                // ── Per-texture coordinate set + KHR_texture_transform (offset/rotation/scale) ──
+                // The shader already selects v_TexCoord0/1 per texture (*_texcoord) and applies the
+                // transform (applyTextureTransform); these were dormant because the importer never
+                // filled them and every draw path hardcoded identity. (CarConcept tiles normal maps
+                // via large texture-transform scales — without this they sample wrong → "nasty spots".)
+                if (mat->has_pbr_metallic_roughness != 0)
+                {
+                    ref var pbr = ref mat->pbr_metallic_roughness;
+                    m.BaseColorTexcoord         = pbr.base_color_texture.texcoord;
+                    m.MetallicRoughnessTexcoord = pbr.metallic_roughness_texture.texcoord;
+                    ExtractTexTransform(pbr.base_color_texture,         ref m.BaseColorTexOffset,         ref m.BaseColorTexRotation,         ref m.BaseColorTexScale);
+                    ExtractTexTransform(pbr.metallic_roughness_texture, ref m.MetallicRoughnessTexOffset, ref m.MetallicRoughnessTexRotation, ref m.MetallicRoughnessTexScale);
+                }
+                m.NormalTexcoord    = mat->normal_texture.texcoord;
+                m.OcclusionTexcoord = mat->occlusion_texture.texcoord;
+                m.EmissiveTexcoord  = mat->emissive_texture.texcoord;
+                ExtractTexTransform(mat->normal_texture,    ref m.NormalTexOffset,    ref m.NormalTexRotation,    ref m.NormalTexScale);
+                ExtractTexTransform(mat->occlusion_texture, ref m.OcclusionTexOffset, ref m.OcclusionTexRotation, ref m.OcclusionTexScale);
+                ExtractTexTransform(mat->emissive_texture,  ref m.EmissiveTexOffset,  ref m.EmissiveTexRotation,  ref m.EmissiveTexScale);
+
                 return m;
+            }
+
+            // Ported from examples/CGltfViewer/Source/CGltfModel.cs (ExtractTexTransform). Reads a
+            // KHR_texture_transform off a texture view; leaves the identity defaults untouched if absent.
+            private static void ExtractTexTransform(cgltf_texture_view view,
+                ref Vector2 offset, ref float rotation, ref Vector2 scale)
+            {
+                if (view.has_transform == 0) return;
+                offset   = new Vector2(view.transform.offset[0], view.transform.offset[1]);
+                rotation = view.transform.rotation;
+                scale    = new Vector2(view.transform.scale[0],  view.transform.scale[1]);
+            }
+
+            // ── Node / rigid animation (e.g. ChronographWatch hands) ─────────────────────────────
+            // Collects every node-targeted TRS channel across all animations into one clip per node,
+            // then registers them in NodeAnimationRegistry keyed by node NAME (stable across loads;
+            // the cgltf_node* is freed after import, and the scene serializer round-trips the entity
+            // name). LINEAR/STEP keyframes are read directly; CUBICSPLINE tangents collapse to the
+            // keyframe value. Skeleton-joint channels are SKIPPED (jointNames) — those drive the
+            // CGltfAnimator; node animation only covers the rigid (non-joint) transform hierarchy.
+            private void BuildNodeAnimationClips(HashSet<string> jointNames)
+            {
+                var clips = new Dictionary<IntPtr, NodeAnimationClip>();
+                cgltf_data* data = _data;
+                for (int ai = 0; ai < (int)data->animations_count; ai++)
+                {
+                    cgltf_animation* anim = &data->animations[ai];
+                    for (int ci = 0; ci < (int)anim->channels_count; ci++)
+                    {
+                        cgltf_animation_channel* ch = &anim->channels[ci];
+                        if (ch->target_node == null || ch->sampler == null) continue;
+                        // Skip skeleton joints — the skinned animator owns those.
+                        string? tn0 = PtrToStr(ch->target_node->name);
+                        if (tn0 != null && jointNames.Contains(tn0)) continue;
+                        var path = ch->target_path;
+                        bool isT = path == cgltf_animation_path_type.cgltf_animation_path_type_translation;
+                        bool isR = path == cgltf_animation_path_type.cgltf_animation_path_type_rotation;
+                        bool isS = path == cgltf_animation_path_type.cgltf_animation_path_type_scale;
+                        if (!isT && !isR && !isS) continue;   // weights/pointer channels not handled here
+
+                        cgltf_animation_sampler* samp = ch->sampler;
+                        if (samp->input == null || samp->output == null) continue;
+                        int nKeys = (int)samp->input->count;
+                        if (nKeys == 0) continue;
+                        bool step  = samp->interpolation == cgltf_interpolation_type.cgltf_interpolation_type_step;
+                        bool cubic = samp->interpolation == cgltf_interpolation_type.cgltf_interpolation_type_cubic_spline;
+
+                        float[] times = UnpackFloats(samp->input, nKeys);
+
+                        IntPtr nodeKey = (IntPtr)ch->target_node;
+                        if (!clips.TryGetValue(nodeKey, out var clip))
+                        {
+                            clip = new NodeAnimationClip();
+                            SetBaseTrs(ch->target_node, clip);
+                            clips[nodeKey] = clip;
+                        }
+
+                        int comp = isR ? 4 : 3;
+                        int groups = cubic ? nKeys * 3 : nKeys;
+                        float[] raw = UnpackFloats(samp->output, groups * comp);
+
+                        if (isR)
+                        {
+                            var vals = new Quaternion[nKeys];
+                            for (int i = 0; i < nKeys; i++)
+                            {
+                                int g = cubic ? (i * 3 + 1) : i;   // middle of in/value/out triple
+                                vals[i] = new Quaternion(raw[g * 4], raw[g * 4 + 1], raw[g * 4 + 2], raw[g * 4 + 3]);
+                            }
+                            clip.RotTimes = times; clip.RotVals = vals; clip.RotStep = step;
+                        }
+                        else
+                        {
+                            var vals = new Vector3[nKeys];
+                            for (int i = 0; i < nKeys; i++)
+                            {
+                                int g = cubic ? (i * 3 + 1) : i;
+                                vals[i] = new Vector3(raw[g * 3], raw[g * 3 + 1], raw[g * 3 + 2]);
+                            }
+                            if (isT) { clip.TransTimes = times; clip.TransVals = vals; clip.TransStep = step; }
+                            else     { clip.ScaleTimes = times; clip.ScaleVals = vals; clip.ScaleStep = step; }
+                        }
+
+                        if (nKeys > 0 && times[nKeys - 1] > clip.Duration) clip.Duration = times[nKeys - 1];
+                    }
+                }
+
+                // Map node-ptr → node NAME (matching ImportNode's naming) and register by name so a
+                // deserialized scene entity can re-resolve its clip.
+                var byName = new Dictionary<string, NodeAnimationClip>(StringComparer.Ordinal);
+                for (int ni = 0; ni < (int)data->nodes_count; ni++)
+                {
+                    cgltf_node* n = &data->nodes[ni];
+                    if (clips.TryGetValue((IntPtr)n, out var clip))
+                        byName[PtrToStr(n->name) ?? "Node"] = clip;
+                }
+                NodeAnimationRegistry.Register(_path, byName);
+            }
+
+            // Node bind TRS — used as the fallback for channels a clip does not animate.
+            private static void SetBaseTrs(cgltf_node* node, NodeAnimationClip clip)
+            {
+                if (node->has_matrix != 0)
+                {
+                    var m = new Matrix4x4(
+                        node->matrix[0],  node->matrix[1],  node->matrix[2],  node->matrix[3],
+                        node->matrix[4],  node->matrix[5],  node->matrix[6],  node->matrix[7],
+                        node->matrix[8],  node->matrix[9],  node->matrix[10], node->matrix[11],
+                        node->matrix[12], node->matrix[13], node->matrix[14], node->matrix[15]);
+                    Matrix4x4.Decompose(m, out var s, out var r, out var t);
+                    clip.BaseTranslation = t; clip.BaseRotation = r; clip.BaseScale = s;
+                }
+                else
+                {
+                    if (node->has_translation != 0) clip.BaseTranslation = new Vector3(node->translation[0], node->translation[1], node->translation[2]);
+                    if (node->has_rotation    != 0) clip.BaseRotation    = new Quaternion(node->rotation[0], node->rotation[1], node->rotation[2], node->rotation[3]);
+                    if (node->has_scale       != 0) clip.BaseScale       = new Vector3(node->scale[0], node->scale[1], node->scale[2]);
+                }
             }
 
             // Decodes the texture referenced by <paramref name="view"/> — from its embedded buffer
@@ -647,7 +860,7 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                 indices  = Array.Empty<uint>();
                 bounds   = default;
 
-                cgltf_accessor* posAcc = null, normAcc = null, tanAcc = null, tc0Acc = null;
+                cgltf_accessor* posAcc = null, normAcc = null, tanAcc = null, tc0Acc = null, tc1Acc = null;
                 for (int ai = 0; ai < (int)prim->attributes_count; ai++)
                 {
                     cgltf_attribute* a = &prim->attributes[ai];
@@ -657,7 +870,8 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                         case cgltf_attribute_type.cgltf_attribute_type_normal:   normAcc = a->data; break;
                         case cgltf_attribute_type.cgltf_attribute_type_tangent:  tanAcc  = a->data; break;
                         case cgltf_attribute_type.cgltf_attribute_type_texcoord:
-                            if (a->index == 0) tc0Acc = a->data;
+                            if      (a->index == 0) tc0Acc = a->data;
+                            else if (a->index == 1) tc1Acc = a->data;
                             break;
                     }
                 }
@@ -670,6 +884,7 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                 float[] normData = normAcc != null ? UnpackFloats(normAcc, vc * 3) : Array.Empty<float>();
                 float[] tanData  = tanAcc  != null ? UnpackFloats(tanAcc,  vc * 4) : Array.Empty<float>();
                 float[] tc0Data  = tc0Acc  != null ? UnpackFloats(tc0Acc,  vc * 2) : Array.Empty<float>();
+                float[] tc1Data  = tc1Acc  != null ? UnpackFloats(tc1Acc,  vc * 2) : Array.Empty<float>();
 
                 uint[] idx;
                 if (prim->indices != null)
@@ -701,6 +916,7 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                         Normal   = normData.Length > 0 ? new Vector3(normData[i * 3], normData[i * 3 + 1], normData[i * 3 + 2]) : Vector3.UnitY,
                         Uv       = tc0Data.Length  > 0 ? new Vector2(tc0Data[i * 2], tc0Data[i * 2 + 1]) : Vector2.Zero,
                         Tangent  = tanData.Length  > 0 ? new Vector4(tanData[i * 4], tanData[i * 4 + 1], tanData[i * 4 + 2], tanData[i * 4 + 3]) : new Vector4(1f, 0f, 0f, 1f),
+                        Uv1      = tc1Data.Length  > 0 ? new Vector2(tc1Data[i * 2], tc1Data[i * 2 + 1]) : Vector2.Zero,
                     };
                     bmin = Vector3.Min(bmin, p);
                     bmax = Vector3.Max(bmax, p);
@@ -719,7 +935,7 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                 indices  = Array.Empty<uint>();
                 bounds   = default;
 
-                cgltf_accessor* posAcc = null, normAcc = null, tanAcc = null, tc0Acc = null, jntAcc = null, wgtAcc = null;
+                cgltf_accessor* posAcc = null, normAcc = null, tanAcc = null, tc0Acc = null, tc1Acc = null, jntAcc = null, wgtAcc = null;
                 for (int ai = 0; ai < (int)prim->attributes_count; ai++)
                 {
                     cgltf_attribute* a = &prim->attributes[ai];
@@ -728,7 +944,10 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                         case cgltf_attribute_type.cgltf_attribute_type_position: posAcc  = a->data; break;
                         case cgltf_attribute_type.cgltf_attribute_type_normal:   normAcc = a->data; break;
                         case cgltf_attribute_type.cgltf_attribute_type_tangent:  tanAcc  = a->data; break;
-                        case cgltf_attribute_type.cgltf_attribute_type_texcoord: if (a->index == 0) tc0Acc = a->data; break;
+                        case cgltf_attribute_type.cgltf_attribute_type_texcoord:
+                            if      (a->index == 0) tc0Acc = a->data;
+                            else if (a->index == 1) tc1Acc = a->data;
+                            break;
                         case cgltf_attribute_type.cgltf_attribute_type_joints:   if (a->index == 0) jntAcc = a->data; break;
                         case cgltf_attribute_type.cgltf_attribute_type_weights:  if (a->index == 0) wgtAcc = a->data; break;
                     }
@@ -742,6 +961,7 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                 float[] normData = normAcc != null ? UnpackFloats(normAcc, vc * 3) : Array.Empty<float>();
                 float[] tanData  = tanAcc  != null ? UnpackFloats(tanAcc,  vc * 4) : Array.Empty<float>();
                 float[] tc0Data  = tc0Acc  != null ? UnpackFloats(tc0Acc,  vc * 2) : Array.Empty<float>();
+                float[] tc1Data  = tc1Acc  != null ? UnpackFloats(tc1Acc,  vc * 2) : Array.Empty<float>();
                 float[] jntData  = jntAcc  != null ? UnpackFloats(jntAcc,  vc * 4) : Array.Empty<float>();
                 float[] wgtData  = wgtAcc  != null ? UnpackFloats(wgtAcc,  vc * 4) : Array.Empty<float>();
 
@@ -776,6 +996,7 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                         Tangent  = tanData.Length  > 0 ? new Vector4(tanData[i * 4], tanData[i * 4 + 1], tanData[i * 4 + 2], tanData[i * 4 + 3]) : new Vector4(1f, 0f, 0f, 1f),
                         Joints   = jntData.Length  > 0 ? new Vector4(jntData[i * 4], jntData[i * 4 + 1], jntData[i * 4 + 2], jntData[i * 4 + 3]) : Vector4.Zero,
                         Weights  = wgtData.Length  > 0 ? new Vector4(wgtData[i * 4], wgtData[i * 4 + 1], wgtData[i * 4 + 2], wgtData[i * 4 + 3]) : new Vector4(1f, 0f, 0f, 0f),
+                        Uv1      = tc1Data.Length  > 0 ? new Vector2(tc1Data[i * 2], tc1Data[i * 2 + 1]) : Vector2.Zero,
                     };
                     bmin = Vector3.Min(bmin, p);
                     bmax = Vector3.Max(bmax, p);
