@@ -29,6 +29,7 @@ using PbrSkinCsm1 = pbr_skinning_csm1_shader_cs_pbr_skinning_csm1;
 using PbrSkinMorph = pbr_skinning_morphing_shader_cs_pbr_skinning_morphing;
 using PbrSkinMorphCsm1 = pbr_skinning_morphing_csm1_shader_cs_pbr_skinning_morphing_csm1;
 using PbrSkinMorphCsm4 = pbr_skinning_morphing_csm4_shader_cs_pbr_skinning_morphing_csm4;
+using PbrTx = pbr_transmission_shader_cs_pbr_transmission.Shaders;
 using GameEditor.Framework.Core;
 using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
@@ -64,6 +65,20 @@ namespace GameEditor.Framework.Renderer.Server
         {
             BaseColorFactor = Vector4.One, MetallicFactor = 0f, RoughnessFactor = 0.8f,
         };
+        // Transmission (KHR_materials_transmission): glass-type materials are deferred out of the
+        // opaque/transparent queue during SubmitView and drawn afterwards in RenderTransmission, which
+        // captures the opaque scene into _screenCopy* and refracts it. Static-mesh only for now.
+        private static readonly InstanceBuffer _transmissionInstanceBuf = new(256);
+        private static readonly System.Collections.Generic.List<(Matrix4x4 model, Resources.MeshResource mesh, Materials.PbrMaterial mat)> _transmissionDraws = new();
+        private static readonly ScreenCopyPass _screenCopyPass = new();
+        private static sg_image _screenCopyImg;
+        private static sg_view  _screenCopyAttView;   // color-attachment view (blit target)
+        private static sg_view  _screenCopyTexView;   // texture view (sampled in the refraction shader)
+        private static sg_sampler _screenSampler;     // linear / clamp-to-edge for refraction sampling
+        private static int _screenCopyW, _screenCopyH;
+        // Cap so a pathological scene can't unbounded-grow the deferred list; glass is rare.
+        private const int TransmissionDrawCap = 256;
+
         private static readonly ShaderVariantCache _shaderCache = new();
         private static readonly ShadowAtlas        _shadowAtlas = new();
         private static readonly CubeShadowArray    _cubeShadows = new();
@@ -239,6 +254,15 @@ namespace GameEditor.Framework.Renderer.Server
             _shadowDebugPass.Init();
             _tonemapPass.Init();
             _skyboxPass.Init();
+            _screenCopyPass.Init();
+            _screenSampler = sg_make_sampler(new sg_sampler_desc
+            {
+                min_filter = sg_filter.SG_FILTER_LINEAR,
+                mag_filter = sg_filter.SG_FILTER_LINEAR,
+                wrap_u = sg_wrap.SG_WRAP_CLAMP_TO_EDGE,
+                wrap_v = sg_wrap.SG_WRAP_CLAMP_TO_EDGE,
+                label = "transmission-screen-sampler"
+            });
             _shadowSampler = sg_make_sampler(new sg_sampler_desc
             {
                 min_filter = sg_filter.SG_FILTER_NEAREST,
@@ -280,6 +304,10 @@ namespace GameEditor.Framework.Renderer.Server
             EventBus.EntityDestroyed -= ForgetEntity;
             _initialized = false;
             _instanceBuf.Dispose();
+            _transmissionInstanceBuf.Dispose();
+            _screenCopyPass.Shutdown();
+            DestroyScreenCopy();
+            if (_screenSampler.id != 0) { sg_destroy_sampler(_screenSampler); _screenSampler = default; }
             _matReg.Shutdown();
             _meshReg.Shutdown();
             _texCache.Shutdown();
@@ -362,6 +390,7 @@ namespace GameEditor.Framework.Renderer.Server
             if (!_initialized) return;
             _instanceBuf.BeginFrame();
             _skinnedInstanceBuf.BeginFrame();
+            _transmissionInstanceBuf.BeginFrame();
             _animationFrame++;
             _lightBuf.Reset();
             _stats.Reset();
@@ -396,6 +425,55 @@ namespace GameEditor.Framework.Renderer.Server
         {
             if (!_initialized) return;
             _tonemapPass.Render(hdrColorView, exposure, tonemapType);
+        }
+
+        /// <summary>
+        /// Blits a single-sampled scene texture into the active SWAPCHAIN pass (fullscreen copy,
+        /// swapchain-format pipeline). For standalone apps that render the 3D scene to an offscreen
+        /// target — required so the transmission/refraction pass can run (it samples a copy of the
+        /// opaque scene, which the swapchain backbuffer cannot provide). Call inside the swapchain
+        /// <c>sg_begin_pass / sg_end_pass</c>; draw 2D/UI overlays after it.
+        /// </summary>
+        public static void BlitToSwapchain(sg_view sceneColorView)
+        {
+            if (!_initialized) return;
+            _screenCopyPass.RenderToSwapchain(sceneColorView);
+        }
+
+        /// <summary>
+        /// True when an <b>active and visible</b> mesh actually uses a transmissive
+        /// (KHR_materials_transmission) material this frame — i.e. the screen-space refraction path is
+        /// needed. A standalone host renders straight to the swapchain (cheapest) when false, and only
+        /// switches to the offscreen-target + <see cref="RenderTransmission"/> + <see cref="BlitToSwapchain"/>
+        /// path when true, avoiding a redundant full-screen copy on transmission-free frames (mobile win).
+        /// <para>
+        /// Mirrors <see cref="SubmitView"/>'s per-entity gating (Active + Visible + transmissive material),
+        /// so disabling/hiding every glass object correctly flips this to false. The cheap
+        /// <see cref="MaterialRegistry.AnyTransmissive"/> registry check is a fast-out: projects with no
+        /// transmissive material registered at all skip the per-entity scan entirely.
+        /// </para>
+        /// </summary>
+        public static bool SceneNeedsTransmission
+        {
+            get
+            {
+                if (!_initialized || !_matReg.AnyTransmissive) return false;
+                var world = ECSWorld.Instance;
+                foreach (var row in world.Query<ActiveFlag, MeshRenderer, Transform>()
+                                         .Enumerate<ActiveFlag, MeshRenderer, Transform>())
+                {
+                    if (!row.Item1.Value.Active) continue;
+                    ref readonly var mr = ref row.Item2.Value;
+                    if (!mr.Visible) continue;
+                    if (string.IsNullOrEmpty(mr.MaterialPath) ||
+                        string.Equals(mr.MaterialPath, MeshRenderer.NoMaterialSentinel, StringComparison.Ordinal))
+                        continue;
+                    ushort matId = _matReg.GetIdByKey(mr.MaterialPath);
+                    if (matId == 0) matId = _matReg.GetFirstIdByMtlFile(mr.MaterialPath);
+                    if (_matReg.GetById(matId) is PbrMaterial { IsTransmissive: true }) return true;
+                }
+                return false;
+            }
         }
 
         /// <summary>When true, <see cref="RenderSkybox"/> draws the IBL environment cubemap.</summary>
@@ -492,6 +570,10 @@ namespace GameEditor.Framework.Renderer.Server
             if (!_initialized) return;
             var world = ECSWorld.Instance;
 
+            // Per-view: deferred transmission (refractive) draws are collected during extraction
+            // below and consumed by RenderTransmission after this view's opaque pass ends.
+            _transmissionDraws.Clear();
+
             // Camera position is required for light importance ranking.
             Matrix4x4.Invert(viewProj, out var invVP);
             var cameraPos = new Vector3(invVP.M41, invVP.M42, invVP.M43);
@@ -555,6 +637,17 @@ namespace GameEditor.Framework.Renderer.Server
                 Aabb worldAabb      = meshRes.LocalBounds.Transform(model);
                 float worldRadius   = worldAabb.Extents.Length();
                 float dist          = Vector3.Distance(cameraPos, worldAabb.Center);
+
+                // ── Transmission (screen-space refraction) ──────────────────────────────────
+                // Glass-type materials are pulled out of the opaque/transparent queue entirely and
+                // drawn in RenderTransmission (it samples a copy of the opaque scene). Base mesh only
+                // (no LOD/instancing — glass is rare). Skinned/morph transmission is not yet wired.
+                if (matId != 0 && _matReg.GetById(matId) is PbrMaterial { IsTransmissive: true } txMat)
+                {
+                    if (_transmissionDraws.Count < TransmissionDrawCap)
+                        _transmissionDraws.Add((model, meshRes, txMat));
+                    continue;
+                }
 
                 // ── LOD selection ─────────────────────────────────────────────────────────
                 Entity entity = row.Entity;
@@ -1328,6 +1421,266 @@ namespace GameEditor.Framework.Renderer.Server
                 });
 
                 sg_draw(0u, (uint)sub.IndexCount, (uint)groupSize);
+                _stats.DrawCalls++;
+            }
+        }
+
+        // ── Transmission (KHR_materials_transmission) — screen-space refraction ─────────────
+        // Glass-type surfaces refract the background. Because a shader cannot sample the colour
+        // attachment it is drawing into, RenderTransmission runs AFTER the host's opaque pass has
+        // ended: it (1) blits the opaque scene into a sampleable screen-copy texture, then
+        // (2) re-opens the same target (LOAD colour + depth) and draws the deferred refractive
+        // surfaces, which sample the copy along the refracted ray (pbr.glsl getTransmissionIBL).
+        // Editor/offscreen only; standalone (swapchain) transmission is deferred.
+
+        private static void EnsureScreenCopy(int w, int h)
+        {
+            if (_screenCopyImg.id != 0 && _screenCopyW == w && _screenCopyH == h) return;
+            DestroyScreenCopy();
+            _screenCopyW = w; _screenCopyH = h;
+            _screenCopyImg = sg_make_image(new sg_image_desc
+            {
+                width = w, height = h,
+                pixel_format = sg_pixel_format.SG_PIXELFORMAT_RGBA8,
+                // Pinned to 1 (see OffscreenTarget): a render-target image otherwise inherits the
+                // swapchain sample count, mismatching the single-sampled screen-copy blit pipeline.
+                sample_count = 1,
+                usage = { color_attachment = true },
+                label = "transmission-screen-copy"
+            });
+            _screenCopyAttView = sg_make_view(new sg_view_desc
+            {
+                color_attachment = new sg_image_view_desc { image = _screenCopyImg },
+                label = "transmission-screen-copy-att"
+            });
+            _screenCopyTexView = sg_make_view(new sg_view_desc
+            {
+                texture = new sg_texture_view_desc { image = _screenCopyImg },
+                label = "transmission-screen-copy-tex"
+            });
+        }
+
+        private static void DestroyScreenCopy()
+        {
+            if (_screenCopyTexView.id != 0) { sg_destroy_view(_screenCopyTexView); _screenCopyTexView = default; }
+            if (_screenCopyAttView.id != 0) { sg_destroy_view(_screenCopyAttView); _screenCopyAttView = default; }
+            if (_screenCopyImg.id     != 0) { sg_destroy_image(_screenCopyImg);    _screenCopyImg     = default; }
+            _screenCopyW = _screenCopyH = 0;
+        }
+
+        /// <summary>
+        /// Draws the refractive (KHR_materials_transmission) surfaces deferred by the most recent
+        /// <see cref="SubmitView"/> for <paramref name="target"/>. Must be called AFTER that view's
+        /// opaque <c>sg_end_pass()</c> and OUTSIDE any active pass (it opens its own passes).
+        /// No-op when the view had no transmissive materials.
+        /// </summary>
+        public static void RenderTransmission(OffscreenTarget target, in Matrix4x4 viewProj)
+        {
+            if (!_initialized || _transmissionDraws.Count == 0 || !target.IsValid) return;
+
+            int w = target.Width, h = target.Height;
+            EnsureScreenCopy(w, h);
+
+            // One model matrix (1 instance) per transmission draw → the dedicated instance buffer.
+            _transmissionInstanceBuf.ResetStaging();
+            int staged = 0;
+            for (int k = 0; k < _transmissionDraws.Count; k++)
+            {
+                var model = _transmissionDraws[k].model;
+                if (!_transmissionInstanceBuf.TryAppend(new InstanceData(in model, new Vector4(1f, 1f, 1f, 0f))))
+                    break;
+                staged++;
+            }
+            if (staged == 0) return;
+            int baseOff = _transmissionInstanceBuf.Flush();
+
+            // 1) Snapshot the opaque scene into the sampleable screen-copy (its own pass).
+            var copyPass = new sg_pass
+            {
+                attachments = { colors = { [0] = _screenCopyAttView } },
+                action = { colors = { [0] = new sg_color_attachment_action
+                {
+                    load_action  = sg_load_action.SG_LOADACTION_DONTCARE,
+                    store_action = sg_store_action.SG_STOREACTION_STORE
+                } } },
+                label = "transmission-screen-copy-pass"
+            };
+            sg_begin_pass(copyPass);
+            _screenCopyPass.Render(target.TexView);
+            sg_end_pass();
+
+            // 2) Transmission pass: re-open the scene target preserving opaque colour + depth.
+            Matrix4x4.Invert(viewProj, out var invVP);
+            var cameraPos = new Vector3(invVP.M41, invVP.M42, invVP.M43);
+            BuildPbrSharedUniforms(in viewProj, cameraPos, out var vs, out var lights, out var cam, out _);
+
+            var txPass = new sg_pass
+            {
+                attachments = { colors = { [0] = target.ColorAttView }, depth_stencil = target.DepthAttView },
+                action =
+                {
+                    colors = { [0] = new sg_color_attachment_action
+                    {
+                        load_action  = sg_load_action.SG_LOADACTION_LOAD,
+                        store_action = sg_store_action.SG_STOREACTION_STORE
+                    } },
+                    depth = new sg_depth_attachment_action
+                    {
+                        load_action  = sg_load_action.SG_LOADACTION_LOAD,
+                        store_action = sg_store_action.SG_STOREACTION_DONTCARE
+                    }
+                },
+                label = "transmission-pass"
+            };
+            sg_begin_pass(txPass);
+            int stride = Unsafe.SizeOf<InstanceData>();
+            for (int k = 0; k < staged; k++)
+            {
+                var (model, mesh, mat) = _transmissionDraws[k];
+                DrawPbrTransmissionGroup(mat, mesh, baseOff + k * stride, in model, in viewProj,
+                    cameraPos, w, h, in vs, in lights, in cam);
+            }
+            sg_end_pass();
+        }
+
+        /// <summary>
+        /// Draws one refractive surface through the <c>pbr_transmission</c> variant. Reuses the
+        /// view-constant VS/light/camera blocks built for the base PBR path (identical layouts —
+        /// the transmission variant shares the same uniform-block source with no CSM/skinning),
+        /// and binds the captured screen copy as the transmission framebuffer (binding 10).
+        /// </summary>
+        private static void DrawPbrTransmissionGroup(
+            PbrMaterial mat, MeshResource mesh, int instanceByteOffset,
+            in Matrix4x4 model, in Matrix4x4 viewProj, Vector3 cameraPos, int fbW, int fbH,
+            in pbr_pbr_vs_params_t vs,
+            in pbr_pbr_light_params_t lights,
+            in pbr_pbr_camera_params_t cam)
+        {
+            // Editor renders to an offscreen RT; standalone (swapchain) transmission is deferred.
+            PipelineFlags pf = PipelineFlags.OffscreenRt;
+            if (mat.DoubleSided) pf |= PipelineFlags.DoubleSided;
+            sg_apply_pipeline(_shaderCache.GetPbrTransmissionPipeline(pf));
+
+            bool iblActive = _environment is { IsLoaded: true };
+
+            var matParams = new PbrTx.pbr_transmission_pbr_material_params_t
+            {
+                base_color_factor          = mat.BaseColorFactor,
+                emissive_factor            = mat.EmissiveFactor,
+                metallic_factor            = mat.MetallicFactor,
+                roughness_factor           = mat.RoughnessFactor,
+                has_base_color_tex         = mat.BaseColorMap.id         != 0 ? 1f : 0f,
+                has_metallic_roughness_tex = mat.MetallicRoughnessMap.id != 0 ? 1f : 0f,
+                has_normal_tex             = mat.NormalMap.id            != 0 ? 1f : 0f,
+                has_occlusion_tex          = mat.OcclusionMap.id         != 0 ? 1f : 0f,
+                has_emissive_tex           = mat.EmissiveMap.id          != 0 ? 1f : 0f,
+                alpha_cutoff               = mat.AlphaCutoff,
+                emissive_strength          = mat.EmissiveStrength,
+                occlusion_strength         = mat.OcclusionStrength,
+                normal_map_scale           = mat.NormalMapScale,
+                base_color_tex_scale         = Vector2.One,
+                metallic_roughness_tex_scale = Vector2.One,
+                normal_tex_scale             = Vector2.One,
+                occlusion_tex_scale          = Vector2.One,
+                emissive_tex_scale           = Vector2.One,
+                thickness_tex_scale          = Vector2.One,
+                // KHR transmission / volume / ior
+                transmission_factor   = mat.TransmissionFactor,
+                has_transmission_tex  = mat.TransmissionMap.id != 0 ? 1f : 0f,
+                transmission_texcoord = mat.TransmissionTexcoord,
+                ior                   = mat.Ior,
+                attenuation_color     = mat.AttenuationColor,
+                attenuation_distance  = mat.AttenuationDistance,
+                thickness_factor      = mat.ThicknessFactor,
+                has_thickness_tex     = 0f,   // factor-only; thickness-texture path not wired
+                thickness_tex_index   = 0f,
+                debug_view_enabled    = PbrDebugViewMode != 0 ? 1f : 0f,
+                debug_view_mode       = PbrDebugViewMode,
+                shadow_ambient_weight = ShadowAmbientWeight,
+            };
+
+            var ibl = new PbrTx.pbr_transmission_pbr_ibl_params_t
+            {
+                u_EnvIntensity      = iblActive ? _environment!.Intensity : 1f,
+                u_EnvBlurNormalized = 0f,
+                u_MipCount          = iblActive ? _environment!.MipCount : 1,
+                u_EnvRotation       = iblActive ? _environment!.Rotation : Matrix4x4.Identity,
+                // getTransmissionIBL uses only the product (Proj*View) to reproject the ray exit
+                // point to NDC, so folding the full viewProj into u_ViewMatrix with identity proj
+                // is correct and avoids splitting view/proj at the call site.
+                u_ViewMatrix        = viewProj,
+                u_ProjectionMatrix  = Matrix4x4.Identity,
+                u_ModelMatrix       = model,
+            };
+            ibl.u_TransmissionFramebufferSize[0] = fbW;
+            ibl.u_TransmissionFramebufferSize[1] = fbH;
+
+            var flags = new PbrTx.pbr_transmission_pbr_rendering_flags_t
+            {
+                use_ibl             = iblActive ? 1 : 0,
+                use_punctual_lights = 1,
+                alphamode           = mat.AlphaMode,
+                linear_output       = 0,
+                ambient_strength    = 0.4f,
+            };
+
+            sg_apply_uniforms(PbrTx.UB_pbr_transmission_pbr_vs_params,       SG_RANGE(ref Unsafe.AsRef(in vs)));
+            sg_apply_uniforms(PbrTx.UB_pbr_transmission_pbr_material_params, SG_RANGE(ref matParams));
+            sg_apply_uniforms(PbrTx.UB_pbr_transmission_pbr_light_params,    SG_RANGE(ref Unsafe.AsRef(in lights)));
+            sg_apply_uniforms(PbrTx.UB_pbr_transmission_pbr_ibl_params,      SG_RANGE(ref ibl));
+            sg_apply_uniforms(PbrTx.UB_pbr_transmission_pbr_camera_params,   SG_RANGE(ref Unsafe.AsRef(in cam)));
+            sg_apply_uniforms(PbrTx.UB_pbr_transmission_pbr_rendering_flags, SG_RANGE(ref flags));
+
+            sg_view baseColor = mat.BaseColorMap.id         != 0 ? mat.BaseColorMap         : _texCache.PlaceholderWhite;
+            sg_view metalRgh  = mat.MetallicRoughnessMap.id != 0 ? mat.MetallicRoughnessMap : _texCache.PlaceholderWhite;
+            sg_view normalMap = mat.NormalMap.id            != 0 ? mat.NormalMap            : _texCache.PlaceholderNormal;
+            sg_view occlusion = mat.OcclusionMap.id         != 0 ? mat.OcclusionMap         : _texCache.PlaceholderWhite;
+            sg_view emissive  = mat.EmissiveMap.id          != 0 ? mat.EmissiveMap          : _texCache.PlaceholderBlack;
+            sg_view ggxEnv    = iblActive ? _environment!.SpecularCubeView : _texCache.PlaceholderCube;
+            sg_view lambEnv   = iblActive ? _environment!.DiffuseCubeView  : _texCache.PlaceholderCube;
+            sg_view lut       = iblActive ? _environment!.GgxLutView        : _texCache.PlaceholderWhite;
+            sg_view transTex  = mat.TransmissionMap.id != 0 ? mat.TransmissionMap : _texCache.PlaceholderWhite;
+            sg_sampler matSmp  = mat.Sampler.id != 0 ? mat.Sampler : _texCache.DefaultSampler;
+            sg_sampler cubeSmp = iblActive ? _environment!.CubeSampler : _texCache.DefaultSampler;
+            sg_sampler lutSmp  = iblActive ? _environment!.LutSampler  : _texCache.DefaultSampler;
+
+            foreach (MeshSubResource sub in mesh.SubMeshes)
+            {
+                if (sub.IndexCount == 0 || sub.VertexBuffer.id == 0 || sub.IndexBuffer.id == 0)
+                    continue;
+
+                sg_apply_bindings(new sg_bindings
+                {
+                    vertex_buffers        = { [0] = sub.VertexBuffer, [1] = _transmissionInstanceBuf.Buffer },
+                    vertex_buffer_offsets = { [1] = instanceByteOffset },
+                    index_buffer          = sub.IndexBuffer,
+                    views = {
+                        [PbrTx.VIEW_pbr_transmission_u_BaseColorTexture]               = baseColor,
+                        [PbrTx.VIEW_pbr_transmission_u_MetallicRoughnessTexture]       = metalRgh,
+                        [PbrTx.VIEW_pbr_transmission_u_NormalTexture]                  = normalMap,
+                        [PbrTx.VIEW_pbr_transmission_u_OcclusionTexture]               = occlusion,
+                        [PbrTx.VIEW_pbr_transmission_u_EmissiveTexture]                = emissive,
+                        [PbrTx.VIEW_pbr_transmission_u_GGXEnvTexture]                  = ggxEnv,
+                        [PbrTx.VIEW_pbr_transmission_u_LambertianEnvTexture]           = lambEnv,
+                        [PbrTx.VIEW_pbr_transmission_u_GGXLUTTexture]                  = lut,
+                        [PbrTx.VIEW_pbr_transmission_u_TransmissionTexture]            = transTex,
+                        [PbrTx.VIEW_pbr_transmission_u_TransmissionFramebufferTexture] = _screenCopyTexView,
+                    },
+                    samplers = {
+                        [PbrTx.SMP_pbr_transmission_u_BaseColorSampler]                   = matSmp,
+                        [PbrTx.SMP_pbr_transmission_u_MetallicRoughnessSampler]           = matSmp,
+                        [PbrTx.SMP_pbr_transmission_u_NormalSampler]                      = matSmp,
+                        [PbrTx.SMP_pbr_transmission_u_OcclusionSampler]                   = matSmp,
+                        [PbrTx.SMP_pbr_transmission_u_EmissiveSampler]                    = matSmp,
+                        [PbrTx.SMP_pbr_transmission_u_GGXEnvSampler_Raw]                  = cubeSmp,
+                        [PbrTx.SMP_pbr_transmission_u_LambertianEnvSampler_Raw]           = cubeSmp,
+                        [PbrTx.SMP_pbr_transmission_u_GGXLUTSampler_Raw]                  = lutSmp,
+                        [PbrTx.SMP_pbr_transmission_u_TransmissionSampler_Raw]            = matSmp,
+                        [PbrTx.SMP_pbr_transmission_u_TransmissionFramebufferSampler_Raw] = _screenSampler,
+                    },
+                });
+
+                sg_draw(0u, (uint)sub.IndexCount, 1u);
                 _stats.DrawCalls++;
             }
         }

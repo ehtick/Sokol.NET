@@ -108,6 +108,21 @@ namespace GameEditor.Framework.Renderer.Server.Materials
         public Material? GetById(ushort id)
             => (id > 0 && id < _byId.Length) ? _byId[id] : null;
 
+        /// <summary>
+        /// True if any registered material refracts the background (KHR_materials_transmission).
+        /// Cheap O(material-count) scan — lets a host skip the offscreen render-target + screen-copy
+        /// blit entirely (rendering straight to the swapchain) when no transmission is in play.
+        /// </summary>
+        public bool AnyTransmissive
+        {
+            get
+            {
+                for (int i = 1; i < _nextId; i++)
+                    if (_byId[i] is PbrMaterial { IsTransmissive: true }) return true;
+                return false;
+            }
+        }
+
         /// <summary>Look up a material by "mtlFile#materialName" key. Returns null if not registered.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Material? GetByKey(string key)

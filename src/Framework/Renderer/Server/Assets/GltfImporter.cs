@@ -584,6 +584,28 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                 m.IsTransparent = m.AlphaMode == 2;
                 m.DoubleSided   = mat->double_sided != 0;
                 m.Sampler       = _texCache.DefaultSampler;
+
+                // ── KHR_materials_ior / _transmission / _volume (screen-space refraction) ──
+                // Ported from examples/CGltfViewer/Source/CGltfModel.cs:562-613. Transmission
+                // routes the material through RenderingServer's post-opaque transmission pass.
+                m.Ior = mat->has_ior != 0 ? mat->ior.ior : 1.5f;
+
+                if (mat->has_transmission != 0)
+                {
+                    m.TransmissionFactor   = mat->transmission.transmission_factor;
+                    m.TransmissionMap      = LoadTexture(mat->transmission.transmission_texture, srgb: false, out m.TransmissionMapPath);
+                    m.TransmissionTexcoord = mat->transmission.transmission_texture.texcoord;
+                }
+
+                if (mat->has_volume != 0)
+                {
+                    m.ThicknessFactor     = mat->volume.thickness_factor;
+                    m.AttenuationDistance = mat->volume.attenuation_distance > 0f
+                        ? mat->volume.attenuation_distance : float.MaxValue;
+                    m.AttenuationColor    = new Vector3(mat->volume.attenuation_color[0],
+                                                        mat->volume.attenuation_color[1],
+                                                        mat->volume.attenuation_color[2]);
+                }
                 return m;
             }
 

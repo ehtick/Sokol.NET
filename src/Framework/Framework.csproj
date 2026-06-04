@@ -55,6 +55,9 @@
     <_CubemapGlsl>$(_ShaderDir)cubemap.glsl</_CubemapGlsl>
     <_CubemapOut>$(_ShaderOutDir)cubemap_shader.cs</_CubemapOut>
     <_TonemappingGlsl>$(_ShaderDir)tonemapping.glsl</_TonemappingGlsl>
+    <!-- Screen-copy blit (captures opaque scene for transmission/refraction sampling) -->
+    <_ScreenCopyGlsl>$(_ShaderDir)screen_copy.glsl</_ScreenCopyGlsl>
+    <_ScreenCopyOut>$(_ShaderOutDir)screen_copy_shader.cs</_ScreenCopyOut>
   </PropertyGroup>
 
   <!-- Ensure the generated-shader output folder exists before any shader-compile target writes to
@@ -107,6 +110,14 @@
     <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_CubemapGlsl)&quot; --output &quot;$(_CubemapOut)&quot; --module cubemap --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
   </Target>
 
+  <Target Name="CompileFrameworkScreenCopyShader" BeforeTargets="BeforeBuild"
+          DependsOnTargets="EnsureFrameworkShaderOutDir"
+          Inputs="$(_ScreenCopyGlsl)"
+          Outputs="$(_ScreenCopyOut)">
+    <Message Text="Compiling Framework shader: screen_copy.glsl (all platforms)" Importance="high" />
+    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_ScreenCopyGlsl)&quot; --output &quot;$(_ScreenCopyOut)&quot; --module screen_copy --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
+  </Target>
+
   <!-- PBR shader variants: one .cs file per define combination.
        All 8 share the same source (pbr.glsl) but each gets its own defines flag.
        Inputs include the primary file AND all @include files so any change triggers a rebuild. -->
@@ -129,8 +140,9 @@
                    $(_ShaderOutDir)pbr_skinning_csm4_shader.cs;
                    $(_ShaderOutDir)pbr_skinning_csm1_shader.cs;
                    $(_ShaderOutDir)pbr_skinning_morphing_csm1_shader.cs;
-                   $(_ShaderOutDir)pbr_skinning_morphing_csm4_shader.cs">
-    <Message Text="Compiling Framework PBR shader variants (10 total)" Importance="high" />
+                   $(_ShaderOutDir)pbr_skinning_morphing_csm4_shader.cs;
+                   $(_ShaderOutDir)pbr_transmission_shader.cs">
+    <Message Text="Compiling Framework PBR shader variants (11 total)" Importance="high" />
     <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_ShaderOutDir)pbr_shader.cs&quot; --module pbr --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
     <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_ShaderOutDir)pbr_skinning_shader.cs&quot; --module pbr_skinning --defines SKINNING --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
     <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_ShaderOutDir)pbr_morphing_shader.cs&quot; --module pbr_morphing --defines MORPHING --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
@@ -141,6 +153,7 @@
     <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_ShaderOutDir)pbr_skinning_csm1_shader.cs&quot; --module pbr_skinning_csm1 --defines SKINNING:CSM1 --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
     <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_ShaderOutDir)pbr_skinning_morphing_csm1_shader.cs&quot; --module pbr_skinning_morphing_csm1 --defines SKINNING:MORPHING:CSM1 --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
     <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_ShaderOutDir)pbr_skinning_morphing_csm4_shader.cs&quot; --module pbr_skinning_morphing_csm4 --defines SKINNING:MORPHING:CSM4 --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
+    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_ShaderOutDir)pbr_transmission_shader.cs&quot; --module pbr_transmission --defines TRANSMISSION --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
   </Target>
 
   <!-- Sokol bindings (separate DLL, shared by the ALC along with Framework) -->

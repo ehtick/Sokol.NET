@@ -22,11 +22,16 @@ namespace GameEditor.Framework.Renderer
             Width = width;
             Height = height;
 
+            // sample_count is pinned to 1: a render-target image otherwise inherits the swapchain's
+            // sample count (sokol's environment default — e.g. 4 in an MSAA standalone), which would
+            // mismatch the single-sampled pipelines that draw into this target. Offscreen 3D targets
+            // here are single-sampled by design (the swapchain keeps its own MSAA for presentation).
             ColorImage = sg_make_image(new sg_image_desc
             {
                 width = width,
                 height = height,
                 pixel_format = sg_pixel_format.SG_PIXELFORMAT_RGBA8,
+                sample_count = 1,
                 usage = { color_attachment = true },
                 label = "offscreen-color"
             });
@@ -36,6 +41,7 @@ namespace GameEditor.Framework.Renderer
                 width = width,
                 height = height,
                 pixel_format = sg_pixel_format.SG_PIXELFORMAT_DEPTH,
+                sample_count = 1,
                 usage = { depth_stencil_attachment = true },
                 label = "offscreen-depth"
             });
@@ -99,7 +105,10 @@ namespace GameEditor.Framework.Renderer
                     depth = new sg_depth_attachment_action
                     {
                         load_action = sg_load_action.SG_LOADACTION_CLEAR,
-                        store_action = sg_store_action.SG_STOREACTION_DONTCARE,
+                        // STORE (not DONTCARE) so a follow-up pass on this target — e.g. the
+                        // post-opaque transmission pass — can LOAD this depth and test refractive
+                        // geometry against the opaque scene. Negligible cost; harmless to other passes.
+                        store_action = sg_store_action.SG_STOREACTION_STORE,
                         clear_value = 1.0f
                     }
                 }

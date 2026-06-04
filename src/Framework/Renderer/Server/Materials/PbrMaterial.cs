@@ -80,6 +80,23 @@ namespace GameEditor.Framework.Renderer.Server.Materials
         public float   EmissiveTexRotation = 0f;
         public Vector2 EmissiveTexScale     = Vector2.One;
 
+        // ── Transmission (KHR_materials_transmission) — screen-space refraction ───
+        // TransmissionFactor > 0 routes the material through the post-opaque
+        // transmission pass (RenderingServer.RenderTransmission) instead of the
+        // regular opaque/transparent queue.
+        public float   TransmissionFactor   = 0f;
+        public sg_view TransmissionMap;
+        public string  TransmissionMapPath  = "";
+        public float   TransmissionTexcoord = 0f;
+
+        // ── Volume (KHR_materials_volume) — Beer-Lambert tint over the ray ───────
+        public float   ThicknessFactor      = 0f;
+        public Vector3 AttenuationColor     = Vector3.One;
+        public float   AttenuationDistance  = float.MaxValue;
+
+        // ── Index of refraction (KHR_materials_ior) ──────────────────────────────
+        public float   Ior                  = 1.5f;
+
         // ── Convenience helpers ──────────────────────────────────────────────
         public bool HasBaseColorMap         => !string.IsNullOrEmpty(BaseColorMapPath);
         public bool HasMetallicRoughnessMap => !string.IsNullOrEmpty(MetallicRoughnessMapPath);
@@ -89,5 +106,12 @@ namespace GameEditor.Framework.Renderer.Server.Materials
 
         /// <summary>True when alpha blending or alpha-test is required.</summary>
         public bool NeedsBlending => AlphaMode != 0;
+
+        /// <summary>
+        /// True when this material refracts the background (KHR_materials_transmission).
+        /// Such materials are drawn in the dedicated post-opaque transmission pass — they
+        /// are skipped by the normal opaque/transparent queue in <c>SubmitView</c>.
+        /// </summary>
+        public bool IsTransmissive => TransmissionFactor > 0f;
     }
 }

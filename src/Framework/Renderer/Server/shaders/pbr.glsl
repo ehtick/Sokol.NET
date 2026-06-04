@@ -610,9 +610,13 @@ void main()
     // ── Final alpha ───────────────────────────────────────────────────────────
     float finalAlpha = baseColor.a;
 #ifdef TRANSMISSION
-#if ENABLE_TRANSMISSION_ALPHA
-    finalAlpha *= (1.0 - transmission);
-#endif
+    // Transmission surfaces are drawn OPAQUE (no blend) in RenderingServer's dedicated
+    // transmission pass — the refracted background is already composited into RGB via the
+    // screen-copy sample. So the output must be fully opaque (alpha = 1); the offscreen RT is
+    // displayed alpha-blended by the editor, and a (1 - transmission) alpha would make a
+    // transmissionFactor=1 surface vanish to the panel behind it (appearing black).
+    // (This differs from CGltfViewer, which alpha-BLENDS transmission and needs 1 - transmission.)
+    finalAlpha = 1.0;
 #endif
 
     // ── Debug views ───────────────────────────────────────────────────────────
