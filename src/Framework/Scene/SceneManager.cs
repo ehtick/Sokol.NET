@@ -5,6 +5,7 @@ using Sokol;
 using GameEditor.Framework.Renderer;
 using GameEditor.Framework.Renderer.Server;
 using GameEditor.Framework.Renderer.Server.Animation;
+using GameEditor.Framework.Renderer.Server.Materials;
 using GameEditor.Framework.Core;
 using GameEditor.Framework.ECS;
 using GameEditor.Framework.ECS.Components;
@@ -303,6 +304,17 @@ namespace GameEditor.Framework.Scene
             if (componentName != nameof(MeshRenderer)) return;
             if (!ECSWorld.Instance.TryGetComponent<MeshRenderer>(id, out var mr)) return;
             if (string.IsNullOrEmpty(mr.MaterialPath)) return;
+
+            // `.pbrmat` material assets (Inspector PBR editor output) load via their own path.
+            if (mr.MaterialPath.EndsWith(PbrMaterialSerializer.Extension, StringComparison.OrdinalIgnoreCase))
+            {
+                string? pbrRel = ToAssetsRelativePath(mr.MaterialPath);
+                if (pbrRel == null) { Logger.Warning($"[SceneManager] Cannot resolve material path: '{mr.MaterialPath}'"); return; }
+                if (mr.MaterialPath != pbrRel) { mr.MaterialPath = pbrRel; ECSWorld.Instance.AddComponent(id, mr); }
+                LoadPbrMaterialAsset(pbrRel);
+                return;
+            }
+
             if (!mr.MaterialPath.EndsWith(".mtl", StringComparison.OrdinalIgnoreCase)) return;
 
             // Normalize to Assets-relative so the path is portable across platforms.
@@ -367,7 +379,8 @@ namespace GameEditor.Framework.Scene
             {
                 if (!world.TryGetComponent<MeshRenderer>(id, out var mr)) continue;
                 if (string.IsNullOrEmpty(mr.MaterialPath)) continue;
-                if (!mr.MaterialPath.EndsWith(".mtl", StringComparison.OrdinalIgnoreCase)) continue;
+                if (!mr.MaterialPath.EndsWith(".mtl", StringComparison.OrdinalIgnoreCase) &&
+                    !mr.MaterialPath.EndsWith(PbrMaterialSerializer.Extension, StringComparison.OrdinalIgnoreCase)) continue;
 
                 // Reuse the same normalization + load logic as OnComponentChanged.
                 OnComponentChanged(id, nameof(MeshRenderer));
@@ -568,6 +581,147 @@ namespace GameEditor.Framework.Scene
                         Logger.Warning($"[SceneManager] Failed to load texture: '{captured}'");
                 });
             }
+        }
+
+        /// <summary>
+        /// Load the image at <paramref name="uiPath"/> and assign it to a PBR texture
+        /// <paramref name="slot"/> of the live material registered under <paramref name="materialKey"/>.
+        /// An empty path clears the slot. Desktop reads synchronously; web/mobile load async via
+        /// SFilesystem. Used by the Inspector's PBR material editor.
+        /// </summary>
+        public static void ApplyPbrMaterialTexture(
+            string materialKey, MaterialRegistry.PbrTextureSlot slot, string? uiPath)
+        {
+            if (RenderingServer.Materials.GetByKey(materialKey) is not PbrMaterial mat) return;
+
+            string trimmed = uiPath?.Trim() ?? string.Empty;
+            if (trimmed.Length == 0)
+            {
+                RenderingServer.Materials.ClearPbrTexture(mat, slot);
+                return;
+            }
+
+            // Normalize to an Assets-relative key so the cache entry is portable across platforms.
+            string rel = ToAssetsRelativePath(trimmed) ?? trimmed;
+
+            // Desktop: synchronous load.
+            string? absPath = ToAbsoluteDesktopPath(rel);
+            if (absPath != null && System.IO.File.Exists(absPath))
+            {
+                RenderingServer.Materials.LoadPbrTexture(mat, slot, rel, System.IO.File.ReadAllBytes(absPath));
+                return;
+            }
+
+            // Web / mobile: async load.
+            string capturedKey = materialKey;
+            SFilesystem.LoadFileAsync(rel, (_, buffer, status) =>
+            {
+                if (status == SFileLoadStatus.Success && buffer != null)
+                {
+                    if (RenderingServer.Materials.GetByKey(capturedKey) is PbrMaterial m)
+                        RenderingServer.Materials.LoadPbrTexture(m, slot, rel, buffer);
+                }
+                else
+                    Logger.Warning($"[SceneManager] Failed to load PBR texture: '{rel}'");
+            });
+        }
+
+        // ── .pbrmat material assets ─────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Load a <c>.pbrmat</c> material asset, register it under its Assets-relative key
+        /// (= <see cref="MeshRenderer.MaterialPath"/>), and load each referenced texture map.
+        /// No-op when the material is already registered (keeps in-memory edits/views). Desktop
+        /// reads synchronously; web/mobile load async via SFilesystem.
+        /// </summary>
+        public static void LoadPbrMaterialAsset(string relPath)
+        {
+            string key = relPath.Replace('\\', '/');
+            if (RenderingServer.Materials.GetByKey(key) is PbrMaterial) return; // already loaded this session
+
+            string? absPath = ToAbsoluteDesktopPath(relPath);
+            if (absPath != null && System.IO.File.Exists(absPath))
+            {
+                RegisterAndLoadPbr(key, System.IO.File.ReadAllBytes(absPath));
+                return;
+            }
+
+            SFilesystem.LoadFileAsync(relPath, (_, buffer, status) =>
+            {
+                if (status == SFileLoadStatus.Success && buffer != null) RegisterAndLoadPbr(key, buffer);
+                else Logger.Warning($"[SceneManager] Failed to load .pbrmat: '{relPath}'");
+            });
+        }
+
+        private static void RegisterAndLoadPbr(string key, byte[] json)
+        {
+            string name = System.IO.Path.GetFileNameWithoutExtension(key);
+            PbrMaterial mat = PbrMaterialSerializer.Deserialize(json, name);
+            RenderingServer.Materials.RegisterOrReplacePbr(key, mat);
+
+            ApplyMapIfSet(MaterialRegistry.PbrTextureSlot.BaseColor,         mat.BaseColorMapPath);
+            ApplyMapIfSet(MaterialRegistry.PbrTextureSlot.MetallicRoughness, mat.MetallicRoughnessMapPath);
+            ApplyMapIfSet(MaterialRegistry.PbrTextureSlot.Normal,            mat.NormalMapPath);
+            ApplyMapIfSet(MaterialRegistry.PbrTextureSlot.Occlusion,         mat.OcclusionMapPath);
+            ApplyMapIfSet(MaterialRegistry.PbrTextureSlot.Emissive,          mat.EmissiveMapPath);
+
+            void ApplyMapIfSet(MaterialRegistry.PbrTextureSlot slot, string? p)
+            {
+                if (!string.IsNullOrEmpty(p)) ApplyPbrMaterialTexture(key, slot, p);
+            }
+        }
+
+        /// <summary>
+        /// Write <paramref name="mat"/> to a new <c>Assets/Materials/&lt;name&gt;.pbrmat</c>
+        /// (deduped), register it under the resulting Assets-relative key, and return that key.
+        /// Editor-only (desktop authoring); returns null with no project or on write failure.
+        /// </summary>
+        public static string? SaveNewPbrMaterialAsset(PbrMaterial mat, string preferredName)
+        {
+            if (!ConfigManager.HasProject) return null;
+            string matsDirAbs = System.IO.Path.Combine(ConfigManager.ProjectFolder!, "Assets", "Materials");
+            try { SokolFile.EnsureDirectory(matsDirAbs); } catch { }
+
+            string baseName = SanitizeFileName(string.IsNullOrWhiteSpace(preferredName) ? "Material" : preferredName);
+            string fileName = baseName;
+            string absPath  = System.IO.Path.Combine(matsDirAbs, fileName + PbrMaterialSerializer.Extension);
+            int n = 1;
+            while (System.IO.File.Exists(absPath))
+            {
+                fileName = $"{baseName}_{n++}";
+                absPath  = System.IO.Path.Combine(matsDirAbs, fileName + PbrMaterialSerializer.Extension);
+            }
+
+            mat.Name = fileName;
+            string relKey = $"Materials/{fileName}{PbrMaterialSerializer.Extension}";
+            try { System.IO.File.WriteAllText(absPath, PbrMaterialSerializer.Serialize(mat)); }
+            catch (Exception ex) { Logger.Warning($"[SceneManager] Failed to write .pbrmat: {ex.Message}"); return null; }
+
+            RenderingServer.Materials.RegisterOrReplacePbr(relKey, mat);
+            return relKey;
+        }
+
+        /// <summary>Re-serialize an already file-backed material to its <c>.pbrmat</c> (auto-save on edit). Desktop-only.</summary>
+        public static void SavePbrMaterialAsset(string relKey, PbrMaterial mat)
+        {
+            string? absPath = ToAbsoluteDesktopPath(relKey);
+            if (absPath == null) return; // web/mobile bundle is read-only
+            try
+            {
+                string? dir = System.IO.Path.GetDirectoryName(absPath);
+                if (dir != null) SokolFile.EnsureDirectory(dir);
+                System.IO.File.WriteAllText(absPath, PbrMaterialSerializer.Serialize(mat));
+            }
+            catch (Exception ex) { Logger.Warning($"[SceneManager] Failed to save .pbrmat '{relKey}': {ex.Message}"); }
+        }
+
+        private static string SanitizeFileName(string name)
+        {
+            char[] invalid = System.IO.Path.GetInvalidFileNameChars();
+            var sb = new System.Text.StringBuilder(name.Length);
+            foreach (char c in name)
+                sb.Append(System.Array.IndexOf(invalid, c) >= 0 ? '_' : c);
+            return sb.ToString();
         }
 
         public static bool GetMainCameraMatrices(int width, int height,out Matrix4x4 viewProj, out Vector3 eyePos)

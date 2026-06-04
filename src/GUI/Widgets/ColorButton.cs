@@ -19,6 +19,10 @@ public class ColorButton : Widget
 
     public event Action<UIColor>? ColorChanged;
 
+    /// <summary>Raised once when the picker popup closes (dismissed externally or toggled shut).
+    /// Lets callers coalesce a drag of colour changes into a single commit (e.g. one undo step).</summary>
+    public event Action? PopupDismissed;
+
     public bool ShowAlpha { get; set; } = true;
 
     public Font?  Font     { get; set; }
@@ -102,7 +106,7 @@ public class ColorButton : Widget
         return base.HitTest(localPoint);
     }
 
-    public override void OnPopupDismiss() { _open = false; }
+    public override void OnPopupDismiss() { if (_open) { _open = false; PopupDismissed?.Invoke(); } }
 
     // ─── Input ───────────────────────────────────────────────────────────────
     public override bool OnMouseDown(MouseEvent e)
@@ -121,6 +125,7 @@ public class ColorButton : Widget
             }
             _open = false;
             Screen.SetActivePopup(null);
+            PopupDismissed?.Invoke();
             return true;
         }
 

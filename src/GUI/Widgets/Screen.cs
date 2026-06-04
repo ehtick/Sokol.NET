@@ -28,11 +28,28 @@ public sealed class Screen : Widget
     // Persisted snapshot used for hit-testing between frames (events arrive before the next Draw).
     private (Widget Widget, Rect Bounds)[] _hitTestOverlays = System.Array.Empty<(Widget, Rect)>();
 
+    // Top overlays draw AFTER ImGui (via DrawTopOverlays) so a modal dialog appears above ImGui
+    // viewport windows (Scene/Game) — unlike frame overlays, which draw before ImGui.
+    private readonly System.Collections.Generic.List<(Widget Widget, Rect Bounds)> _topOverlays = new();
+    private (Widget Widget, Rect Bounds)[] _topOverlaysToDraw = System.Array.Empty<(Widget, Rect)>();
+    private (Widget Widget, Rect Bounds)[] _topHitTest        = System.Array.Empty<(Widget, Rect)>();
+
     public void AddFrameOverlay(Widget widget, Rect bounds)
     {
         // Set bounds with screen-space position so ScreenPosition (used by HitTestDeep) is correct.
         widget.Bounds = new Rect(bounds.X, bounds.Y, bounds.Width, bounds.Height);
         _frameOverlays.Add((widget, bounds));
+    }
+
+    /// <summary>
+    /// Register a widget to be drawn ON TOP of everything this frame, after ImGui (see
+    /// <see cref="DrawTopOverlays"/>) — for modal dialogs that must appear above ImGui viewport
+    /// windows. Laid out + hit-tested like a frame overlay, but composited in the post-ImGui pass.
+    /// </summary>
+    public void AddTopOverlay(Widget widget, Rect bounds)
+    {
+        widget.Bounds = new Rect(bounds.X, bounds.Y, bounds.Width, bounds.Height);
+        _topOverlays.Add((widget, bounds));
     }
 
     /// <summary>
@@ -271,6 +288,17 @@ public sealed class Screen : Widget
         _hitTestOverlays = _frameOverlays.ToArray();
         _frameOverlays.Clear();
 
+        // Top overlays: lay out now (for hit-testing + the deferred post-ImGui draw) but do NOT
+        // draw them in this pass — DrawTopOverlays() composites them after ImGui.
+        foreach (var (w, r) in _topOverlays)
+        {
+            w.Bounds = new Rect(r.X, r.Y, r.Width, r.Height);
+            w.PerformLayout(Renderer, true);
+        }
+        _topHitTest        = _topOverlays.ToArray();
+        _topOverlaysToDraw = _topOverlays.ToArray();
+        _topOverlays.Clear();
+
         // Draw notification toasts on top of everything.
         _notificationHost.Bounds = new Rect(0, 0, width, height);
         _notificationHost.Draw(Renderer);
@@ -306,10 +334,24 @@ public sealed class Screen : Widget
             Renderer.Restore();
         }
 
+        // Same glyph pre-warm for top overlays (DrawTopOverlays opens another NVG frame after ImGui).
+        foreach (var (w, r) in _topOverlaysToDraw)
+        {
+            Renderer.Save();
+            Renderer.SetGlobalAlpha(0f);
+            Renderer.Translate(r.X, r.Y);
+            Renderer.ClipRect(new Rect(0, 0, r.Width, r.Height));
+            w.Draw(Renderer);
+            Renderer.Restore();
+        }
+
         Renderer.EndFrame();
 
         if (drawActiveOverlay)
+        {
             DrawActivePopupOverlay(width, height, dpiScale);
+            DrawTopOverlays(width, height, dpiScale);
+        }
     }
 
     /// <summary>
@@ -328,6 +370,29 @@ public sealed class Screen : Widget
         Renderer.Translate(sp.X, sp.Y);
         _activePopup.DrawPopupOverlay(Renderer);
         Renderer.Restore();
+        Renderer.EndFrame();
+    }
+
+    /// <summary>
+    /// Draws top overlays (modal dialogs registered via <see cref="AddTopOverlay"/>) in a separate
+    /// NanoVG pass AFTER ImGui, so they appear above ImGui viewport windows. Glyphs were pre-warmed
+    /// in <see cref="Draw"/> so this second frame never re-bakes the atlas (avoids a duplicate
+    /// sg_update_image in the same Sokol frame).
+    /// </summary>
+    public void DrawTopOverlays(float width, float height, float dpiScale)
+    {
+        if (Renderer == null || Renderer.VGContext == IntPtr.Zero) return;
+        if (_topOverlaysToDraw.Length == 0) return;
+
+        Renderer.BeginFrame(width, height, dpiScale);
+        foreach (var (w, r) in _topOverlaysToDraw)
+        {
+            Renderer.Save();
+            Renderer.Translate(r.X, r.Y);
+            Renderer.ClipRect(new Rect(0, 0, r.Width, r.Height));
+            w.Draw(Renderer);
+            Renderer.Restore();
+        }
         Renderer.EndFrame();
     }
 
@@ -380,6 +445,13 @@ public sealed class Screen : Widget
 
     public override Widget? HitTestDeep(Vector2 screenPoint)
     {
+        // Top overlays (modal dialogs drawn above ImGui) get first claim on input.
+        for (int i = _topHitTest.Length - 1; i >= 0; i--)
+        {
+            var hit = _topHitTest[i].Widget.HitTestDeep(screenPoint);
+            if (hit != null) return hit;
+        }
+
         // Popup has highest priority (may extend beyond widget bounds).
         if (_activePopup != null)
         {

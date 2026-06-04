@@ -86,6 +86,23 @@ namespace GameEditor.Framework.Renderer.Server.Materials
             return id;
         }
 
+        /// <summary>
+        /// Register a PBR material under <paramref name="key"/>, replacing any material already
+        /// registered under that key (keeping its id so existing DrawCommand references stay valid).
+        /// Used when a <c>.pbrmat</c> asset is (re)loaded — e.g. on scene reload after edits.
+        /// </summary>
+        public ushort RegisterOrReplacePbr(string key, PbrMaterial mat)
+        {
+            if (!_byPath.TryGetValue(key, out var existing)) return RegisterPbr(key, mat);
+
+            mat.Id = existing.Id;
+            if (string.IsNullOrEmpty(mat.Name)) mat.Name = key;
+            if (mat.Sampler.id == 0) mat.Sampler = _textures.DefaultSampler;
+            _byPath[key]       = mat;
+            _byId[existing.Id] = mat;
+            return existing.Id;
+        }
+
         /// <summary>Look up a material by 16-bit id. Returns null if not registered.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Material? GetById(ushort id)
@@ -153,6 +170,46 @@ namespace GameEditor.Framework.Renderer.Server.Materials
                 if (bp.SpecularMapPath == texKey) bp.SpecularMap = view;
                 if (bp.NormalMapPath   == texKey) bp.NormalMap   = view;
                 if (bp.OpacityMapPath  == texKey) bp.OpacityMap  = view;
+            }
+        }
+
+        // ── PBR texture slots (Inspector material editor) ──────────────────────────────
+
+        /// <summary>Identifies one of the five PBR metallic-roughness texture slots.</summary>
+        public enum PbrTextureSlot { BaseColor, MetallicRoughness, Normal, Occlusion, Emissive }
+
+        /// <summary>
+        /// Decode and upload <paramref name="bytes"/> under <paramref name="key"/> and assign the
+        /// resulting GPU view to the given PBR <paramref name="slot"/> on <paramref name="mat"/>.
+        /// Base-colour and emissive maps upload as sRGB; the data maps (metallic-roughness, normal,
+        /// occlusion) upload linear — matching the glTF importer's per-slot conventions
+        /// (<see cref="Assets.GltfImporter"/>). Used by the Inspector's PBR material editor.
+        /// </summary>
+        public void LoadPbrTexture(PbrMaterial mat, PbrTextureSlot slot, string key, ReadOnlySpan<byte> bytes)
+        {
+            bool srgb = slot is PbrTextureSlot.BaseColor or PbrTextureSlot.Emissive;
+            sg_view view = _textures.LoadFromBytes(key, bytes, srgb);
+            if (mat.Sampler.id == 0) mat.Sampler = _textures.DefaultSampler;
+            switch (slot)
+            {
+                case PbrTextureSlot.BaseColor:         mat.BaseColorMap         = view; mat.BaseColorMapPath         = key; break;
+                case PbrTextureSlot.MetallicRoughness: mat.MetallicRoughnessMap = view; mat.MetallicRoughnessMapPath = key; break;
+                case PbrTextureSlot.Normal:            mat.NormalMap            = view; mat.NormalMapPath            = key; break;
+                case PbrTextureSlot.Occlusion:         mat.OcclusionMap         = view; mat.OcclusionMapPath         = key; break;
+                case PbrTextureSlot.Emissive:          mat.EmissiveMap          = view; mat.EmissiveMapPath          = key; break;
+            }
+        }
+
+        /// <summary>Clear one PBR texture slot back to "no map" (factor-only shading).</summary>
+        public void ClearPbrTexture(PbrMaterial mat, PbrTextureSlot slot)
+        {
+            switch (slot)
+            {
+                case PbrTextureSlot.BaseColor:         mat.BaseColorMap         = default; mat.BaseColorMapPath         = ""; break;
+                case PbrTextureSlot.MetallicRoughness: mat.MetallicRoughnessMap = default; mat.MetallicRoughnessMapPath = ""; break;
+                case PbrTextureSlot.Normal:            mat.NormalMap            = default; mat.NormalMapPath            = ""; break;
+                case PbrTextureSlot.Occlusion:         mat.OcclusionMap         = default; mat.OcclusionMapPath         = ""; break;
+                case PbrTextureSlot.Emissive:          mat.EmissiveMap          = default; mat.EmissiveMapPath          = ""; break;
             }
         }
 
