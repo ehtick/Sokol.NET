@@ -94,7 +94,9 @@ namespace GameEditor.Framework.Renderer.Server
         private static readonly InstanceData[] _cpuInst   = new InstanceData[RenderingConstants.MAX_DRAWS];
         private static int _drawCount;
 
-        private static readonly uint[]     _sortKeys   = new uint[RenderingConstants.MAX_DRAWS];
+        // 64-bit so a top "transparent" bit can sort every blended draw after every opaque
+        // one (bits 0-31 carry the opaque material/mesh batch key; see the SubmitView sort loop).
+        private static readonly ulong[]    _sortKeys   = new ulong[RenderingConstants.MAX_DRAWS];
         private static readonly int[]      _sortOrder  = new int[RenderingConstants.MAX_DRAWS];
         private static readonly DrawSorter _drawSorter = new();
 
@@ -592,7 +594,10 @@ namespace GameEditor.Framework.Renderer.Server
             _stats.Culled += _drawCount - visibleCount;
             if (visibleCount == 0) return;
 
-            // ── 3. Sort visible commands by (MaterialId | MeshId) ─────────────────────────
+            // ── 3. Sort: opaque first (material/mesh-batched), transparent last (back-to-front) ──
+            // Transparent draws must come after every opaque draw — otherwise an opaque object
+            // behind a blended one (drawn earlier, depth-write off) re-writes depth+colour over it.
+            // Within transparent, far→near (back-to-front) is required for correct alpha blending.
 
             FrameProfiler.Begin(FrameProfiler.Zone.Sort);
             for (int j = 0; j < visibleCount; j++)
@@ -600,7 +605,7 @@ namespace GameEditor.Framework.Renderer.Server
                 int idx = _visible[j];
                 uint noMatBit = (_cmds[idx].LodMask & DrawFlagDisableSubMeshMaterial) != 0 ? 1u : 0u;
                 uint lod      = (uint)(_cmds[idx].LodMask & 0x0F);
-                // Sort key (32 bits):
+                // Opaque batch key (low 32 bits — groups identical mesh+material for instancing):
                 //   bits 31-28: lodIndex   (4 bits  — separates LOD variants of the same mesh)
                 //   bits 27-16: MaterialId (12 bits — 0-4095 IDs fit; sufficient for editor)
                 //   bit  15:    noMatBit
@@ -614,10 +619,29 @@ namespace GameEditor.Framework.Renderer.Server
                     System.Diagnostics.Debug.Fail($"MaterialId {_cmds[idx].MaterialId} exceeds 12-bit sort-key capacity (max 4095).");
                 if ((_cmds[idx].MeshId & ~0x7FFFu) != 0)
                     System.Diagnostics.Debug.Fail($"MeshId {_cmds[idx].MeshId} exceeds 15-bit sort-key capacity (max 32767).");
-                _sortKeys[idx]  = (lod << 28)
-                                | (((uint)_cmds[idx].MaterialId & 0xFFF) << 16)
-                                | (noMatBit << 15)
-                                | ((uint)_cmds[idx].MeshId & 0x7FFF);
+                uint opaqueKey = (lod << 28)
+                               | (((uint)_cmds[idx].MaterialId & 0xFFF) << 16)
+                               | (noMatBit << 15)
+                               | ((uint)_cmds[idx].MeshId & 0x7FFF);
+
+                // Opaque: bit 63 = 0, low 32 bits = opaqueKey → ordering (and instancing batches)
+                // unchanged from before transparency existed. Transparent: bit 63 = 1 (after every
+                // opaque draw), then inverted camera distance so FAR sorts first = back-to-front.
+                // The blend pipeline (depth-write off) is already chosen per-material in the Draw*
+                // helpers — this only fixes the ORDER they're submitted in. Alpha-MASK is NOT
+                // transparent (stays opaque, depth-tested, alpha-tested in-shader) per the glTF spec.
+                if (IsMaterialTransparent(_matReg.GetById(_cmds[idx].MaterialId)))
+                {
+                    float dist     = Vector3.Distance(cameraPos, _cmds[idx].BoundsCenter);
+                    uint  distBits = BitConverter.SingleToUInt32Bits(dist); // dist>=0 → bit pattern monotonic
+                    _sortKeys[idx] = (1UL << 63)
+                                   | ((ulong)(~distBits) << 31)   // far → small key → drawn first
+                                   | (opaqueKey & 0x7FFFFFFFUL);  // equal-depth tiebreak: keep same-mat batches
+                }
+                else
+                {
+                    _sortKeys[idx] = opaqueKey;
+                }
                 _sortOrder[j] = idx;
             }
             Array.Sort(_sortOrder, 0, visibleCount, _drawSorter);
@@ -2556,6 +2580,20 @@ namespace GameEditor.Framework.Renderer.Server
             _pointShadowTopEntities[at] = entity;
             _pointShadowTopScores[at] = score;
         }
+
+        /// <summary>
+        /// Live transparency test used by the SubmitView sort to split opaque from blended draws.
+        /// Mirrors the per-material pipeline choice in the Draw* helpers (PBR AlphaMode==Blend,
+        /// Blinn-Phong d&lt;1 / map_d). Derived fresh each frame so runtime Inspector edits to
+        /// AlphaMode take effect immediately — the cached <see cref="Material.IsTransparent"/>
+        /// flag is set at load time and is NOT refreshed on live edits. Alpha-MASK is opaque.
+        /// </summary>
+        private static bool IsMaterialTransparent(Material? mat) => mat switch
+        {
+            PbrMaterial        pbr => pbr.AlphaMode == 2,
+            BlinnPhongMaterial bpm => bpm.HasAlpha,
+            _                      => false,
+        };
 
         private sealed class DrawSorter : System.Collections.Generic.IComparer<int>
         {
