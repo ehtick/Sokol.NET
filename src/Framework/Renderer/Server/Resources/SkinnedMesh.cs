@@ -34,6 +34,20 @@ namespace GameEditor.Framework.Renderer.Server.Resources
         public int       IndexCount;
         public Aabb      LocalBounds;
 
+        // ── Morph targets (blend shapes) ───────────────────────────────────────────────────────
+        // Set by the glTF importer when this primitive has morph targets. The displacement texture is
+        // immutable (built once at load); only the per-frame weights vary. MorphNodeIndex keys the
+        // animator's per-node weight lookup; StaticMorphWeights is the fallback when no animation drives
+        // them. A morph-only mesh (no skin) rides this same skinned draw path with identity skinning.
+        public sg_image  MorphImage;
+        public sg_view   MorphView;
+        public int       MorphTargetCount;          // active targets (≤ 8)
+        public int       MorphNodeIndex = -1;       // CGltfSkinExtractor node index (for animated weights)
+        public float[]?  StaticMorphWeights;        // node/mesh static weights when no animation
+
+        /// <summary>True when this primitive carries morph-target displacement data.</summary>
+        public bool HasMorph => MorphView.id != 0 && MorphTargetCount > 0;
+
         public static unsafe SkinnedMesh Create(SkinnedVertex[] vertices, uint[] indices, in Aabb bounds, string label)
         {
             var m = new SkinnedMesh { IndexCount = indices.Length, LocalBounds = bounds };
@@ -55,6 +69,8 @@ namespace GameEditor.Framework.Renderer.Server.Resources
         {
             if (VertexBuffer.id != 0) { sg_destroy_buffer(VertexBuffer); VertexBuffer = default; }
             if (IndexBuffer.id  != 0) { sg_destroy_buffer(IndexBuffer);  IndexBuffer  = default; }
+            if (MorphView.id    != 0) { sg_destroy_view(MorphView);      MorphView    = default; }
+            if (MorphImage.id   != 0) { sg_destroy_image(MorphImage);    MorphImage   = default; }
         }
     }
 }

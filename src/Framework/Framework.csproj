@@ -35,29 +35,39 @@
     <_HostOS Condition="'$(IsOSXHost)'=='true'">osx</_HostOS>
     <_SokolShdcPath>$(_SokolNetRoot)tools/bin/$(_HostOS)/$(OSArch)/sokol-shdc</_SokolShdcPath>
     <_SokolShdcPath Condition="'$(IsWindowsHost)'=='true'">$(_SokolShdcPath).exe</_SokolShdcPath>
-    <_BlinnPhongGlsl>$(_FrameworkDir)Renderer/Server/shaders/blinn_phong.glsl</_BlinnPhongGlsl>
-    <_BlinnPhongOut>$(_FrameworkDir)Renderer/Server/shaders/blinn_phong_shader.cs</_BlinnPhongOut>
-    <_ShadowCasterGlsl>$(_FrameworkDir)Renderer/Server/shaders/shadow_caster.glsl</_ShadowCasterGlsl>
-    <_ShadowCasterOut>$(_FrameworkDir)Renderer/Server/shaders/shadow_caster_shader.cs</_ShadowCasterOut>
-    <_ShadowCasterSkinnedOut>$(_FrameworkDir)Renderer/Server/shaders/shadow_caster_skinned_shader.cs</_ShadowCasterSkinnedOut>
-    <_ShadowDebugGlsl>$(_FrameworkDir)Renderer/Server/shaders/shadow_debug.glsl</_ShadowDebugGlsl>
-    <_ShadowDebugOut>$(_FrameworkDir)Renderer/Server/shaders/shadow_debug_shader.cs</_ShadowDebugOut>
+    <!-- Hand-written .glsl sources live in shaders/; sokol-shdc emits the generated C# into
+         shaders/compiled/ so the two are not interleaved in one folder. -->
+    <_ShaderDir>$(_FrameworkDir)Renderer/Server/shaders/</_ShaderDir>
+    <_ShaderOutDir>$(_FrameworkDir)Renderer/Server/shaders/compiled/</_ShaderOutDir>
+    <_BlinnPhongGlsl>$(_ShaderDir)blinn_phong.glsl</_BlinnPhongGlsl>
+    <_BlinnPhongOut>$(_ShaderOutDir)blinn_phong_shader.cs</_BlinnPhongOut>
+    <_ShadowCasterGlsl>$(_ShaderDir)shadow_caster.glsl</_ShadowCasterGlsl>
+    <_ShadowCasterOut>$(_ShaderOutDir)shadow_caster_shader.cs</_ShadowCasterOut>
+    <_ShadowCasterSkinnedOut>$(_ShaderOutDir)shadow_caster_skinned_shader.cs</_ShadowCasterSkinnedOut>
+    <_ShadowDebugGlsl>$(_ShaderDir)shadow_debug.glsl</_ShadowDebugGlsl>
+    <_ShadowDebugOut>$(_ShaderOutDir)shadow_debug_shader.cs</_ShadowDebugOut>
     <!-- PBR shader — one output file per variant (base, skinning, morphing, CSM combinations) -->
-    <_PbrGlsl>$(_FrameworkDir)Renderer/Server/shaders/pbr.glsl</_PbrGlsl>
-    <_PbrShaderDir>$(_FrameworkDir)Renderer/Server/shaders/</_PbrShaderDir>
+    <_PbrGlsl>$(_ShaderDir)pbr.glsl</_PbrGlsl>
     <!-- Tonemap post-process pass -->
-    <_TonemapPassGlsl>$(_FrameworkDir)Renderer/Server/shaders/tonemap_pass.glsl</_TonemapPassGlsl>
-    <_TonemapPassOut>$(_FrameworkDir)Renderer/Server/shaders/tonemap_pass_shader.cs</_TonemapPassOut>
+    <_TonemapPassGlsl>$(_ShaderDir)tonemap_pass.glsl</_TonemapPassGlsl>
+    <_TonemapPassOut>$(_ShaderOutDir)tonemap_pass_shader.cs</_TonemapPassOut>
     <!-- Skybox (environment cubemap background) — @include tonemapping.glsl -->
-    <_CubemapGlsl>$(_FrameworkDir)Renderer/Server/shaders/cubemap.glsl</_CubemapGlsl>
-    <_CubemapOut>$(_FrameworkDir)Renderer/Server/shaders/cubemap_shader.cs</_CubemapOut>
-    <_TonemappingGlsl>$(_FrameworkDir)Renderer/Server/shaders/tonemapping.glsl</_TonemappingGlsl>
+    <_CubemapGlsl>$(_ShaderDir)cubemap.glsl</_CubemapGlsl>
+    <_CubemapOut>$(_ShaderOutDir)cubemap_shader.cs</_CubemapOut>
+    <_TonemappingGlsl>$(_ShaderDir)tonemapping.glsl</_TonemappingGlsl>
   </PropertyGroup>
+
+  <!-- Ensure the generated-shader output folder exists before any shader-compile target writes to
+       it (so a clean checkout / fresh machine doesn't fail when sokol-shdc can't create the file). -->
+  <Target Name="EnsureFrameworkShaderOutDir">
+    <MakeDir Directories="$(_ShaderOutDir)" />
+  </Target>
 
   <!-- Compile blinn_phong.glsl for ALL supported platforms into a single .cs file.
        Uses all slang targets so the generated file works on Windows/Linux/macOS/iOS/Android/Web
        without needing per-platform conditional compilation. -->
   <Target Name="CompileFrameworkShaders" BeforeTargets="BeforeBuild"
+          DependsOnTargets="EnsureFrameworkShaderOutDir"
           Inputs="$(_BlinnPhongGlsl)"
           Outputs="$(_BlinnPhongOut)">
     <Message Text="Compiling Framework shader: blinn_phong.glsl (all platforms)" Importance="high" />
@@ -65,6 +75,7 @@
   </Target>
 
   <Target Name="CompileFrameworkShadowCasterShader" BeforeTargets="BeforeBuild"
+          DependsOnTargets="EnsureFrameworkShaderOutDir"
           Inputs="$(_ShadowCasterGlsl)"
           Outputs="$(_ShadowCasterOut);$(_ShadowCasterSkinnedOut)">
     <Message Text="Compiling Framework shader: shadow_caster.glsl (static + skinned)" Importance="high" />
@@ -73,6 +84,7 @@
   </Target>
 
   <Target Name="CompileFrameworkShadowDebugShader" BeforeTargets="BeforeBuild"
+          DependsOnTargets="EnsureFrameworkShaderOutDir"
           Inputs="$(_ShadowDebugGlsl)"
           Outputs="$(_ShadowDebugOut)">
     <Message Text="Compiling Framework shader: shadow_debug.glsl (all platforms)" Importance="high" />
@@ -80,6 +92,7 @@
   </Target>
 
   <Target Name="CompileFrameworkTonemapShader" BeforeTargets="BeforeBuild"
+          DependsOnTargets="EnsureFrameworkShaderOutDir"
           Inputs="$(_TonemapPassGlsl)"
           Outputs="$(_TonemapPassOut)">
     <Message Text="Compiling Framework shader: tonemap_pass.glsl (all platforms)" Importance="high" />
@@ -87,6 +100,7 @@
   </Target>
 
   <Target Name="CompileFrameworkCubemapShader" BeforeTargets="BeforeBuild"
+          DependsOnTargets="EnsureFrameworkShaderOutDir"
           Inputs="$(_CubemapGlsl);$(_TonemappingGlsl)"
           Outputs="$(_CubemapOut)">
     <Message Text="Compiling Framework shader: cubemap.glsl (all platforms)" Importance="high" />
@@ -97,33 +111,36 @@
        All 8 share the same source (pbr.glsl) but each gets its own defines flag.
        Inputs include the primary file AND all @include files so any change triggers a rebuild. -->
   <Target Name="CompileFrameworkPbrShaders" BeforeTargets="BeforeBuild"
+          DependsOnTargets="EnsureFrameworkShaderOutDir"
           Inputs="$(_PbrGlsl);
-                  $(_PbrShaderDir)fs_constants.glsl;
-                  $(_PbrShaderDir)pbr_vs_uniforms.glsl;
-                  $(_PbrShaderDir)pbr_fs_uniforms.glsl;
-                  $(_PbrShaderDir)fs_lighting.glsl;
-                  $(_PbrShaderDir)brdf.glsl;
-                  $(_PbrShaderDir)ibl.glsl;
-                  $(_PbrShaderDir)animation.glsl"
-          Outputs="$(_PbrShaderDir)pbr_shader.cs;
-                   $(_PbrShaderDir)pbr_skinning_shader.cs;
-                   $(_PbrShaderDir)pbr_morphing_shader.cs;
-                   $(_PbrShaderDir)pbr_skinning_morphing_shader.cs;
-                   $(_PbrShaderDir)pbr_csm1_shader.cs;
-                   $(_PbrShaderDir)pbr_csm4_shader.cs;
-                   $(_PbrShaderDir)pbr_skinning_csm4_shader.cs;
-                   $(_PbrShaderDir)pbr_skinning_csm1_shader.cs;
-                   $(_PbrShaderDir)pbr_skinning_morphing_csm4_shader.cs">
-    <Message Text="Compiling Framework PBR shader variants (9 total)" Importance="high" />
-    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_PbrShaderDir)pbr_shader.cs&quot; --module pbr --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
-    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_PbrShaderDir)pbr_skinning_shader.cs&quot; --module pbr_skinning --defines SKINNING --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
-    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_PbrShaderDir)pbr_morphing_shader.cs&quot; --module pbr_morphing --defines MORPHING --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
-    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_PbrShaderDir)pbr_skinning_morphing_shader.cs&quot; --module pbr_skinning_morphing --defines SKINNING:MORPHING --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
-    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_PbrShaderDir)pbr_csm1_shader.cs&quot; --module pbr_csm1 --defines CSM1 --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
-    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_PbrShaderDir)pbr_csm4_shader.cs&quot; --module pbr_csm4 --defines CSM4 --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
-    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_PbrShaderDir)pbr_skinning_csm4_shader.cs&quot; --module pbr_skinning_csm4 --defines SKINNING:CSM4 --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
-    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_PbrShaderDir)pbr_skinning_csm1_shader.cs&quot; --module pbr_skinning_csm1 --defines SKINNING:CSM1 --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
-    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_PbrShaderDir)pbr_skinning_morphing_csm4_shader.cs&quot; --module pbr_skinning_morphing_csm4 --defines SKINNING:MORPHING:CSM4 --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
+                  $(_ShaderDir)fs_constants.glsl;
+                  $(_ShaderDir)pbr_vs_uniforms.glsl;
+                  $(_ShaderDir)pbr_fs_uniforms.glsl;
+                  $(_ShaderDir)fs_lighting.glsl;
+                  $(_ShaderDir)brdf.glsl;
+                  $(_ShaderDir)ibl.glsl;
+                  $(_ShaderDir)animation.glsl"
+          Outputs="$(_ShaderOutDir)pbr_shader.cs;
+                   $(_ShaderOutDir)pbr_skinning_shader.cs;
+                   $(_ShaderOutDir)pbr_morphing_shader.cs;
+                   $(_ShaderOutDir)pbr_skinning_morphing_shader.cs;
+                   $(_ShaderOutDir)pbr_csm1_shader.cs;
+                   $(_ShaderOutDir)pbr_csm4_shader.cs;
+                   $(_ShaderOutDir)pbr_skinning_csm4_shader.cs;
+                   $(_ShaderOutDir)pbr_skinning_csm1_shader.cs;
+                   $(_ShaderOutDir)pbr_skinning_morphing_csm1_shader.cs;
+                   $(_ShaderOutDir)pbr_skinning_morphing_csm4_shader.cs">
+    <Message Text="Compiling Framework PBR shader variants (10 total)" Importance="high" />
+    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_ShaderOutDir)pbr_shader.cs&quot; --module pbr --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
+    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_ShaderOutDir)pbr_skinning_shader.cs&quot; --module pbr_skinning --defines SKINNING --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
+    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_ShaderOutDir)pbr_morphing_shader.cs&quot; --module pbr_morphing --defines MORPHING --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
+    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_ShaderOutDir)pbr_skinning_morphing_shader.cs&quot; --module pbr_skinning_morphing --defines SKINNING:MORPHING --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
+    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_ShaderOutDir)pbr_csm1_shader.cs&quot; --module pbr_csm1 --defines CSM1 --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
+    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_ShaderOutDir)pbr_csm4_shader.cs&quot; --module pbr_csm4 --defines CSM4 --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
+    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_ShaderOutDir)pbr_skinning_csm4_shader.cs&quot; --module pbr_skinning_csm4 --defines SKINNING:CSM4 --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
+    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_ShaderOutDir)pbr_skinning_csm1_shader.cs&quot; --module pbr_skinning_csm1 --defines SKINNING:CSM1 --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
+    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_ShaderOutDir)pbr_skinning_morphing_csm1_shader.cs&quot; --module pbr_skinning_morphing_csm1 --defines SKINNING:MORPHING:CSM1 --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
+    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_PbrGlsl)&quot; --output &quot;$(_ShaderOutDir)pbr_skinning_morphing_csm4_shader.cs&quot; --module pbr_skinning_morphing_csm4 --defines SKINNING:MORPHING:CSM4 --slang &quot;glsl430:hlsl5:metal_macos:metal_ios:glsl300es&quot; --reflection -f sokol_csharp" />
   </Target>
 
   <!-- Sokol bindings (separate DLL, shared by the ALC along with Framework) -->

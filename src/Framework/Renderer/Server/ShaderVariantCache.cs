@@ -28,6 +28,9 @@ using PbrCsm4 = pbr_csm4_shader_cs_pbr_csm4.Shaders;
 using PbrSkinning = pbr_skinning_shader_cs_pbr_skinning.Shaders;
 using PbrSkinningCsm4 = pbr_skinning_csm4_shader_cs_pbr_skinning_csm4.Shaders;
 using PbrSkinningCsm1 = pbr_skinning_csm1_shader_cs_pbr_skinning_csm1.Shaders;
+using PbrSkinMorph = pbr_skinning_morphing_shader_cs_pbr_skinning_morphing.Shaders;
+using PbrSkinMorphCsm1 = pbr_skinning_morphing_csm1_shader_cs_pbr_skinning_morphing_csm1.Shaders;
+using PbrSkinMorphCsm4 = pbr_skinning_morphing_csm4_shader_cs_pbr_skinning_morphing_csm4.Shaders;
 using GameEditor.Framework.Core;
 using GameEditor.Framework.Renderer.Server.Materials;
 
@@ -71,6 +74,16 @@ namespace GameEditor.Framework.Renderer.Server
         // M4: PBR + GPU skinning + 1-cascade directional shadow (default CSM1-mode receive).
         private readonly sg_pipeline[] _pbrSkinningCsm1Pipelines = new sg_pipeline[8];
         private sg_shader _pbrSkinningCsm1Shader;
+
+        // M4: PBR + GPU skinning + morph targets. Same 80 B skinned vertex layout (morph displacements
+        // ride a texture indexed by gl_VertexIndex, not vertex attributes), so all three reuse
+        // BuildPbrSkinningPipeline. Morph-only meshes (no skin) take this path too with identity bones.
+        private readonly sg_pipeline[] _pbrSkinMorphPipelines     = new sg_pipeline[8];
+        private sg_shader _pbrSkinMorphShader;
+        private readonly sg_pipeline[] _pbrSkinMorphCsm1Pipelines = new sg_pipeline[8];
+        private sg_shader _pbrSkinMorphCsm1Shader;
+        private readonly sg_pipeline[] _pbrSkinMorphCsm4Pipelines = new sg_pipeline[8];
+        private sg_shader _pbrSkinMorphCsm4Shader;
         private bool _disposed;
 
         // ── lifecycle ────────────────────────────────────────────────────────────────
@@ -164,6 +177,40 @@ namespace GameEditor.Framework.Renderer.Server
                     (flags & PipelineFlags.DoubleSided) != 0,
                     (flags & PipelineFlags.OffscreenRt) != 0);
             }
+
+            // ── M4: PBR skinning + morph (no CSM / CSM1 / CSM4) — same 80 B layout, BuildPbrSkinningPipeline. ──
+            _pbrSkinMorphShader = sg_make_shader(PbrSkinMorph.pbr_skinning_morphing_pbr_program_shader_desc(sg_query_backend()));
+            for (int i = 0; i < _pbrSkinMorphPipelines.Length; i++)
+            {
+                var flags = (PipelineFlags)i;
+                _pbrSkinMorphPipelines[i] = BuildPbrSkinningPipeline(
+                    _pbrSkinMorphShader,
+                    (flags & PipelineFlags.AlphaBlend)  != 0,
+                    (flags & PipelineFlags.DoubleSided) != 0,
+                    (flags & PipelineFlags.OffscreenRt) != 0);
+            }
+
+            _pbrSkinMorphCsm1Shader = sg_make_shader(PbrSkinMorphCsm1.pbr_skinning_morphing_csm1_pbr_program_shader_desc(sg_query_backend()));
+            for (int i = 0; i < _pbrSkinMorphCsm1Pipelines.Length; i++)
+            {
+                var flags = (PipelineFlags)i;
+                _pbrSkinMorphCsm1Pipelines[i] = BuildPbrSkinningPipeline(
+                    _pbrSkinMorphCsm1Shader,
+                    (flags & PipelineFlags.AlphaBlend)  != 0,
+                    (flags & PipelineFlags.DoubleSided) != 0,
+                    (flags & PipelineFlags.OffscreenRt) != 0);
+            }
+
+            _pbrSkinMorphCsm4Shader = sg_make_shader(PbrSkinMorphCsm4.pbr_skinning_morphing_csm4_pbr_program_shader_desc(sg_query_backend()));
+            for (int i = 0; i < _pbrSkinMorphCsm4Pipelines.Length; i++)
+            {
+                var flags = (PipelineFlags)i;
+                _pbrSkinMorphCsm4Pipelines[i] = BuildPbrSkinningPipeline(
+                    _pbrSkinMorphCsm4Shader,
+                    (flags & PipelineFlags.AlphaBlend)  != 0,
+                    (flags & PipelineFlags.DoubleSided) != 0,
+                    (flags & PipelineFlags.OffscreenRt) != 0);
+            }
         }
 
         /// <summary>Look up the cached pipeline for the given flag combination.</summary>
@@ -200,6 +247,21 @@ namespace GameEditor.Framework.Renderer.Server
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public sg_pipeline GetPbrSkinningCsm1Pipeline(PipelineFlags flags)
             => _pbrSkinningCsm1Pipelines[(int)flags & 0x07];
+
+        /// <summary>GPU-skinning + morph-target PBR pipeline (no directional CSM).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public sg_pipeline GetPbrSkinMorphPipeline(PipelineFlags flags)
+            => _pbrSkinMorphPipelines[(int)flags & 0x07];
+
+        /// <summary>GPU-skinning + morph-target PBR pipeline that also samples the 1-cascade directional shadow.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public sg_pipeline GetPbrSkinMorphCsm1Pipeline(PipelineFlags flags)
+            => _pbrSkinMorphCsm1Pipelines[(int)flags & 0x07];
+
+        /// <summary>GPU-skinning + morph-target PBR pipeline that also samples the 4-cascade directional shadow.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public sg_pipeline GetPbrSkinMorphCsm4Pipeline(PipelineFlags flags)
+            => _pbrSkinMorphCsm4Pipelines[(int)flags & 0x07];
 
         /// <summary>The shared shader object (for inspecting reflection).</summary>
         public sg_shader Shader => _shaders[0];
@@ -712,12 +774,34 @@ namespace GameEditor.Framework.Renderer.Server
                 _pbrSkinningCsm1Shader = default;
             }
 
+            // Skinning + morph variants (no CSM / CSM1 / CSM4).
+            DestroyPipelineSet(_pbrSkinMorphPipelines,     ref _pbrSkinMorphShader);
+            DestroyPipelineSet(_pbrSkinMorphCsm1Pipelines, ref _pbrSkinMorphCsm1Shader);
+            DestroyPipelineSet(_pbrSkinMorphCsm4Pipelines, ref _pbrSkinMorphCsm4Shader);
+
             // Destroy the single shader object (shared across all variants).
             if (_shaders[0].id != 0)
             {
                 sg_destroy_shader(_shaders[0]);
                 for (int i = 0; i < _shaders.Length; i++)
                     _shaders[i] = default;
+            }
+        }
+
+        private static void DestroyPipelineSet(sg_pipeline[] pipelines, ref sg_shader shader)
+        {
+            for (int i = 0; i < pipelines.Length; i++)
+            {
+                if (pipelines[i].id != 0)
+                {
+                    sg_destroy_pipeline(pipelines[i]);
+                    pipelines[i] = default;
+                }
+            }
+            if (shader.id != 0)
+            {
+                sg_destroy_shader(shader);
+                shader = default;
             }
         }
 

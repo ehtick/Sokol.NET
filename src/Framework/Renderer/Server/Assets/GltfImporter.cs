@@ -262,23 +262,27 @@ namespace GameEditor.Framework.Renderer.Server.Assets
             // Preload (scene reload) skips node building — the entities already exist.
             private Entity? BuildScene()
             {
-                // A glTF mesh is "skinned" when some node references it together with a skin.
-                // Those primitives take the GPU-skinning path (80 B verts + bone UBO); their static
-                // 48 B registration is skipped so we don't create unused mesh GPU buffers.
-                var skinnedMeshPtrs = new HashSet<IntPtr>();
+                // A glTF mesh takes the per-character path (80 B verts + animator + SkinnedCharacter-
+                // Registry) when some node references it WITH A SKIN *or* when it has MORPH TARGETS
+                // (blend shapes). Morph-only meshes (no skin) ride the same skinned pipeline with
+                // identity bones, so one draw path covers skinning, morphing, and both — and their
+                // animated morph weights come from the shared CGltfAnimator. Their static 48 B
+                // registration is skipped so we don't create unused mesh GPU buffers.
+                var charMeshPtrs = new HashSet<IntPtr>();
                 for (int ni = 0; ni < (int)_data->nodes_count; ni++)
                 {
                     cgltf_node* n = &_data->nodes[ni];
-                    if (n->mesh != null && n->skin != null) skinnedMeshPtrs.Add((IntPtr)n->mesh);
+                    if (n->mesh == null) continue;
+                    if (n->skin != null || MeshHasMorphTargets(n->mesh)) charMeshPtrs.Add((IntPtr)n->mesh);
                 }
 
-                RegisterResources(skinnedMeshPtrs, out var primKeysByMesh, out var primMatsByMesh);
+                RegisterResources(charMeshPtrs, out var primKeysByMesh, out var primMatsByMesh);
 
-                // Skinned characters register their GPU meshes + shared animator into
+                // Character meshes register their GPU meshes + shared animator into
                 // SkinnedCharacterRegistry ALWAYS — even in preload (_buildEntities == false) — so a
                 // cold scene reload repopulates the registry that the already-deserialized
                 // SkinnedMeshRenderer entities resolve against. Entity creation stays gated.
-                if (skinnedMeshPtrs.Count > 0)
+                if (charMeshPtrs.Count > 0)
                     return BuildSkinnedNodes(_buildEntities);
 
                 return _buildEntities ? BuildNodes(primKeysByMesh, primMatsByMesh) : (Entity?)null;
@@ -310,7 +314,8 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                     cgltf_mesh* mesh = &data->meshes[mi];
                     if (skinnedMeshPtrs.Contains((IntPtr)mesh))
                     {
-                        // Skinned mesh — registered via the GPU-skinning path in BuildSkinnedNodes.
+                        // Character mesh (skinned and/or morphed) — registered via the per-character
+                        // path in BuildSkinnedNodes; skipped here so no unused 48 B buffers are made.
                         primKeysByMesh[(IntPtr)mesh] = Array.Empty<string>();
                         primMatsByMesh[(IntPtr)mesh] = Array.Empty<string>();
                         continue;
@@ -391,12 +396,39 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                     ? new CGltfAnimator(extractor.Animations[0], extractor.Nodes, extractor.BoneCount, extractor.BoneInfoMap)
                     : null;
 
+                // node name → CGltfSkinExtractor node index. The animator keys animated morph weights by
+                // that DFS index, so each morphed primitive records its owning node's index for lookup.
+                var nodeNameToIndex = new Dictionary<string, int>();
+                foreach (var rn in extractor.Nodes)
+                    if (!string.IsNullOrEmpty(rn.NodeName))
+                        nodeNameToIndex.TryAdd(rn.NodeName!, rn.NodeIndex);
+
                 int runningPrim = 0;
                 for (int ni = 0; ni < (int)data->nodes_count; ni++)
                 {
                     cgltf_node* node = &data->nodes[ni];
-                    if (node->mesh == null || node->skin == null) continue;
+                    if (node->mesh == null) continue;
+                    bool nodeSkinned = node->skin != null;
+                    bool nodeMorphed = MeshHasMorphTargets(node->mesh);
+                    if (!nodeSkinned && !nodeMorphed) continue;   // pure-static mesh on a character model — skip
                     string nodeName = PtrToStr(node->name) ?? "SkinnedMesh";
+
+                    // Skinned meshes are placed by their joints (node transform ignored, per the glTF
+                    // skinning spec). A morph-only mesh has no joints, so it is placed by the node's own
+                    // world transform instead. Computed once per node (not per primitive).
+                    Transform nodeTransform = new Transform { Position = Vector3.Zero, Rotation = Quaternion.Identity, Scale = Vector3.One, Parent = container };
+                    if (!nodeSkinned)
+                    {
+                        float* wm = stackalloc float[16];
+                        cgltf_node_transform_world(in *node, wm);
+                        var world = new Matrix4x4(
+                            wm[0],  wm[1],  wm[2],  wm[3],
+                            wm[4],  wm[5],  wm[6],  wm[7],
+                            wm[8],  wm[9],  wm[10], wm[11],
+                            wm[12], wm[13], wm[14], wm[15]);
+                        if (Matrix4x4.Decompose(world, out var ws, out var wr, out var wp))
+                        { nodeTransform.Position = wp; nodeTransform.Rotation = wr; nodeTransform.Scale = ws; }
+                    }
 
                     int primCount = (int)node->mesh->primitives_count;
                     for (int pi = 0; pi < primCount; pi++)
@@ -406,15 +438,29 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                         if (!BuildSkinnedPrimitive(prim, out SkinnedVertex[] sverts, out uint[] sidx, out Aabb sbounds)) continue;
 
                         int primIndex = runningPrim++;
-                        entry.Meshes[primIndex] = SkinnedMesh.Create(sverts, sidx, in sbounds, $"{nodeName}_p{pi}");
+                        var skinnedMesh = SkinnedMesh.Create(sverts, sidx, in sbounds, $"{nodeName}_p{pi}");
+
+                        // Morph targets: build the immutable displacement texture once; record the node
+                        // index + static weights for per-frame weight resolution at draw time.
+                        if (prim->targets_count > 0 &&
+                            MorphTargetTexture.Build(prim, sverts.Length, out var morphImg, out var morphView, out int morphCount))
+                        {
+                            skinnedMesh.MorphImage        = morphImg;
+                            skinnedMesh.MorphView         = morphView;
+                            skinnedMesh.MorphTargetCount  = morphCount;
+                            skinnedMesh.MorphNodeIndex    = nodeNameToIndex.TryGetValue(nodeName, out int mni) ? mni : -1;
+                            skinnedMesh.StaticMorphWeights = ReadStaticMorphWeights(node);
+                        }
+
+                        entry.Meshes[primIndex] = skinnedMesh;
 
                         if (!buildEntities) continue;   // preload: registry only, no entities
 
                         string matKey = prim->material != null
                             ? $"{_path}#mat{(int)(prim->material - data->materials)}" : "";
 
-                        Entity e = _world.CreateEntity($"{nodeName}_skin{pi}");
-                        _world.AddComponent(e, new Transform { Position = Vector3.Zero, Rotation = Quaternion.Identity, Scale = Vector3.One, Parent = container });
+                        Entity e = _world.CreateEntity($"{nodeName}_{(nodeSkinned ? "skin" : "morph")}{pi}");
+                        _world.AddComponent(e, nodeTransform);
                         _world.AddComponent(e, new SkinnedMeshRenderer
                         {
                             CharacterKey    = _path,
@@ -427,7 +473,7 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                     }
                 }
 
-                Logger.Info($"[glTF] skinned {(buildEntities ? "import" : "preload")} '{_path}': {extractor.BoneCount} bones, {extractor.Animations.Count} anim(s), {runningPrim} prim(s)");
+                Logger.Info($"[glTF] character {(buildEntities ? "import" : "preload")} '{_path}': {extractor.BoneCount} bones, {extractor.Animations.Count} anim(s), {runningPrim} prim(s)");
                 return buildEntities ? container : (Entity?)null;
             }
 
@@ -725,6 +771,34 @@ namespace GameEditor.Framework.Renderer.Server.Assets
                 fixed (float* p = buf)
                     cgltf_accessor_unpack_floats(*acc, p, (nuint)totalFloats);
                 return buf;
+            }
+
+            // True when any primitive of the mesh declares morph targets (blend shapes).
+            private static bool MeshHasMorphTargets(cgltf_mesh* mesh)
+            {
+                for (int pi = 0; pi < (int)mesh->primitives_count; pi++)
+                    if (mesh->primitives[pi].targets_count > 0) return true;
+                return false;
+            }
+
+            // Static (non-animated) morph weights: node override first (glTF spec), else the mesh
+            // defaults. Used as the fallback when no animation drives the weights. Null when neither set.
+            private static float[]? ReadStaticMorphWeights(cgltf_node* node)
+            {
+                if (node->weights != null && node->weights_count > 0)
+                {
+                    var w = new float[(int)node->weights_count];
+                    for (int i = 0; i < w.Length; i++) w[i] = node->weights[i];
+                    return w;
+                }
+                cgltf_mesh* mesh = node->mesh;
+                if (mesh != null && mesh->weights != null && mesh->weights_count > 0)
+                {
+                    var w = new float[(int)mesh->weights_count];
+                    for (int i = 0; i < w.Length; i++) w[i] = mesh->weights[i];
+                    return w;
+                }
+                return null;
             }
         }
 

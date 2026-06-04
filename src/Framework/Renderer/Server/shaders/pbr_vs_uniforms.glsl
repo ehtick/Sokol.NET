@@ -68,5 +68,11 @@ layout(binding=11) uniform texture2D u_jointsSampler_Tex;
 layout(binding=11) uniform sampler   u_jointsSampler_Smp;
 
 // Morph-target texture array (binding=9) — same unconditional-declaration pattern.
+// Like the joint texture above, it holds raw RGBA32F displacement data read with texelFetch only
+// (never filtered), so it MUST be unfilterable_float + nonfiltering — otherwise binding it trips
+// sokol's VALIDATE_ABND_TEXVIEW_EXPECTED_FILTERABLE_IMAGE panic on GLES3 drivers without
+// GL_OES_texture_float_linear (e.g. Mali-G52 / Galaxy Tab A8), exactly as the joints texture did.
+@image_sample_type u_MorphTargetsSampler_Tex unfilterable_float
+@sampler_type u_MorphTargetsSampler_Smp nonfiltering
 layout(binding=9) uniform texture2DArray u_MorphTargetsSampler_Tex;
 layout(binding=9) uniform sampler        u_MorphTargetsSampler_Smp;
