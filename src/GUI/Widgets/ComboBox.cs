@@ -22,6 +22,15 @@ public class ComboBox : Widget
     private bool  _hasPopupAnchor;
     private Vector2 _popupAnchorScreenPos;
 
+    // Touch drag-to-scroll: a press on the rows is a *candidate* tap that becomes a pan
+    // once it moves past the slop, so a finger-flick scrolls the list instead of picking
+    // a row. Selection is therefore deferred to mouse-up (and skipped if we panned).
+    private bool  _pressInList;
+    private bool  _dragScrolling;
+    private float _pressStartY, _pressLastY;
+    private const float DragSlop      = 8f;   // px before a press becomes a pan
+    private const float ScrollbarHitW = 24f;  // touch-friendly grab width for the scrollbar
+
     public IReadOnlyList<string> Items => _items;
 
     public int SelectedIndex
@@ -244,32 +253,33 @@ public class ComboBox : Widget
     public override bool OnMouseDown(MouseEvent e)
     {
         var   local   = _open ? PopupLocalFromTargetLocal(e.LocalPosition) : e.LocalPosition;
-        float itemH   = ThemeManager.Current.InputHeight;
         float sbW     = ThemeManager.Current.ScrollBarWidth;
 
         if (_open)
         {
             var (visibleH, needsScroll, ddY) = ComputeDropdownMetrics();
+            float sbHit = MathF.Max(sbW, ScrollbarHitW);
 
-            // Click on scrollbar?
-            if (needsScroll && local.X >= Bounds.Width - sbW && local.Y >= ddY && local.Y < ddY + visibleH)
+            // Grab the scrollbar? (wider hit area so it's touch-reachable)
+            if (needsScroll && local.X >= Bounds.Width - sbHit && local.Y >= ddY && local.Y < ddY + visibleH)
             {
-                _sbDragging       = true;
-                _sbDragStartY     = local.Y;
+                _sbDragging        = true;
+                _sbDragStartY      = local.Y;
                 _sbDragStartScroll = _scrollOffset;
                 return true;
             }
 
-            // Click on item rows?
-            if (local.Y >= ddY && local.Y < ddY + visibleH)
+            // Press on the rows: a candidate tap. Don't select yet — a drag becomes a pan
+            // (see OnMouseMove), and a tap selects on release (see OnMouseUp).
+            if (local.Y >= ddY && local.Y < ddY + visibleH && local.X >= 0 && local.X < Bounds.Width)
             {
-                int idx = (int)((local.Y - ddY + _scrollOffset) / itemH);
-                if (idx >= 0 && idx < _items.Count)
-                {
-                    Sokol.SLog.Info($"ComboBox: selected index {idx} ('{_items[idx]}')", "Sokol.GUI");
-                    SelectedIndex = idx;
-                }
+                _pressInList   = true;
+                _dragScrolling = false;
+                _pressStartY   = _pressLastY = local.Y;
+                return true;
             }
+
+            // Press elsewhere (e.g. back on the closed box) → dismiss.
             _open = false;
             _hoveredIndex = -1;
             _sbDragging   = false;
@@ -293,8 +303,32 @@ public class ComboBox : Widget
 
     public override bool OnMouseUp(MouseEvent e)
     {
-        _sbDragging = false;
-        return false;
+        bool panned = _dragScrolling;
+
+        // A tap (press that didn't become a pan) selects the row under the release point.
+        if (_open && _pressInList && !_dragScrolling)
+        {
+            var   local = PopupLocalFromTargetLocal(e.LocalPosition);
+            float itemH = ThemeManager.Current.InputHeight;
+            var (visibleH, _, ddY) = ComputeDropdownMetrics();
+            if (local.Y >= ddY && local.Y < ddY + visibleH)
+            {
+                int idx = (int)((local.Y - ddY + _scrollOffset) / itemH);
+                if (idx >= 0 && idx < _items.Count)
+                {
+                    Sokol.SLog.Info($"ComboBox: selected index {idx} ('{_items[idx]}')", "Sokol.GUI");
+                    SelectedIndex = idx;
+                }
+            }
+            _open = false;
+            _hoveredIndex = -1;
+            Screen.SetActivePopup(null);
+        }
+
+        _sbDragging    = false;
+        _pressInList   = false;
+        _dragScrolling = false;
+        return panned;   // if we panned, swallow the up so it isn't treated as a click
     }
 
     public override bool OnMouseLeave(MouseEvent e) { IsHovered = false; _hoveredIndex = -1; _sbHovered = false; return false; }
@@ -316,6 +350,24 @@ public class ComboBox : Widget
             float dy        = (local.Y - _sbDragStartY) / ratio;
             _scrollOffset   = Math.Clamp(_sbDragStartScroll + dy, 0f, maxScroll);
             return true;
+        }
+
+        // Drag-anywhere panning: a press on the rows that moves past the slop scrolls the
+        // list (finger-flick) and suppresses the would-be tap. Only when there's overflow.
+        if (_pressInList)
+        {
+            if (!_dragScrolling && needsScroll && MathF.Abs(local.Y - _pressStartY) > DragSlop)
+            {
+                _dragScrolling = true;
+                _hoveredIndex  = -1;
+            }
+            if (_dragScrolling)
+            {
+                float maxScroll = MathF.Max(0f, totalH - visibleH);
+                _scrollOffset   = Math.Clamp(_scrollOffset - (local.Y - _pressLastY), 0f, maxScroll);
+                _pressLastY     = local.Y;
+            }
+            return true;   // swallow the move so an outer ScrollView can't hijack the gesture
         }
 
         // Scrollbar hover
