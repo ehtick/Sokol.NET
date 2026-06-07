@@ -111,10 +111,10 @@ public sealed class Screen : Widget
         get
         {
             if (_mobileOverlay == null)
-            {
                 _mobileOverlay = new MobileKeyboardOverlay();
+            // Re-attach if a ClearChildren() detached it (so it stays live + on top).
+            if (_mobileOverlay.Parent != this)
                 AddChild(_mobileOverlay);
-            }
             return _mobileOverlay;
         }
     }
