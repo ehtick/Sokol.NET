@@ -166,6 +166,10 @@ public sealed class Renderer
     public void LineTo(float x, float y)  => nvgLineTo(_vg, x, y);
     public void ArcTo(float x1, float y1, float x2, float y2, float radius)
         => nvgArcTo(_vg, x1, y1, x2, y2, radius);
+    public void BezierTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
+        => nvgBezierTo(_vg, c1x, c1y, c2x, c2y, x, y);
+    public void QuadTo(float cx, float cy, float x, float y)
+        => nvgQuadTo(_vg, cx, cy, x, y);
     public void ClosePath()  => nvgClosePath(_vg);
     public void AddRect(float x, float y, float w, float h)  => nvgRect(_vg, x, y, w, h);
     public void AddRect(Rect r)  => nvgRect(_vg, r.X, r.Y, r.Width, r.Height);
