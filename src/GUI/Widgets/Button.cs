@@ -26,14 +26,18 @@ public class Button : Widget
     // ─── Sizing ──────────────────────────────────────────────────────────────
     public override Vector2 PreferredSize(Renderer renderer)
     {
-        if (FixedSize.HasValue) return FixedSize.Value;
+        // A FixedSize axis of 0 means "auto" (the framework convention — see Widget.PreferredSize), so a
+        // button can fix its height yet auto-size its width. Auto width is measured from the label so the
+        // text is NEVER clipped, in any language/script (MeasureText honours the per-glyph font fallbacks).
+        var fs = FixedSize ?? Vector2.Zero;
+        if (fs.X > 0f && fs.Y > 0f) return fs;
 
         var theme = ThemeManager.Current;
         ApplyFont(renderer, theme);
         float tw  = renderer.MeasureText(Text);
         float pad = Padding.Horizontal > 0 ? Padding.Horizontal : theme.ButtonPaddingH * 2;
         float ph  = Padding.Vertical   > 0 ? Padding.Vertical   : theme.ButtonPaddingV * 2;
-        return new Vector2(tw + pad, theme.ButtonHeight + ph);
+        return new Vector2(fs.X > 0f ? fs.X : tw + pad, fs.Y > 0f ? fs.Y : theme.ButtonHeight + ph);
     }
 
     // ─── Drawing ─────────────────────────────────────────────────────────────
