@@ -148,7 +148,11 @@ jobs:
       run: |
         mkdir build-windows
         cd build-windows
-        cmake ../ext -G "Visual Studio 17 2022" -A ${{ matrix.arch }}
+        # Don't pin the VS generator: the windows-latest image's Visual Studio version moves over
+        # time (it was VS2022; the windows-2025 image now ships VS2026), and a stale
+        # "-G Visual Studio 17 2022" makes CMake fail with "could not find any instance of Visual
+        # Studio". Let CMake auto-select the installed Visual Studio; -A still picks the platform.
+        cmake ../ext -A ${{ matrix.arch }}
     
     - name: Build Debug
       run: |
