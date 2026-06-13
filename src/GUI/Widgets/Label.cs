@@ -55,25 +55,32 @@ public class Label : Widget
         }
 
         ApplyFont(renderer);
-        renderer.SetTextAlign(effectiveAlign switch
+        var hAlign = effectiveAlign switch
         {
             TextAlign.Center => TextHAlign.Center,
             TextAlign.Right  => TextHAlign.Right,
             _                => TextHAlign.Left,
-        });
-
-        float x = effectiveAlign switch
-        {
-            TextAlign.Center => inner.X + inner.Width * 0.5f,
-            TextAlign.Right  => inner.Right,
-            _                => inner.X,
         };
-        float y = inner.Y + inner.Height * 0.5f;
+        // Wrapped text is a box anchored on the FIRST line's TOP (it grows downward from inner.Y);
+        // single-line text is centred vertically in the widget. Anchoring a text box on the line
+        // MIDDLE (the old default) drew the first line half a line high — harmless normally, but its
+        // top was clipped inside a scroll view.
+        renderer.SetTextAlign(hAlign, Wrap == TextWrap.Wrap ? TextVAlign.Top : TextVAlign.Middle);
 
         if (Wrap == TextWrap.Wrap)
+        {
             renderer.DrawTextBox(inner.X, inner.Y, inner.Width, Text, fg);
+        }
         else
-            renderer.DrawText(x, y, Text, fg);
+        {
+            float x = effectiveAlign switch
+            {
+                TextAlign.Center => inner.X + inner.Width * 0.5f,
+                TextAlign.Right  => inner.Right,
+                _                => inner.X,
+            };
+            renderer.DrawText(x, inner.Y + inner.Height * 0.5f, Text, fg);
+        }
 
         base.Draw(renderer);
     }
