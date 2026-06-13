@@ -27,6 +27,15 @@ public class SokolNativeActivity extends NativeActivity {
     private EditText hiddenEditText;
     private TextWatcher textWatcher;
     private boolean isProcessingText = false;
+    private int lastSentLength = 0;
+
+    // Blank padding kept in the hidden capture EditText so the soft keyboard's backspace ALWAYS has
+    // something to delete — including when the on-screen GUI field opened already containing text
+    // (e.g. the current player name). Without it the EditText starts empty, the IME has nothing to
+    // shrink, no backspace is ever forwarded, and pre-existing text can't be deleted. Each deletion
+    // is forwarded as one KEYCODE_DEL; the GUI field holds the real text and removes one character
+    // per event (deletes past the real text are harmless no-ops).
+    private static final int KB_PAD = 64;
     
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -53,51 +62,40 @@ public class SokolNativeActivity extends NativeActivity {
         
         // Create text watcher as member variable so we can remove/add it
         textWatcher = new TextWatcher() {
-            private int lastSentLength = 0;
-            
             @Override
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {
             }
-            
+
             @Override
             public void onTextChanged(CharSequence s, int start, int before, int count) {
             }
-            
+
             @Override
             public void afterTextChanged(Editable s) {
-                String currentText = s.toString();
-                int currentLength = currentText.length();
-                
-                // Skip if we're programmatically modifying text
+                // Skip our own programmatic buffer resets.
                 if (isProcessingText) {
                     return;
                 }
-                
-                // If text grew, send only the new characters
+                int currentLength = s.length();
+
+                // Text grew → forward the appended characters; shrank → forward one backspace each.
                 if (currentLength > lastSentLength) {
-                    String newChars = currentText.substring(lastSentLength);
+                    String newChars = s.toString().substring(lastSentLength);
                     for (char c : newChars.toCharArray()) {
                         nativeOnKeyboardChar(c);
                     }
-                    lastSentLength = currentLength;
-                }
-                // If text shrank, handle backspace
-                else if (currentLength < lastSentLength) {
+                } else if (currentLength < lastSentLength) {
                     int deleteCount = lastSentLength - currentLength;
                     for (int i = 0; i < deleteCount; i++) {
                         nativeOnKeyboardKey(67, true);  // KEYCODE_DEL down
                         nativeOnKeyboardKey(67, false); // KEYCODE_DEL up
                     }
-                    lastSentLength = currentLength;
                 }
-                
-                // Limit EditText length to prevent it from growing too large (keep last 100 chars)
-                if (currentLength > 100) {
-                    isProcessingText = true;
-                    String trimmed = currentText.substring(currentLength - 100);
-                    s.replace(0, s.length(), trimmed);
-                    lastSentLength = 100;
-                    isProcessingText = false;
+                lastSentLength = currentLength;
+
+                // Replenish padding when it runs low so backspace never runs out of headroom.
+                if (currentLength < KB_PAD / 2) {
+                    resetKeyboardBuffer();
                 }
             }
         };
@@ -160,8 +158,9 @@ public class SokolNativeActivity extends NativeActivity {
             public void run() {
                 if (hiddenEditText != null && inputMethodManager != null) {
                     if (show) {
-                        // Request focus and show keyboard
-                        // The TextWatcher will automatically clear after each character
+                        // Seed padding so backspace can delete text the on-screen GUI field already
+                        // contained (it is opened pre-filled, e.g. with the current name).
+                        resetKeyboardBuffer();
                         hiddenEditText.requestFocus();
                         inputMethodManager.showSoftInput(hiddenEditText, InputMethodManager.SHOW_IMPLICIT);
                     } else {
@@ -172,6 +171,21 @@ public class SokolNativeActivity extends NativeActivity {
                 }
             }
         });
+    }
+
+    // Fill the hidden capture EditText with KB_PAD blank characters and put the caret at the end, so
+    // the soft keyboard always has padding to delete (backspace) and room to append (typing). Only
+    // growth/shrink relative to this baseline is forwarded — the padding itself never is. Runs on the
+    // UI thread (every caller already is).
+    private void resetKeyboardBuffer() {
+        if (hiddenEditText == null) return;
+        isProcessingText = true;
+        char[] pad = new char[KB_PAD];
+        java.util.Arrays.fill(pad, ' ');
+        hiddenEditText.setText(new String(pad));
+        hiddenEditText.setSelection(KB_PAD);
+        lastSentLength = KB_PAD;
+        isProcessingText = false;
     }
     
     // Native methods to forward keyboard events
