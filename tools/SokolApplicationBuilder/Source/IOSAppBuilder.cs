@@ -734,21 +734,20 @@ namespace SokolApplicationBuilder
                 appBundlePath = foundPath;
                 Log.LogMessage(MessageImportance.High, $"Found app bundle at: {appBundlePath}");
 
-                // Determine the target device ID.
-                // If the caller passed --ios-device, use it directly (supports WiFi devices).
-                // Otherwise fall back to ios-deploy -c USB scan.
-                string targetDeviceId;
-                string targetDeviceName;
+                // Determine the target device(s). With --ios-device, use it directly (supports WiFi
+                // devices that won't appear in the USB scan). Otherwise scan USB via ios-deploy -c and,
+                // when several devices are connected, prompt to choose one (or all) — matching the
+                // Android flow. (A prior change auto-picked usbDevices[0], so a multi-device deploy
+                // silently installed on only the first device.)
+                var selectedDevices = new List<(string Id, string Name)>();
 
                 if (!string.IsNullOrEmpty(opts.IOSDeviceId))
                 {
-                    targetDeviceId   = opts.IOSDeviceId;
-                    targetDeviceName = opts.IOSDeviceId;
-                    Log.LogMessage(MessageImportance.High, $"Using specified iOS device: {targetDeviceId}");
+                    selectedDevices.Add((opts.IOSDeviceId, opts.IOSDeviceId));
+                    Log.LogMessage(MessageImportance.High, $"Using specified iOS device: {opts.IOSDeviceId}");
                 }
                 else
                 {
-                    // Legacy USB-only scan via ios-deploy -c
                     var checkResult = Cli.Wrap("which")
                         .WithArguments("ios-deploy")
                         .WithValidation(CommandResultValidation.None)
@@ -785,75 +784,137 @@ namespace SokolApplicationBuilder
                         return false;
                     }
 
-                    targetDeviceId   = usbDevices[0].Id;
-                    targetDeviceName = usbDevices[0].Name;
-                    Log.LogMessage(MessageImportance.High, $"Found USB device: {targetDeviceName} ({targetDeviceId})");
-                }
-
-                // ── Install ───────────────────────────────────────────────────────
-                // Primary: xcrun devicectl — works over WiFi and USB (Xcode 15+, iOS 17+)
-                bool installed = TryInstallViaDevicectl(targetDeviceId, targetDeviceName, appBundlePath);
-
-                // Fallback: ios-deploy without --no-wifi (supports WiFi if paired, and USB)
-                if (!installed)
-                    installed = TryInstallViaIosDeploy(targetDeviceId, targetDeviceName, appBundlePath);
-
-                if (!installed)
-                {
-                    Log.LogError($"All installation methods failed for device {targetDeviceName} ({targetDeviceId}).");
-                    return false;
-                }
-
-                Log.LogMessage(MessageImportance.High, $"App installed successfully on device: {targetDeviceName}!");
-
-                // ── Launch ────────────────────────────────────────────────────────
-                if (runAfterInstall)
-                {
-                    Log.LogMessage(MessageImportance.High, $"Launching app on device: {targetDeviceName} ({targetDeviceId})");
-
-                    string infoPlistPath = Path.Combine(appBundlePath, "Info.plist");
-                    string bundleId      = "";
-
-                    try
+                    if (usbDevices.Count == 1)
                     {
-                        var plistResult = Cli.Wrap("plutil")
-                            .WithArguments($"-extract CFBundleIdentifier raw \"{infoPlistPath}\"")
-                            .WithValidation(CommandResultValidation.None)
-                            .ExecuteBufferedAsync().GetAwaiter().GetResult();
+                        selectedDevices.Add(usbDevices[0]);
+                        Log.LogMessage(MessageImportance.High, $"✅ Found single device: {usbDevices[0].Name} ({usbDevices[0].Id})");
+                    }
+                    else
+                    {
+                        Log.LogMessage(MessageImportance.High, $"📱 Multiple iOS devices detected ({usbDevices.Count} devices):");
+                        Log.LogMessage(MessageImportance.High, "======================================================");
+                        for (int i = 0; i < usbDevices.Count; i++)
+                            Log.LogMessage(MessageImportance.High, $"{i + 1}) {usbDevices[i].Name} ({usbDevices[i].Id})");
+                        Log.LogMessage(MessageImportance.High, $"{usbDevices.Count + 1}) All devices");
 
-                        if (plistResult.ExitCode == 0)
-                            bundleId = plistResult.StandardOutput.Trim();
+                        if (opts.Interactive)
+                        {
+                            Console.WriteLine();
+                            int selection = -1;
+                            while (selection < 1 || selection > usbDevices.Count + 1)
+                            {
+                                Console.Write($"Select device (1-{usbDevices.Count + 1}): ");
+                                string? input = Console.ReadLine();
+                                if (int.TryParse(input, out selection) && selection >= 1 && selection <= usbDevices.Count + 1)
+                                {
+                                    if (selection == usbDevices.Count + 1)
+                                    {
+                                        selectedDevices = new List<(string Id, string Name)>(usbDevices);
+                                        Log.LogMessage(MessageImportance.High, $"✅ Selected all devices ({usbDevices.Count} devices)");
+                                    }
+                                    else
+                                    {
+                                        selectedDevices.Add(usbDevices[selection - 1]);
+                                        Log.LogMessage(MessageImportance.High, $"✅ Selected device: {usbDevices[selection - 1].Name} ({usbDevices[selection - 1].Id})");
+                                    }
+                                    break;
+                                }
+
+                                Console.WriteLine($"❌ Invalid selection. Please enter a number between 1 and {usbDevices.Count + 1}.");
+                                selection = -1;
+                            }
+                        }
                         else
-                            Log.LogWarning($"Could not extract bundle ID from Info.plist: {plistResult.StandardError}");
-                    }
-                    catch (Exception ex)
-                    {
-                        Log.LogWarning($"plutil failed: {ex.Message}");
-                    }
-
-                    if (!string.IsNullOrEmpty(bundleId))
-                    {
-                        var launchResult = Cli.Wrap("xcrun")
-                            .WithArguments($"devicectl device process launch --device {targetDeviceId} {bundleId}")
-                            .WithStandardOutputPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
-                            .WithStandardErrorPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
-                            .WithValidation(CommandResultValidation.None)
-                            .ExecuteBufferedAsync().GetAwaiter().GetResult();
-
-                        if (launchResult.ExitCode != 0)
-                            Log.LogWarning($"App launch failed (exit {launchResult.ExitCode}): {launchResult.StandardError}");
-                        else
-                            Log.LogMessage(MessageImportance.High, $"App launched successfully on device: {targetDeviceName}!");
+                        {
+                            selectedDevices.Add(usbDevices[0]);
+                            Log.LogMessage(MessageImportance.High, $"⚠️  Using first device: {usbDevices[0].Name} ({usbDevices[0].Id})");
+                            Log.LogWarning("Multiple devices found. Using the first one. Pass --ios-device <UDID> to choose, or --interactive to be prompted.");
+                        }
                     }
                 }
 
-                return true;
+                // Install (and optionally launch) on each selected device.
+                bool allOk = true;
+                foreach (var device in selectedDevices)
+                {
+                    if (selectedDevices.Count > 1)
+                        Log.LogMessage(MessageImportance.High, $"\n📱 Installing on device: {device.Name} ({device.Id})");
+                    if (!InstallAndLaunchOnDevice(device.Id, device.Name, appBundlePath, runAfterInstall))
+                        allOk = false;
+                }
+                return allOk;
             }
             catch (Exception ex)
             {
                 Log.LogError($"Failed to install on device: {ex.Message}");
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Install the app bundle on ONE device (xcrun devicectl first, ios-deploy fallback) and,
+        /// when requested, launch it. Returns false only if every install method failed.
+        /// </summary>
+        private bool InstallAndLaunchOnDevice(string targetDeviceId, string targetDeviceName, string appBundlePath, bool runAfterInstall)
+        {
+            // ── Install ───────────────────────────────────────────────────────
+            // Primary: xcrun devicectl — works over WiFi and USB (Xcode 15+, iOS 17+)
+            bool installed = TryInstallViaDevicectl(targetDeviceId, targetDeviceName, appBundlePath);
+
+            // Fallback: ios-deploy without --no-wifi (supports WiFi if paired, and USB)
+            if (!installed)
+                installed = TryInstallViaIosDeploy(targetDeviceId, targetDeviceName, appBundlePath);
+
+            if (!installed)
+            {
+                Log.LogError($"All installation methods failed for device {targetDeviceName} ({targetDeviceId}).");
+                return false;
+            }
+
+            Log.LogMessage(MessageImportance.High, $"App installed successfully on device: {targetDeviceName}!");
+
+            // ── Launch ────────────────────────────────────────────────────────
+            if (runAfterInstall)
+            {
+                Log.LogMessage(MessageImportance.High, $"Launching app on device: {targetDeviceName} ({targetDeviceId})");
+
+                string infoPlistPath = Path.Combine(appBundlePath, "Info.plist");
+                string bundleId      = "";
+
+                try
+                {
+                    var plistResult = Cli.Wrap("plutil")
+                        .WithArguments($"-extract CFBundleIdentifier raw \"{infoPlistPath}\"")
+                        .WithValidation(CommandResultValidation.None)
+                        .ExecuteBufferedAsync().GetAwaiter().GetResult();
+
+                    if (plistResult.ExitCode == 0)
+                        bundleId = plistResult.StandardOutput.Trim();
+                    else
+                        Log.LogWarning($"Could not extract bundle ID from Info.plist: {plistResult.StandardError}");
+                }
+                catch (Exception ex)
+                {
+                    Log.LogWarning($"plutil failed: {ex.Message}");
+                }
+
+                if (!string.IsNullOrEmpty(bundleId))
+                {
+                    var launchResult = Cli.Wrap("xcrun")
+                        .WithArguments($"devicectl device process launch --device {targetDeviceId} {bundleId}")
+                        .WithStandardOutputPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
+                        .WithStandardErrorPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
+                        .WithValidation(CommandResultValidation.None)
+                        .ExecuteBufferedAsync().GetAwaiter().GetResult();
+
+                    if (launchResult.ExitCode != 0)
+                        Log.LogWarning($"App launch failed (exit {launchResult.ExitCode}): {launchResult.StandardError}");
+                    else
+                        Log.LogMessage(MessageImportance.High, $"App launched successfully on device: {targetDeviceName}!");
+                }
+            }
+
+            return true;
         }
 
         /// <summary>
