@@ -40,6 +40,19 @@ public sealed class UIImage : IDisposable
         }
     }
 
+    /// <summary>
+    /// Create a UIImage from a raw RGBA8 pixel buffer (w*h*4 bytes, row-major, top-left origin).
+    /// Used for pixels produced at runtime — e.g. an SVG rasterised via NanoSVG. Returns null if the
+    /// dimensions/data are invalid or NanoVG cannot create the image.
+    /// </summary>
+    public static UIImage? FromRgba(IntPtr vg, int w, int h, byte[] data,
+        NVGimageFlags flags = 0)
+    {
+        if (w <= 0 || h <= 0 || data == null || data.Length < w * h * 4) return null;
+        int id = nvgCreateImageRGBA(vg, w, h, (int)flags, in data[0]);
+        return id > 0 ? new UIImage(vg, id) : null;
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
