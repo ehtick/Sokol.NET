@@ -282,6 +282,28 @@ public sealed class Renderer
         nvgFill(_vg);
     }
 
+    /// <summary>Draw one frame of a sprite sheet (a <paramref name="cols"/>×<paramref name="rows"/>
+    /// grid) into <paramref name="dest"/>. Frame 0 is top-left, advancing left-to-right then
+    /// top-to-bottom. The sheet is scaled so a single cell exactly fills <paramref name="dest"/>, and
+    /// the fill is clipped to that rect so only the chosen cell shows.</summary>
+    public void DrawImageFrame(UIImage image, Rect dest, int cols, int rows, int frame, float alpha = 1f)
+        => DrawImageFrame(image.Id, dest, cols, rows, frame, alpha);
+
+    public void DrawImageFrame(int nvgImageId, Rect dest, int cols, int rows, int frame, float alpha = 1f)
+    {
+        int c = Math.Max(1, cols), r = Math.Max(1, rows);
+        int f = Math.Clamp(frame, 0, c * r - 1);
+        int col = f % c, row = f / c;
+        // Map the whole sheet so one cell == dest, offsetting so the chosen cell lands on dest.
+        float ox = dest.X - col * dest.Width;
+        float oy = dest.Y - row * dest.Height;
+        var paint = nvgImagePattern(_vg, ox, oy, dest.Width * c, dest.Height * r, 0f, nvgImageId, alpha);
+        nvgBeginPath(_vg);
+        nvgRect(_vg, dest.X, dest.Y, dest.Width, dest.Height);
+        nvgFillPaint(_vg, paint);
+        nvgFill(_vg);
+    }
+
     /// <summary>Create a mutable (stream-update) image. Pass the handle to UpdateImage each frame.</summary>
     public int CreateImageRGBA(int w, int h, int flags)
         => nvgCreateImageRGBA(_vg, w, h, flags, in Unsafe.NullRef<byte>());
