@@ -167,6 +167,8 @@ public static unsafe class MiniaudiodemoApp
         FontRegistry.Instance.RegisterAsync(_vg, "sans", "fonts/Roboto-Regular.ttf");
         FontRegistry.Instance.RegisterAsync(_vg, "bold", "fonts/Roboto-Bold.ttf");
         FontRegistry.Instance.RegisterFallbackAsync(_vg, "symbols", "fonts/NotoSansSymbols2-Regular.ttf", ["sans", "bold"]);
+        // Arrows block (→) for the filter-chain / spectrogram labels — NotoSansSymbols2 omits arrows.
+        FontRegistry.Instance.RegisterFallbackAsync(_vg, "arrows",  "fonts/NotoSansSymbols-Regular.ttf",  ["sans", "bold"]);
 
         foreach (var af in _audioFiles)
             LoadAudioFileAsync(af.Path);
