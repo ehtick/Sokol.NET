@@ -10,6 +10,15 @@ public enum TextHAlign { Left = 1, Center = 2, Right = 4 }
 /// <summary>Vertical text alignment for <see cref="Renderer.SetTextAlign(TextHAlign,TextVAlign)"/>.</summary>
 public enum TextVAlign { Top = 8, Middle = 16, Bottom = 32, Baseline = 64 }
 
+/// <summary>Compositing mode for <see cref="Renderer.SetBlend(BlendMode)"/>.</summary>
+public enum BlendMode
+{
+    /// <summary>Standard source-over alpha blending (NVG_SOURCE_OVER).</summary>
+    Normal,
+    /// <summary>Additive blending — source adds to destination (NVG_LIGHTER); fire/glow/sparks.</summary>
+    Additive,
+}
+
 /// <summary>Result of <see cref="Renderer.MeasureTextMetrics()"/>.</summary>
 public record struct TextMetrics(float Ascender, float Descender, float lineHeight);
 
@@ -82,6 +91,15 @@ public sealed class Renderer
     public void SetStrokeColor(UIColor c) => nvgStrokeColor(_vg, c.ToNVGcolor());
     public void SetStrokeWidth(float w)   => nvgStrokeWidth(_vg, w);
     public void SetGlobalAlpha(float a)   => nvgGlobalAlpha(_vg, a);
+
+    /// <summary>Set the global composite operation. <see cref="BlendMode.Additive"/> maps to
+    /// NVG_LIGHTER (glow/fire), <see cref="BlendMode.Normal"/> to NVG_SOURCE_OVER. NanoVG stores this
+    /// in its state stack, so it is restored by <see cref="Restore"/>; callers that change it outside a
+    /// Save/Restore pair must reset it to <see cref="BlendMode.Normal"/> when done.</summary>
+    public void SetBlend(BlendMode mode) =>
+        nvgGlobalCompositeOperation(_vg, (int)(mode == BlendMode.Additive
+            ? NVGcompositeOperation.NVG_LIGHTER
+            : NVGcompositeOperation.NVG_SOURCE_OVER));
 
     // -------------------------------------------------------------------------
     // Shapes
