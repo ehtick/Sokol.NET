@@ -1,0 +1,112 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Sokol.Render2D — framework GPU 2D renderer + particle system (see docs/RENDER2D.md).
+    Lean: depends only on the Sokol bindings (sokol.csproj) and the Sokol.GUI source (Renderer).
+    Consumers normally pull these sources in via a Compile glob (like src/GUI), the same way
+    examples/JamboreeArcade does — this csproj exists to build/verify the component standalone and,
+    from M1, to host the all-platform sokol-shdc shader-compile targets (modelled on Framework.csproj).
+  -->
+  <PropertyGroup>
+    <AssemblyName>Sokol.Render2D</AssemblyName>
+    <RootNamespace>Sokol.Render2D</RootNamespace>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PublishAot>true</PublishAot>
+    <PublishAotUsingRuntimePack>true</PublishAotUsingRuntimePack>
+    <TrimMode>partial</TrimMode>
+    <TrimmerRemoveSymbols>false</TrimmerRemoveSymbols>
+    <NoWarn>$(NoWarn);IL2026;IL2067;IL2070;IL2072;IL2077</NoWarn>
+  </PropertyGroup>
+
+  <!-- ── All-platform shader compile (one sokol-shdc call per shader → one .cs with all five slang
+       blobs baked in, no per-platform #if; modelled on src/Framework/Framework.csproj). Generated
+       .cs are committed and come along in the source glob for consumers. ─────────────────────── -->
+  <PropertyGroup>
+    <_R2DDir>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)'))</_R2DDir>
+    <_SokolNetRoot>$([MSBuild]::NormalizeDirectory('$(_R2DDir)', '..', '..'))</_SokolNetRoot>
+    <IsWindowsHost>$([MSBuild]::IsOSPlatform('Windows'))</IsWindowsHost>
+    <IsLinuxHost>$([MSBuild]::IsOSPlatform('Linux'))</IsLinuxHost>
+    <IsOSXHost>$([MSBuild]::IsOSPlatform('OSX'))</IsOSXHost>
+    <OSArch>$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)</OSArch>
+    <_HostOS Condition="'$(IsWindowsHost)'=='true'">windows</_HostOS>
+    <_HostOS Condition="'$(IsLinuxHost)'=='true'">linux</_HostOS>
+    <_HostOS Condition="'$(IsOSXHost)'=='true'">osx</_HostOS>
+    <_SokolShdcPath>$(_SokolNetRoot)tools/bin/$(_HostOS)/$(OSArch)/sokol-shdc</_SokolShdcPath>
+    <_SokolShdcPath Condition="'$(IsWindowsHost)'=='true'">$(_SokolShdcPath).exe</_SokolShdcPath>
+    <_R2DSlang>glsl430:hlsl5:metal_macos:metal_ios:glsl300es</_R2DSlang>
+    <_R2DShaderDir>$(_R2DDir)shaders/</_R2DShaderDir>
+    <_R2DShaderOutDir>$(_R2DDir)shaders/compiled/</_R2DShaderOutDir>
+    <_R2DSceneGlsl>$(_R2DShaderDir)scene.glsl</_R2DSceneGlsl>
+    <_R2DSceneOut>$(_R2DShaderOutDir)scene_shader.cs</_R2DSceneOut>
+    <_R2DBlitGlsl>$(_R2DShaderDir)blit.glsl</_R2DBlitGlsl>
+    <_R2DBlitOut>$(_R2DShaderOutDir)blit_shader.cs</_R2DBlitOut>
+    <_R2DParticleGlsl>$(_R2DShaderDir)particle.glsl</_R2DParticleGlsl>
+    <_R2DParticleOut>$(_R2DShaderOutDir)particle_shader.cs</_R2DParticleOut>
+    <_R2DBloomExtractGlsl>$(_R2DShaderDir)bloom_extract.glsl</_R2DBloomExtractGlsl>
+    <_R2DBloomExtractOut>$(_R2DShaderOutDir)bloom_extract_shader.cs</_R2DBloomExtractOut>
+    <_R2DBloomBlurGlsl>$(_R2DShaderDir)bloom_blur.glsl</_R2DBloomBlurGlsl>
+    <_R2DBloomBlurOut>$(_R2DShaderOutDir)bloom_blur_shader.cs</_R2DBloomBlurOut>
+  </PropertyGroup>
+
+  <Target Name="EnsureRender2DShaderOutDir">
+    <MakeDir Directories="$(_R2DShaderOutDir)" />
+  </Target>
+
+  <Target Name="CompileRender2DSceneShader" BeforeTargets="BeforeBuild"
+          DependsOnTargets="EnsureRender2DShaderOutDir"
+          Inputs="$(_R2DSceneGlsl)" Outputs="$(_R2DSceneOut)">
+    <Message Text="Compiling Render2D shader: scene.glsl (all platforms)" Importance="high" />
+    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_R2DSceneGlsl)&quot; --output &quot;$(_R2DSceneOut)&quot; --module r2d --slang &quot;$(_R2DSlang)&quot; --reflection -f sokol_csharp" />
+  </Target>
+
+  <Target Name="CompileRender2DBlitShader" BeforeTargets="BeforeBuild"
+          DependsOnTargets="EnsureRender2DShaderOutDir"
+          Inputs="$(_R2DBlitGlsl)" Outputs="$(_R2DBlitOut)">
+    <Message Text="Compiling Render2D shader: blit.glsl (all platforms)" Importance="high" />
+    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_R2DBlitGlsl)&quot; --output &quot;$(_R2DBlitOut)&quot; --module r2d --slang &quot;$(_R2DSlang)&quot; --reflection -f sokol_csharp" />
+  </Target>
+
+  <Target Name="CompileRender2DParticleShader" BeforeTargets="BeforeBuild"
+          DependsOnTargets="EnsureRender2DShaderOutDir"
+          Inputs="$(_R2DParticleGlsl)" Outputs="$(_R2DParticleOut)">
+    <Message Text="Compiling Render2D shader: particle.glsl (all platforms)" Importance="high" />
+    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_R2DParticleGlsl)&quot; --output &quot;$(_R2DParticleOut)&quot; --module r2d --slang &quot;$(_R2DSlang)&quot; --reflection -f sokol_csharp" />
+  </Target>
+
+  <Target Name="CompileRender2DBloomExtractShader" BeforeTargets="BeforeBuild"
+          DependsOnTargets="EnsureRender2DShaderOutDir"
+          Inputs="$(_R2DBloomExtractGlsl)" Outputs="$(_R2DBloomExtractOut)">
+    <Message Text="Compiling Render2D shader: bloom_extract.glsl (all platforms)" Importance="high" />
+    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_R2DBloomExtractGlsl)&quot; --output &quot;$(_R2DBloomExtractOut)&quot; --module r2d --slang &quot;$(_R2DSlang)&quot; --reflection -f sokol_csharp" />
+  </Target>
+
+  <Target Name="CompileRender2DBloomBlurShader" BeforeTargets="BeforeBuild"
+          DependsOnTargets="EnsureRender2DShaderOutDir"
+          Inputs="$(_R2DBloomBlurGlsl)" Outputs="$(_R2DBloomBlurOut)">
+    <Message Text="Compiling Render2D shader: bloom_blur.glsl (all platforms)" Importance="high" />
+    <Exec Command="&quot;$(_SokolShdcPath)&quot; --input &quot;$(_R2DBloomBlurGlsl)&quot; --output &quot;$(_R2DBloomBlurOut)&quot; --module r2d --slang &quot;$(_R2DSlang)&quot; --reflection -f sokol_csharp" />
+  </Target>
+
+  <!-- Umbrella so `dotnet build Render2D.csproj -t:CompileShaders` regenerates all shaders
+       (project convention; see feedback memory "Shader Compilation Command"). -->
+  <Target Name="CompileShaders" DependsOnTargets="CompileRender2DSceneShader;CompileRender2DBlitShader;CompileRender2DParticleShader;CompileRender2DBloomExtractShader;CompileRender2DBloomBlurShader" />
+
+  <!-- Sokol bindings (P/Invoke surface: SG, NanoVG, NanoSVG, STM, SFilesystem). -->
+  <ItemGroup>
+    <ProjectReference Include="../sokol/sokol.csproj" />
+  </ItemGroup>
+
+  <!-- Sokol.GUI source (no standalone csproj) — the default renderers draw through Sokol.GUI.Renderer. -->
+  <ItemGroup>
+    <Compile Include="../GUI/**/*.cs">
+      <Link>GUI/%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </Compile>
+    <Compile Remove="../GUI/obj/**/*.cs" />
+    <Compile Remove="../GUI/bin/**/*.cs" />
+  </ItemGroup>
+
+</Project>

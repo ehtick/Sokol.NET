@@ -1,0 +1,526 @@
+using System;
+using System.Collections.Generic;
+using Sokol.GUI;
+using static Sokol.SG;
+using static Sokol.SGlue;
+using static scene_shader_cs_r2d.Shaders;
+using static blit_shader_cs_r2d.Shaders;
+using static particle_shader_cs_r2d.Shaders;
+using BloomEx   = bloom_extract_shader_cs_r2d.Shaders;   // both bloom shaders share bloom_src/smp names →
+using BloomBlur = bloom_blur_shader_cs_r2d.Shaders;      // alias rather than `using static` (would clash)
+
+namespace Sokol.Render2D;
+
+/// <summary>
+/// The shared GPU core of the Sokol.SG 2D path (<c>docs/RENDER2D.md §6</c>). Owns the offscreen
+/// render target, a batched-triangle scene pipeline, a GPU-instanced particle pipeline, the fullscreen
+/// blit, an ortho-by-viewport projection, and CPU accumulators. Everything is in <b>screen-pixel
+/// space</b> (origin top-left, matching <see cref="Sokol.GUI.Renderer"/>) so the SG path matches the
+/// NanoVG look 1:1.
+/// <para>
+/// Usage (Strategy C): <see cref="Begin"/> → push scene primitives + particle instances → <see cref="End"/>
+/// renders them into the offscreen target (one pass: scene under particles); then, inside the swapchain
+/// pass, <see cref="Blit"/> composites the target before the NanoVG HUD draws. Buffers grow on demand
+/// (no silent geometry drop; growth is rare, so steady state allocates nothing).
+/// </para>
+/// </summary>
+public sealed unsafe class Render2DSurface : IDisposable
+{
+    // Scene vertex: pixel position + straight RGBA (explicit floats → 24-byte GPU layout).
+    struct Vtx { public float X, Y, R, G, B, A; }
+
+    // Per-particle instance (56 bytes): pos, half-size, rot, rgba, uvRect, mode.
+    struct Inst { public float PX, PY, SX, SY, Rot, R, G, B, A, U0, V0, U1, V1, Mode; }
+
+    struct PartCmd { public BlendMode Blend; public sg_view Tex; public int Start, Count; }
+
+    struct ViewportUB { public float W, H, Pad0, Pad1; }   // vec4 viewport (.xy = framebuffer px)
+    struct Vec4UB     { public float X, Y, Z, W; }          // generic vec4 uniform (bloom params)
+
+    const int InitVerts = 8 * 1024;
+    const int InitInsts = 4 * 1024;
+
+    // offscreen target — when Samples>1 the scene renders into an MSAA image that resolves down to the
+    // single-sample colour image the blit + bloom sample; when Samples==1 it renders straight into it.
+    /// <summary>Scene MSAA sample count (1 = off — for low-end Android / GLES that can't resolve, or to
+    /// save fill). Must be set before the first frame (the pipelines bake it in).</summary>
+    public int Samples { get; set; } = 4;
+    bool Msaa => Samples > 1;
+    sg_image       _colorImg;          // single-sample target (also the MSAA resolve target when Samples>1)
+    sg_image       _msaaImg;           // MSAA scene render target
+    sg_view        _colorAtt;          // colour-attachment view of _colorImg (bloom composite LOAD pass)
+    sg_view        _msaaAtt;           // colour-attachment view of _msaaImg (scene render)
+    sg_view        _resolveView;       // resolve-attachment view of _colorImg
+    sg_view        _texView;           // texture view of _colorImg
+    sg_attachments _sceneAttachments;  // scene pass: MSAA colour + resolve → _colorImg
+    sg_attachments _colorAttachments;  // composite pass: _colorImg colour (single-sample)
+    int _w, _h;
+
+    // scene pipeline
+    sg_shader   _sceneShader;
+    sg_pipeline _scenePip;
+    sg_buffer   _vbuf;
+    int         _vbufCap;
+    Vtx[]       _verts = new Vtx[InitVerts];
+    int         _count;
+
+    // particle pipeline
+    sg_shader   _partShader;
+    sg_pipeline _partPipAdd, _partPipNormal;
+    sg_buffer   _quadVbuf;          // static unit quad [-1,1] (6 verts)
+    sg_buffer   _instBuf;
+    int         _instBufCap;
+    Inst[]      _insts = new Inst[InitInsts];
+    int         _instCount;
+    sg_sampler  _partSampler;
+    sg_image    _whiteImg;
+    sg_view     _whiteView;
+    readonly List<PartCmd> _cmds = new();
+    int _curStart; BlendMode _curBlend; sg_view _curTex;
+
+    // blit pipeline (→ swapchain)
+    sg_shader   _blitShader;
+    sg_pipeline _blitPip;
+    sg_sampler  _blitSampler;
+
+    // bloom (optional glow post — full-res, gl_FragCoord-safe, flag-gated)
+    /// <summary>Enable the bloom glow post-pass (extract bright → separable blur → additive composite).</summary>
+    public bool  Bloom { get; set; }
+    public float BloomThreshold  { get; set; } = 0.35f;  // lower = more of the (additive) scene blooms
+    public float BloomIntensity  { get; set; } = 1.4f;
+    public float BloomSpread     { get; set; } = 6f;     // per-tap UV step scale (blur width)
+    public int   BloomIterations { get; set; } = 3;      // wider, smoother glow
+    sg_shader   _bloomExtractShader, _bloomBlurShader;
+    sg_pipeline _bloomExtractPip, _bloomBlurPip, _bloomCompositePip;
+    sg_image    _bloomImgA, _bloomImgB;
+    sg_view     _bloomAttA, _bloomAttB, _bloomTexA, _bloomTexB;
+    sg_attachments _bloomAttachA, _bloomAttachB;
+
+    UIColor _clear;
+    bool    _inited;
+
+    public bool IsValid => _colorImg.id != 0;
+    /// <summary>A 1×1 white texture view — bind for non-textured (dynamic) particle batches.</summary>
+    public sg_view WhiteView => _whiteView;
+
+    public void Init()
+    {
+        if (_inited) return;
+        _inited = true;
+
+        // ── scene pipeline ────────────────────────────────────────────────────────────────────────
+        _sceneShader = sg_make_shader(r2d_scene_shader_desc(sg_query_backend()));
+        var scenePip = new sg_pipeline_desc
+        {
+            shader         = _sceneShader,
+            primitive_type = sg_primitive_type.SG_PRIMITIVETYPE_TRIANGLES,
+            colors = { [0] = new sg_color_target_state { pixel_format = sg_pixel_format.SG_PIXELFORMAT_RGBA8, blend = AlphaBlend() } },
+            depth        = new sg_depth_state { pixel_format = sg_pixel_format.SG_PIXELFORMAT_NONE },
+            sample_count = Samples,                      // renders into the (MSAA) scene target
+            label        = "r2d-scene-pipeline",
+        };
+        scenePip.layout.attrs[ATTR_r2d_scene_pos]    = new sg_vertex_attr_state { format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT2, offset = 0 };
+        scenePip.layout.attrs[ATTR_r2d_scene_color0] = new sg_vertex_attr_state { format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT4, offset = 8 };
+        _scenePip = sg_make_pipeline(scenePip);
+        _vbufCap = InitVerts;
+        _vbuf = MakeVtxBuffer(_vbufCap);
+
+        // ── particle pipeline (instanced) ──────────────────────────────────────────────────────────
+        _partShader = sg_make_shader(r2d_particle_shader_desc(sg_query_backend()));
+        _partPipAdd    = MakeParticlePipeline(AdditiveBlend(), "r2d-particle-add");
+        _partPipNormal = MakeParticlePipeline(AlphaBlend(),    "r2d-particle-normal");
+
+        float[] quad = { -1f,-1f,  1f,-1f,  1f,1f,   -1f,-1f,  1f,1f,  -1f,1f };
+        fixed (float* q = quad)
+            _quadVbuf = sg_make_buffer(new sg_buffer_desc { data = new sg_range { ptr = q, size = (nuint)(quad.Length * sizeof(float)) }, label = "r2d-particle-quad" });
+
+        _instBufCap = InitInsts;
+        _instBuf = MakeInstBuffer(_instBufCap);
+
+        _partSampler = sg_make_sampler(new sg_sampler_desc
+        {
+            min_filter = sg_filter.SG_FILTER_LINEAR, mag_filter = sg_filter.SG_FILTER_LINEAR,
+            wrap_u = sg_wrap.SG_WRAP_CLAMP_TO_EDGE, wrap_v = sg_wrap.SG_WRAP_CLAMP_TO_EDGE,
+            label = "r2d-particle-sampler",
+        });
+        uint white = 0xFFFFFFFFu;
+        _whiteImg = sg_make_image(new sg_image_desc
+        {
+            width = 1, height = 1, pixel_format = sg_pixel_format.SG_PIXELFORMAT_RGBA8,
+            data = { mip_levels = { [0] = new sg_range { ptr = &white, size = 4 } } }, label = "r2d-white",
+        });
+        _whiteView = sg_make_view(new sg_view_desc { texture = { image = _whiteImg }, label = "r2d-white-view" });
+
+        // ── blit pipeline (→ swapchain) ─────────────────────────────────────────────────────────────
+        _blitShader = sg_make_shader(r2d_blit_shader_desc(sg_query_backend()));
+        var sc = sglue_swapchain();
+        _blitPip = sg_make_pipeline(new sg_pipeline_desc
+        {
+            shader         = _blitShader,
+            primitive_type = sg_primitive_type.SG_PRIMITIVETYPE_TRIANGLES,
+            colors = { [0] = new sg_color_target_state { pixel_format = sc.color_format } },
+            depth  = new sg_depth_state { pixel_format = sc.depth_format, compare = sg_compare_func.SG_COMPAREFUNC_ALWAYS, write_enabled = false },
+            sample_count = sc.sample_count,
+            label = "r2d-blit-pipeline",
+        });
+        _blitSampler = sg_make_sampler(new sg_sampler_desc
+        {
+            min_filter = sg_filter.SG_FILTER_LINEAR, mag_filter = sg_filter.SG_FILTER_LINEAR,
+            wrap_u = sg_wrap.SG_WRAP_CLAMP_TO_EDGE, wrap_v = sg_wrap.SG_WRAP_CLAMP_TO_EDGE,
+            label = "r2d-blit-sampler",
+        });
+
+        // ── bloom pipelines (extract + separable blur = no blend; composite = blit shader, additive) ─
+        _bloomExtractShader = sg_make_shader(BloomEx.r2d_bloom_extract_shader_desc(sg_query_backend()));
+        _bloomBlurShader    = sg_make_shader(BloomBlur.r2d_bloom_blur_shader_desc(sg_query_backend()));
+        _bloomExtractPip    = MakeFullscreenPip(_bloomExtractShader, default,         "r2d-bloom-extract");
+        _bloomBlurPip       = MakeFullscreenPip(_bloomBlurShader,    default,         "r2d-bloom-blur");
+        _bloomCompositePip  = MakeFullscreenPip(_blitShader,         AdditiveBlend(), "r2d-bloom-composite");
+    }
+
+    // Fullscreen post pipeline (no vertex layout — the VS generates a triangle from gl_VertexIndex).
+    sg_pipeline MakeFullscreenPip(sg_shader shader, sg_blend_state blend, string label) =>
+        sg_make_pipeline(new sg_pipeline_desc
+        {
+            shader         = shader,
+            primitive_type = sg_primitive_type.SG_PRIMITIVETYPE_TRIANGLES,
+            colors = { [0] = new sg_color_target_state { pixel_format = sg_pixel_format.SG_PIXELFORMAT_RGBA8, blend = blend } },
+            depth        = new sg_depth_state { pixel_format = sg_pixel_format.SG_PIXELFORMAT_NONE },
+            sample_count = 1,
+            label        = label,
+        });
+
+    static sg_blend_state AlphaBlend() => new()
+    {
+        enabled = true,
+        src_factor_rgb = sg_blend_factor.SG_BLENDFACTOR_SRC_ALPHA, dst_factor_rgb = sg_blend_factor.SG_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+        src_factor_alpha = sg_blend_factor.SG_BLENDFACTOR_ONE,     dst_factor_alpha = sg_blend_factor.SG_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+    };
+    static sg_blend_state AdditiveBlend() => new()
+    {
+        enabled = true,
+        src_factor_rgb = sg_blend_factor.SG_BLENDFACTOR_SRC_ALPHA, dst_factor_rgb = sg_blend_factor.SG_BLENDFACTOR_ONE,
+        src_factor_alpha = sg_blend_factor.SG_BLENDFACTOR_ONE,     dst_factor_alpha = sg_blend_factor.SG_BLENDFACTOR_ONE,
+    };
+
+    sg_pipeline MakeParticlePipeline(sg_blend_state blend, string label)
+    {
+        var p = new sg_pipeline_desc
+        {
+            shader         = _partShader,
+            primitive_type = sg_primitive_type.SG_PRIMITIVETYPE_TRIANGLES,
+            colors = { [0] = new sg_color_target_state { pixel_format = sg_pixel_format.SG_PIXELFORMAT_RGBA8, blend = blend } },
+            depth        = new sg_depth_state { pixel_format = sg_pixel_format.SG_PIXELFORMAT_NONE },
+            sample_count = Samples,                      // particles render into the (MSAA) scene target too
+            label        = label,
+        };
+        p.layout.buffers[1].step_func = sg_vertex_step.SG_VERTEXSTEP_PER_INSTANCE;
+        p.layout.attrs[ATTR_r2d_particle_corner]  = new sg_vertex_attr_state { format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT2, buffer_index = 0, offset = 0 };
+        p.layout.attrs[ATTR_r2d_particle_i_pos]   = new sg_vertex_attr_state { format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT2, buffer_index = 1, offset = 0 };
+        p.layout.attrs[ATTR_r2d_particle_i_size]  = new sg_vertex_attr_state { format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT2, buffer_index = 1, offset = 8 };
+        p.layout.attrs[ATTR_r2d_particle_i_rot]   = new sg_vertex_attr_state { format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT,  buffer_index = 1, offset = 16 };
+        p.layout.attrs[ATTR_r2d_particle_i_color] = new sg_vertex_attr_state { format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT4, buffer_index = 1, offset = 20 };
+        p.layout.attrs[ATTR_r2d_particle_i_uvrect]= new sg_vertex_attr_state { format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT4, buffer_index = 1, offset = 36 };
+        p.layout.attrs[ATTR_r2d_particle_i_mode]  = new sg_vertex_attr_state { format = sg_vertex_format.SG_VERTEXFORMAT_FLOAT,  buffer_index = 1, offset = 52 };
+        return sg_make_pipeline(p);
+    }
+
+    sg_buffer MakeVtxBuffer(int verts) => sg_make_buffer(new sg_buffer_desc
+    { size = (nuint)(verts * sizeof(Vtx)), usage = new sg_buffer_usage { stream_update = true }, label = "r2d-scene-verts" });
+
+    sg_buffer MakeInstBuffer(int insts) => sg_make_buffer(new sg_buffer_desc
+    { size = (nuint)(insts * sizeof(Inst)), usage = new sg_buffer_usage { stream_update = true }, label = "r2d-particle-insts" });
+
+    void EnsureTarget(int w, int h)
+    {
+        if (_colorImg.id != 0 && _w == w && _h == h) return;
+        DestroyTarget();
+        _w = w; _h = h;
+        _colorImg = sg_make_image(new sg_image_desc
+        { width = w, height = h, pixel_format = sg_pixel_format.SG_PIXELFORMAT_RGBA8, sample_count = 1, usage = { color_attachment = true, resolve_attachment = Msaa }, label = "r2d-offscreen-color" });
+        _colorAtt = sg_make_view(new sg_view_desc { color_attachment = { image = _colorImg }, label = "r2d-color-att" });
+        _texView  = sg_make_view(new sg_view_desc { texture          = { image = _colorImg }, label = "r2d-color-tex" });
+        _colorAttachments = default;
+        _colorAttachments.colors[0] = _colorAtt;
+        _sceneAttachments = default;
+        if (Msaa)   // scene renders into the MSAA image, resolving down to _colorImg
+        {
+            _msaaImg = sg_make_image(new sg_image_desc
+            { width = w, height = h, pixel_format = sg_pixel_format.SG_PIXELFORMAT_RGBA8, sample_count = Samples, usage = { color_attachment = true }, label = "r2d-offscreen-msaa" });
+            _msaaAtt     = sg_make_view(new sg_view_desc { color_attachment   = { image = _msaaImg },  label = "r2d-msaa-att" });
+            _resolveView = sg_make_view(new sg_view_desc { resolve_attachment = { image = _colorImg }, label = "r2d-resolve" });
+            _sceneAttachments.colors[0]   = _msaaAtt;
+            _sceneAttachments.resolves[0] = _resolveView;
+        }
+        else        // single-sample: scene renders straight into _colorImg
+        {
+            _sceneAttachments.colors[0] = _colorAtt;
+        }
+
+        // bloom ping-pong targets (full-res, single-sample)
+        _bloomImgA = sg_make_image(new sg_image_desc { width = w, height = h, pixel_format = sg_pixel_format.SG_PIXELFORMAT_RGBA8, sample_count = 1, usage = { color_attachment = true }, label = "r2d-bloom-a" });
+        _bloomImgB = sg_make_image(new sg_image_desc { width = w, height = h, pixel_format = sg_pixel_format.SG_PIXELFORMAT_RGBA8, sample_count = 1, usage = { color_attachment = true }, label = "r2d-bloom-b" });
+        _bloomAttA = sg_make_view(new sg_view_desc { color_attachment = { image = _bloomImgA } });
+        _bloomAttB = sg_make_view(new sg_view_desc { color_attachment = { image = _bloomImgB } });
+        _bloomTexA = sg_make_view(new sg_view_desc { texture = { image = _bloomImgA } });
+        _bloomTexB = sg_make_view(new sg_view_desc { texture = { image = _bloomImgB } });
+        _bloomAttachA = default; _bloomAttachA.colors[0] = _bloomAttA;
+        _bloomAttachB = default; _bloomAttachB.colors[0] = _bloomAttB;
+    }
+
+    void DestroyTarget()
+    {
+        if (_texView.id     != 0) sg_destroy_view(_texView);
+        if (_colorAtt.id    != 0) sg_destroy_view(_colorAtt);
+        if (_msaaAtt.id     != 0) sg_destroy_view(_msaaAtt);
+        if (_resolveView.id != 0) sg_destroy_view(_resolveView);
+        if (_colorImg.id    != 0) sg_destroy_image(_colorImg);
+        if (_msaaImg.id     != 0) sg_destroy_image(_msaaImg);
+        _texView = _colorAtt = _msaaAtt = _resolveView = default; _colorImg = _msaaImg = default;
+
+        if (_bloomTexA.id != 0) sg_destroy_view(_bloomTexA);
+        if (_bloomTexB.id != 0) sg_destroy_view(_bloomTexB);
+        if (_bloomAttA.id != 0) sg_destroy_view(_bloomAttA);
+        if (_bloomAttB.id != 0) sg_destroy_view(_bloomAttB);
+        if (_bloomImgA.id != 0) sg_destroy_image(_bloomImgA);
+        if (_bloomImgB.id != 0) sg_destroy_image(_bloomImgB);
+        _bloomTexA = _bloomTexB = _bloomAttA = _bloomAttB = default; _bloomImgA = _bloomImgB = default;
+    }
+
+    // ── frame ───────────────────────────────────────────────────────────────────────────────────
+    public void Begin(int pxW, int pxH, UIColor clear)
+    {
+        Init();
+        EnsureTarget(pxW, pxH);
+        _count = 0; _instCount = 0; _cmds.Clear();
+        _clear = clear;
+    }
+
+    /// <summary>Flush scene triangles then particle instances into the offscreen target (one pass).</summary>
+    public void End()
+    {
+        if (!IsValid) return;
+        var action = default(sg_pass_action);
+        action.colors[0].load_action  = sg_load_action.SG_LOADACTION_CLEAR;
+        action.colors[0].clear_value  = new sg_color { r = _clear.R, g = _clear.G, b = _clear.B, a = 1f };
+        if (Msaa) action.colors[0].store_action = sg_store_action.SG_STOREACTION_DONTCARE;   // MSAA resolved, not stored
+
+        var vp = new ViewportUB { W = _w, H = _h };
+
+        sg_begin_pass(new sg_pass { action = action, attachments = _sceneAttachments, label = "r2d-offscreen-pass" });
+
+        // scene triangles
+        if (_count > 0)
+        {
+            if (_count > _vbufCap) { sg_destroy_buffer(_vbuf); _vbufCap = _verts.Length; _vbuf = MakeVtxBuffer(_vbufCap); }
+            fixed (Vtx* p = _verts) sg_update_buffer(_vbuf, new sg_range { ptr = p, size = (nuint)(_count * sizeof(Vtx)) });
+            var bind = default(sg_bindings);
+            bind.vertex_buffers[0] = _vbuf;
+            sg_apply_pipeline(_scenePip);
+            sg_apply_bindings(bind);
+            sg_apply_uniforms(UB_r2d_scene_params, new sg_range { ptr = &vp, size = (nuint)sizeof(ViewportUB) });
+            sg_draw(0, (uint)_count, 1);
+        }
+
+        // particle instances (batched by blend + texture)
+        if (_instCount > 0 && _cmds.Count > 0)
+        {
+            if (_instCount > _instBufCap) { sg_destroy_buffer(_instBuf); _instBufCap = _insts.Length; _instBuf = MakeInstBuffer(_instBufCap); }
+            fixed (Inst* p = _insts) sg_update_buffer(_instBuf, new sg_range { ptr = p, size = (nuint)(_instCount * sizeof(Inst)) });
+            for (int i = 0; i < _cmds.Count; i++)
+            {
+                var cmd = _cmds[i];
+                var bind = default(sg_bindings);
+                bind.vertex_buffers[0] = _quadVbuf;
+                bind.vertex_buffers[1] = _instBuf;
+                bind.vertex_buffer_offsets[1] = cmd.Start * sizeof(Inst);
+                bind.views[VIEW_r2d_part_tex]   = cmd.Tex.id != 0 ? cmd.Tex : _whiteView;
+                bind.samplers[SMP_r2d_part_smp] = _partSampler;
+                sg_apply_pipeline(cmd.Blend == BlendMode.Additive ? _partPipAdd : _partPipNormal);
+                sg_apply_bindings(bind);
+                sg_apply_uniforms(UB_r2d_particle_params, new sg_range { ptr = &vp, size = (nuint)sizeof(ViewportUB) });
+                sg_draw(0, 6, (uint)cmd.Count);
+            }
+        }
+
+        sg_end_pass();
+
+        if (Bloom) RunBloom();
+    }
+
+    // Bright-pass → separable blur (ping-pong) → additive composite back onto the scene target.
+    void RunBloom()
+    {
+        var clear = default(sg_pass_action);
+        clear.colors[0].load_action = sg_load_action.SG_LOADACTION_CLEAR;
+        clear.colors[0].clear_value = new sg_color { r = 0f, g = 0f, b = 0f, a = 1f };
+
+        sg_begin_pass(new sg_pass { action = clear, attachments = _bloomAttachA, label = "r2d-bloom-extract" });
+        DrawFullscreen(_bloomExtractPip, _texView, BloomEx.VIEW_r2d_bloom_src, BloomEx.SMP_r2d_bloom_smp,
+                       BloomEx.UB_r2d_bloom_extract_params, new Vec4UB { X = BloomThreshold, Y = BloomIntensity });
+        sg_end_pass();
+
+        for (int it = 0; it < BloomIterations; it++)
+        {
+            sg_begin_pass(new sg_pass { action = clear, attachments = _bloomAttachB, label = "r2d-bloom-blur-h" });
+            DrawFullscreen(_bloomBlurPip, _bloomTexA, BloomBlur.VIEW_r2d_bloom_src, BloomBlur.SMP_r2d_bloom_smp,
+                           BloomBlur.UB_r2d_bloom_blur_params, new Vec4UB { X = BloomSpread / _w, Y = 0f });
+            sg_end_pass();
+
+            sg_begin_pass(new sg_pass { action = clear, attachments = _bloomAttachA, label = "r2d-bloom-blur-v" });
+            DrawFullscreen(_bloomBlurPip, _bloomTexB, BloomBlur.VIEW_r2d_bloom_src, BloomBlur.SMP_r2d_bloom_smp,
+                           BloomBlur.UB_r2d_bloom_blur_params, new Vec4UB { X = 0f, Y = BloomSpread / _h });
+            sg_end_pass();
+        }
+
+        // additive composite into the scene target (LOAD keeps the scene); blit shader samples bloomA.
+        var load = default(sg_pass_action);
+        load.colors[0].load_action = sg_load_action.SG_LOADACTION_LOAD;
+        sg_begin_pass(new sg_pass { action = load, attachments = _colorAttachments, label = "r2d-bloom-composite" });
+        DrawFullscreen(_bloomCompositePip, _bloomTexA, VIEW_r2d_src_tex, SMP_r2d_src_smp, -1, default);
+        sg_end_pass();
+    }
+
+    void DrawFullscreen(sg_pipeline pip, sg_view src, int viewSlot, int smpSlot, int ubSlot, Vec4UB ub)
+    {
+        sg_apply_pipeline(pip);
+        var bind = default(sg_bindings);
+        bind.views[viewSlot]    = src;
+        bind.samplers[smpSlot]  = _blitSampler;
+        sg_apply_bindings(bind);
+        if (ubSlot >= 0) sg_apply_uniforms(ubSlot, new sg_range { ptr = &ub, size = (nuint)sizeof(Vec4UB) });
+        sg_draw(0, 3, 1);
+    }
+
+    /// <summary>Composite the offscreen target into the active swapchain pass (fullscreen, replace).</summary>
+    public void Blit()
+    {
+        if (!IsValid) return;
+        var bind = default(sg_bindings);
+        bind.views[VIEW_r2d_src_tex]   = _texView;
+        bind.samplers[SMP_r2d_src_smp] = _blitSampler;
+        sg_apply_pipeline(_blitPip);
+        sg_apply_bindings(bind);
+        sg_draw(0, 3, 1);
+    }
+
+    // ── scene primitives (screen-pixel space; mirror Sokol.GUI.Renderer names) ────────────────────
+    void Push(Vector2 p, UIColor c)
+    {
+        if (_count >= _verts.Length) Array.Resize(ref _verts, _verts.Length * 2);   // grow, don't drop
+        _verts[_count] = new Vtx { X = p.X, Y = p.Y, R = c.R, G = c.G, B = c.B, A = c.A };
+        _count++;
+    }
+
+    public void FillTri(Vector2 a, Vector2 b, Vector2 c, UIColor col) { Push(a, col); Push(b, col); Push(c, col); }
+
+    public void FillTriVc(Vector2 a, UIColor ca, Vector2 b, UIColor cb, Vector2 c, UIColor cc) { Push(a, ca); Push(b, cb); Push(c, cc); }
+
+    public void FillQuad(Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3, UIColor col)
+    { Push(p0, col); Push(p1, col); Push(p2, col); Push(p0, col); Push(p2, col); Push(p3, col); }
+
+    public void FillRect(Rect r, UIColor col) =>
+        FillQuad(new(r.X, r.Y), new(r.X + r.Width, r.Y), new(r.X + r.Width, r.Y + r.Height), new(r.X, r.Y + r.Height), col);
+
+    public void FillVerticalGradient(Rect r, UIColor top, UIColor bottom)
+    {
+        Vector2 tl = new(r.X, r.Y), tr = new(r.X + r.Width, r.Y);
+        Vector2 br = new(r.X + r.Width, r.Y + r.Height), bl = new(r.X, r.Y + r.Height);
+        FillTriVc(tl, top, tr, top, br, bottom);
+        FillTriVc(tl, top, br, bottom, bl, bottom);
+    }
+
+    public void FillCircle(Vector2 center, float radius, UIColor col)
+    {
+        int seg = Math.Clamp((int)(radius * 0.6f) + 8, 12, 64);
+        float step = MathF.Tau / seg;
+        Vector2 prev = center + new Vector2(radius, 0f);
+        for (int i = 1; i <= seg; i++)
+        {
+            Vector2 cur = center + new Vector2(MathF.Cos(i * step), MathF.Sin(i * step)) * radius;
+            Push(center, col); Push(prev, col); Push(cur, col);
+            prev = cur;
+        }
+    }
+
+    /// <summary>Filled rounded rectangle (centre cross + 4 edge strips + 4 corner fans).</summary>
+    public void FillRoundedRect(Rect r, float radius, UIColor col)
+    {
+        radius = MathF.Min(radius, MathF.Min(r.Width, r.Height) * 0.5f);
+        if (radius <= 0.5f) { FillRect(r, col); return; }
+        float x0 = r.X, y0 = r.Y, x1 = r.X + r.Width, y1 = r.Y + r.Height;
+        FillQuad(new(x0 + radius, y0), new(x1 - radius, y0), new(x1 - radius, y1), new(x0 + radius, y1), col); // centre column
+        FillQuad(new(x0, y0 + radius), new(x0 + radius, y0 + radius), new(x0 + radius, y1 - radius), new(x0, y1 - radius), col); // left
+        FillQuad(new(x1 - radius, y0 + radius), new(x1, y0 + radius), new(x1, y1 - radius), new(x1 - radius, y1 - radius), col); // right
+        const float HP = MathF.PI * 0.5f;
+        CornerFan(new(x0 + radius, y0 + radius), radius, MathF.PI,     MathF.PI + HP, col);  // top-left
+        CornerFan(new(x1 - radius, y0 + radius), radius, MathF.PI + HP, MathF.PI * 2f, col);  // top-right
+        CornerFan(new(x1 - radius, y1 - radius), radius, 0f,           HP,            col);  // bottom-right
+        CornerFan(new(x0 + radius, y1 - radius), radius, HP,           MathF.PI,      col);  // bottom-left
+    }
+
+    void CornerFan(Vector2 c, float radius, float a0, float a1, UIColor col)
+    {
+        int seg = Math.Clamp((int)(radius * 0.5f) + 3, 4, 16);
+        float step = (a1 - a0) / seg;
+        Vector2 prev = c + new Vector2(MathF.Cos(a0), MathF.Sin(a0)) * radius;
+        for (int i = 1; i <= seg; i++)
+        {
+            Vector2 cur = c + new Vector2(MathF.Cos(a0 + i * step), MathF.Sin(a0 + i * step)) * radius;
+            Push(c, col); Push(prev, col); Push(cur, col);
+            prev = cur;
+        }
+    }
+
+    // ── particle batch (called by SgParticleRenderer) ─────────────────────────────────────────────
+    public void BeginParticleBatch(BlendMode blend, sg_view tex) { _curBlend = blend; _curTex = tex; _curStart = _instCount; }
+
+    public void PushParticle(Vector2 pos, float halfW, float halfH, float rot, UIColor col, float u0, float v0, float u1, float v1, int mode)
+    {
+        if (_instCount >= _insts.Length) Array.Resize(ref _insts, _insts.Length * 2);
+        _insts[_instCount] = new Inst
+        {
+            PX = pos.X, PY = pos.Y, SX = halfW, SY = halfH, Rot = rot,
+            R = col.R, G = col.G, B = col.B, A = col.A,
+            U0 = u0, V0 = v0, U1 = u1, V1 = v1, Mode = mode,
+        };
+        _instCount++;
+    }
+
+    public void EndParticleBatch()
+    {
+        int n = _instCount - _curStart;
+        if (n > 0) _cmds.Add(new PartCmd { Blend = _curBlend, Tex = _curTex, Start = _curStart, Count = n });
+    }
+
+    public void Dispose()
+    {
+        DestroyTarget();
+        if (_vbuf.id != 0)        sg_destroy_buffer(_vbuf);
+        if (_instBuf.id != 0)     sg_destroy_buffer(_instBuf);
+        if (_quadVbuf.id != 0)    sg_destroy_buffer(_quadVbuf);
+        if (_scenePip.id != 0)    sg_destroy_pipeline(_scenePip);
+        if (_sceneShader.id != 0) sg_destroy_shader(_sceneShader);
+        if (_partPipAdd.id != 0)    sg_destroy_pipeline(_partPipAdd);
+        if (_partPipNormal.id != 0) sg_destroy_pipeline(_partPipNormal);
+        if (_partShader.id != 0)  sg_destroy_shader(_partShader);
+        if (_partSampler.id != 0) sg_destroy_sampler(_partSampler);
+        if (_whiteView.id != 0)   sg_destroy_view(_whiteView);
+        if (_whiteImg.id != 0)    sg_destroy_image(_whiteImg);
+        if (_blitPip.id != 0)     sg_destroy_pipeline(_blitPip);
+        if (_blitShader.id != 0)  sg_destroy_shader(_blitShader);
+        if (_blitSampler.id != 0) sg_destroy_sampler(_blitSampler);
+        if (_bloomExtractPip.id != 0)   sg_destroy_pipeline(_bloomExtractPip);
+        if (_bloomBlurPip.id != 0)      sg_destroy_pipeline(_bloomBlurPip);
+        if (_bloomCompositePip.id != 0) sg_destroy_pipeline(_bloomCompositePip);
+        if (_bloomExtractShader.id != 0) sg_destroy_shader(_bloomExtractShader);
+        if (_bloomBlurShader.id != 0)    sg_destroy_shader(_bloomBlurShader);
+        _vbuf = default; _instBuf = default; _quadVbuf = default;
+        _scenePip = default; _sceneShader = default; _partPipAdd = default; _partPipNormal = default;
+        _partShader = default; _partSampler = default; _whiteView = default; _whiteImg = default;
+        _blitPip = default; _blitShader = default; _blitSampler = default;
+        _bloomExtractPip = default; _bloomBlurPip = default; _bloomCompositePip = default;
+        _bloomExtractShader = default; _bloomBlurShader = default;
+        _inited = false;
+    }
+}
