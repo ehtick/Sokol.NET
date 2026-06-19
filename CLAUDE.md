@@ -198,3 +198,12 @@ For multi-step tasks, state a brief plan:
 ```
 
 When a proper automated test isn't feasible (graphics output, native crashes, platform-specific behavior), define the manual acceptance check explicitly before starting — don't leave it as "make it work".
+
+### ⛔ 5. MANDATORY: UI must fit small screens
+
+**Every screen, panel, dialog, and overlay MUST be designed and implemented to fit the smallest target screen (phones), not just the desktop window.** Non-negotiable, and it applies the moment any UI is created or changed.
+
+- **Any content that can exceed the viewport height MUST live in a `ScrollView`** (`src/GUI/Widgets/ScrollView.cs`) — it provides a scrollbar + drag/wheel scroll. Idiom: `new ScrollView { Content = column, Expand = true }`. Never let a card/list/form overflow off-screen with the bottom (and its action buttons) unreachable.
+- **Assume a phone-sized logical viewport** (~360 logical px wide, short height) as the baseline. Cap fixed widths so they fit; prefer responsive sizing. Account for DPI scaling (`UiMetrics`) and `#if WEB`/retina differences.
+- When you add rows/fields to an existing screen, **re-check it still fits a phone** — adding content is the most common way a screen silently overflows on mobile (regression).
+- Acceptance for any UI change includes: "renders and is fully reachable/scrollable on a phone-sized screen," verified on at least one real mobile target (Android/iOS) before "done".
