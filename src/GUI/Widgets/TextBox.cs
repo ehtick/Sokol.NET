@@ -90,6 +90,11 @@ public class TextBox : Widget
     public float    FontSize         { get; set; } = 0f;
     public TextAlign Align           { get; set; } = TextAlign.Left;
 
+    /// <summary>When true, typed and pasted characters are forced to uppercase as they're inserted, so the
+    /// field reads back in capitals on every platform regardless of OS/soft-keyboard casing. Used for
+    /// case-insensitive codes (e.g. BLE group/game join codes).</summary>
+    public bool    Uppercase         { get; set; }
+
     public event Action<string>? TextChanged;
     public event Action?         Submitted;
 
@@ -300,6 +305,7 @@ public class TextBox : Widget
         if (MaxLength > 0 && SelectionLength() == 0 && _sb.Length >= MaxLength) return false;
 
         char ch = (char)e.CharCode;
+        if (Uppercase) ch = char.ToUpperInvariant(ch);
         if (!IsCharAllowed(ch)) return false;
         SaveUndo();
         DeleteSelection();
@@ -484,8 +490,9 @@ public class TextBox : Widget
 
         SaveUndo();
         DeleteSelection();
-        foreach (char ch in paste)
+        foreach (char raw in paste)
         {
+            char ch = Uppercase ? char.ToUpperInvariant(raw) : raw;
             if (ch < 32 || ch == 127) continue;
             if (!IsCharAllowed(ch)) continue;
             if (MaxLength > 0 && _sb.Length >= MaxLength) break;

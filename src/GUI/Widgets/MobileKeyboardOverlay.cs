@@ -72,6 +72,7 @@ public sealed class MobileKeyboardOverlay : Widget
             {
                 Text                   = tb.Text,
                 Placeholder            = tb.Placeholder,
+                Uppercase              = tb.Uppercase,   // capitalize on the proxy too — its text syncs back to the original
                 SkipKeyboardManagement = true,
             };
             p.TextChanged += t => { if (_original is TextBox o) o.Text = t; };
