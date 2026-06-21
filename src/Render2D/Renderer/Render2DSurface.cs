@@ -430,16 +430,51 @@ public sealed unsafe class Render2DSurface : IDisposable
         FillTriVc(tl, top, br, bottom, bl, bottom);
     }
 
+    // Per-vertex-colour quad (two triangles p0-p1-p2 / p0-p2-p3) — lets the circle helpers fade a feather edge.
+    void QuadVc(Vector2 p0, UIColor c0, Vector2 p1, UIColor c1, Vector2 p2, UIColor c2, Vector2 p3, UIColor c3)
+    { Push(p0, c0); Push(p1, c1); Push(p2, c2); Push(p0, c0); Push(p2, c2); Push(p3, c3); }
+
+    /// <summary>Filled circle with a ~1px transparent feather at the rim, so the edge is anti-aliased even
+    /// when the offscreen target has no MSAA (Samples==1, e.g. low-end Android) — matching the NanoVG look.</summary>
     public void FillCircle(Vector2 center, float radius, UIColor col)
     {
-        int seg = Math.Clamp((int)(radius * 0.6f) + 8, 12, 64);
+        if (radius <= 0f) return;
+        int seg = Math.Clamp((int)(radius * 0.8f) + 12, 16, 128);   // tessellation (roundness); the feather below does the edge AA
         float step = MathF.Tau / seg;
-        Vector2 prev = center + new Vector2(radius, 0f);
+        float aa = MathF.Min(1f, radius);
+        float rs = radius - aa;                       // solid-core radius; [rs, radius] is the feather
+        UIColor edge = col.WithAlpha(0f);
+        Vector2 dPrev = new(1f, 0f);
         for (int i = 1; i <= seg; i++)
         {
-            Vector2 cur = center + new Vector2(MathF.Cos(i * step), MathF.Sin(i * step)) * radius;
-            Push(center, col); Push(prev, col); Push(cur, col);
-            prev = cur;
+            Vector2 dCur = new(MathF.Cos(i * step), MathF.Sin(i * step));
+            if (rs > 0f) { Push(center, col); Push(center + dPrev * rs, col); Push(center + dCur * rs, col); }      // opaque core
+            QuadVc(center + dPrev * rs, col, center + dCur * rs, col, center + dCur * radius, edge, center + dPrev * radius, edge);   // feather
+            dPrev = dCur;
+        }
+    }
+
+    /// <summary>Anti-aliased ring/outline of the given <paramref name="thickness"/> centred on
+    /// <paramref name="radius"/> (a ~1px transparent feather on each edge → smooth at any sample count).</summary>
+    public void StrokeCircle(Vector2 center, float radius, float thickness, UIColor col)
+    {
+        if (radius <= 0f || thickness <= 0f) return;
+        float half = MathF.Min(thickness * 0.5f, radius);
+        float aa = MathF.Min(1f, half);
+        float roT = radius + half, roS = roT - aa;            // outer: transparent rim → solid
+        float riT = MathF.Max(0f, radius - half), riS = riT + aa;   // inner: transparent rim → solid
+        if (riS > roS) riS = roS = (riT + roT) * 0.5f;        // very thin ring → collapse the solid band
+        int seg = Math.Clamp((int)(roT * 0.7f) + 10, 16, 128);
+        float step = MathF.Tau / seg;
+        UIColor e = col.WithAlpha(0f);
+        Vector2 dPrev = new(1f, 0f);
+        for (int i = 1; i <= seg; i++)
+        {
+            Vector2 dCur = new(MathF.Cos(i * step), MathF.Sin(i * step));
+            QuadVc(center + dPrev * riT, e, center + dCur * riT, e, center + dCur * riS, col, center + dPrev * riS, col);   // inner feather
+            QuadVc(center + dPrev * riS, col, center + dCur * riS, col, center + dCur * roS, col, center + dPrev * roS, col); // solid band
+            QuadVc(center + dPrev * roS, col, center + dCur * roS, col, center + dCur * roT, e, center + dPrev * roT, e);     // outer feather
+            dPrev = dCur;
         }
     }
 
