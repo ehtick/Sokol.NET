@@ -319,41 +319,61 @@ public sealed class Screen : Widget
             Renderer.Restore();
         }
 
-        // Pre-warm the active popup's glyphs into the font atlas while we are still
-        // inside this NanoVG frame.  DrawActivePopupOverlay() opens a second NVG
-        // frame (after ImGui has rendered) so the popup appears on top; but if that
-        // second frame bakes new glyphs it would call sg_update_image a second time
-        // in the same Sokol frame, triggering VALIDATE_UPDIMG_ONCE.  Rendering the
-        // popup invisibly here ensures all required glyphs are already in the atlas
-        // before the second NVG frame starts, so that second frame never dirtys the
-        // texture and never calls sg_update_image again.
-        if (_activePopup != null)
-        {
-            Renderer.Save();
-            Renderer.SetGlobalAlpha(0f);
-            var sp = _activePopup.ScreenPosition;
-            Renderer.Translate(sp.X, sp.Y);
-            _activePopup.DrawPopupOverlay(Renderer);
-            Renderer.Restore();
-        }
-
-        // Same glyph pre-warm for top overlays (DrawTopOverlays opens another NVG frame after ImGui).
-        foreach (var (w, r) in _topOverlaysToDraw)
-        {
-            Renderer.Save();
-            Renderer.SetGlobalAlpha(0f);
-            Renderer.Translate(r.X, r.Y);
-            Renderer.ClipRect(new Rect(0, 0, r.Width, r.Height));
-            w.Draw(Renderer);
-            Renderer.Restore();
-        }
-
-        Renderer.EndFrame();
-
+        // Popups + top overlays must render ON TOP of everything. There are two strategies, chosen by
+        // whether the caller layers something (e.g. ImGui) BETWEEN the UI and the popup:
+        //
+        //  • drawActiveOverlay == true (no external layer — JamboreeArcade et al.): draw them VISIBLY
+        //    here, last, within THIS single NanoVG frame. Crucially this avoids opening a SECOND NanoVG
+        //    frame: a second frame's font-atlas flush is a second sg_update_image on the font texture in
+        //    the SAME Sokol frame, which trips VALIDATE_UPDIMG_ONCE → panic whenever the popup baked a
+        //    new glyph (e.g. a ComboBox dropdown opening). One frame ⇒ one atlas update ⇒ no panic.
+        //
+        //  • drawActiveOverlay == false (caller draws ImGui first — GameEditor): only PRE-WARM the
+        //    glyphs here (invisibly) so the caller's later DrawActivePopupOverlay/DrawTopOverlays second
+        //    frame finds them already in the atlas and never re-flushes it.
         if (drawActiveOverlay)
         {
-            DrawActivePopupOverlay(width, height, dpiScale);
-            DrawTopOverlays(width, height, dpiScale);
+            if (_activePopup != null)
+            {
+                Renderer.Save();
+                var sp = _activePopup.ScreenPosition;
+                Renderer.Translate(sp.X, sp.Y);
+                _activePopup.DrawPopupOverlay(Renderer);
+                Renderer.Restore();
+            }
+            foreach (var (w, r) in _topOverlaysToDraw)
+            {
+                Renderer.Save();
+                Renderer.Translate(r.X, r.Y);
+                Renderer.ClipRect(new Rect(0, 0, r.Width, r.Height));
+                w.Draw(Renderer);
+                Renderer.Restore();
+            }
+            Renderer.EndFrame();
+        }
+        else
+        {
+            if (_activePopup != null)
+            {
+                Renderer.Save();
+                Renderer.SetGlobalAlpha(0f);
+                var sp = _activePopup.ScreenPosition;
+                Renderer.Translate(sp.X, sp.Y);
+                _activePopup.DrawPopupOverlay(Renderer);
+                Renderer.Restore();
+            }
+            foreach (var (w, r) in _topOverlaysToDraw)
+            {
+                Renderer.Save();
+                Renderer.SetGlobalAlpha(0f);
+                Renderer.Translate(r.X, r.Y);
+                Renderer.ClipRect(new Rect(0, 0, r.Width, r.Height));
+                w.Draw(Renderer);
+                Renderer.Restore();
+            }
+            Renderer.EndFrame();
+            // The caller composites the REAL popup/top overlays after its layered (ImGui) render via
+            // DrawActivePopupOverlay() / DrawTopOverlays().
         }
     }
 
