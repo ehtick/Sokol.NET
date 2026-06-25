@@ -3138,22 +3138,62 @@ KeyAlias={keystoreInfo.KeyAlias}
 
                     // Install APKs directly from the .apks file using bundletool
                     Log.LogMessage(MessageImportance.High, "Installing device-specific AAB splits onto device...");
-                    
-                    var installResult = Cli.Wrap("java")
-                        .WithArguments($"-jar \"{bundletoolPath}\" install-apks --apks=\"{apksPath}\" --device-id={selectedDeviceId}")
-                        .WithStandardOutputPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
-                        .WithStandardErrorPipe(PipeTarget.ToDelegate(s => Log.LogError(s)))
-                        .ExecuteAsync()
-                        .GetAwaiter()
-                        .GetResult();
 
-                    if (installResult.ExitCode == 0)
+                    string packageName = $"{packagePrefix}.{appName}";
+
+                    // Runs `bundletool install-apks`, capturing stderr so we can detect a
+                    // signature-mismatch failure. Validation is suppressed so a non-zero exit
+                    // returns a result instead of throwing.
+                    (int ExitCode, string Stderr) RunInstallApks()
+                    {
+                        var stderrBuilder = new System.Text.StringBuilder();
+                        var result = Cli.Wrap("java")
+                            .WithArguments($"-jar \"{bundletoolPath}\" install-apks --apks=\"{apksPath}\" --device-id={selectedDeviceId}")
+                            .WithStandardOutputPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
+                            .WithStandardErrorPipe(PipeTarget.Merge(
+                                PipeTarget.ToStringBuilder(stderrBuilder),
+                                PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s))))
+                            .WithValidation(CommandResultValidation.None)
+                            .ExecuteAsync()
+                            .GetAwaiter()
+                            .GetResult();
+                        return (result.ExitCode, stderrBuilder.ToString());
+                    }
+
+                    var (installExitCode, installStderr) = RunInstallApks();
+
+                    // A signature mismatch (e.g. installing a freshly-signed build over an existing
+                    // one) reports INSTALL_FAILED_UPDATE_INCOMPATIBLE. Uninstall and retry once.
+                    if (installExitCode != 0 &&
+                        (installStderr.Contains("INSTALL_FAILED_UPDATE_INCOMPATIBLE") ||
+                         installStderr.Contains("signatures do not match")))
+                    {
+                        Log.LogWarning($"⚠️  Install failed due to signature mismatch. Uninstalling {packageName} and retrying...");
+                        try
+                        {
+                            Cli.Wrap("adb")
+                                .WithArguments($"-s {selectedDeviceId} uninstall {packageName}")
+                                .WithStandardOutputPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
+                                .WithStandardErrorPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
+                                .WithValidation(CommandResultValidation.None)
+                                .ExecuteAsync()
+                                .GetAwaiter()
+                                .GetResult();
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.LogMessage(MessageImportance.Normal, $"ℹ️  Uninstall reported: {ex.Message}");
+                        }
+
+                        (installExitCode, installStderr) = RunInstallApks();
+                    }
+
+                    if (installExitCode == 0)
                     {
                         Log.LogMessage(MessageImportance.High, $"✅ AAB installed successfully on {selectedDeviceId}!");
                         successCount++;
 
                         // Try to launch the app
-                        string packageName = $"{packagePrefix}.{appName}";
                         Log.LogMessage(MessageImportance.High, $"Launching app (package: {packageName})...");
 
                         try
