@@ -23,7 +23,7 @@
         <string>iPhoneOS</string>
     </array>
     <key>MinimumOSVersion</key>
-    <string>12.0</string>
+    <string>TEMPLATE_IOS_MIN_VERSION</string>
     <key>UIDeviceFamily</key>
     <array>
         <integer>1</integer>

@@ -454,7 +454,8 @@ namespace SokolApplicationBuilder
                 content = content.Replace("TEMPLATE_PROJECT_NAME", sanitizedProjectName);
                 content = content.Replace("TEMPLATE_BUNDLE_PREFIX", iOSBundlePrefix);
                 content = content.Replace("TEMPLATE_APP_VERSION", appVersion);
-                
+                content = content.Replace("TEMPLATE_IOS_MIN_VERSION", iOSMinVersion);
+
                 // Set orientation: Directory.Build.props takes precedence when it has a specific
                 // (non-"both") value; command-line --orientation is a fallback used only when
                 // the props file leaves orientation at the default ("both").
@@ -532,6 +533,7 @@ namespace SokolApplicationBuilder
                 {
                     string plistContent = File.ReadAllText(plistSource);
                     plistContent = plistContent.Replace("TEMPLATE_PROJECT_NAME", sanitizedProjectName);
+                    plistContent = plistContent.Replace("TEMPLATE_IOS_MIN_VERSION", iOSMinVersion);
                     plistContent = plistContent.Replace("@TEMPLATE_IOS_ORIENTATIONS_PLIST@", iosOrientationsPlist);
                     plistContent = plistContent.Replace("@TEMPLATE_IPAD_ORIENTATIONS_PLIST@", ipadOrientationsPlist);
                     

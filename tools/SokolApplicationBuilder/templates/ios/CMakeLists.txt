@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.16)
 project(TEMPLATE_PROJECT_NAME-ios-app)
 
 # Set iOS deployment target
-set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum iOS deployment version")
+set(CMAKE_OSX_DEPLOYMENT_TARGET "TEMPLATE_IOS_MIN_VERSION" CACHE STRING "Minimum iOS deployment version")
 
 # Configure for iOS
 set(CMAKE_SYSTEM_NAME iOS)
@@ -45,6 +45,11 @@ add_executable(TEMPLATE_PROJECT_NAME-ios-app ${SOURCES})
 # Set iOS-specific properties
 set_target_properties(TEMPLATE_PROJECT_NAME-ios-app PROPERTIES
     MACOSX_BUNDLE TRUE
+    # Pin the app target's minimum iOS version. Xcode stamps both the Mach-O
+    # min-OS load command and Info.plist MinimumOSVersion from this build setting;
+    # without it, Xcode defaults to the (current SDK) version and the bundle is
+    # rejected on older devices ("DeviceOSVersionTooLow").
+    XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "TEMPLATE_IOS_MIN_VERSION"
     MACOSX_BUNDLE_GUI_IDENTIFIER "TEMPLATE_BUNDLE_PREFIX.TEMPLATE_PROJECT_NAME-ios-app"
     MACOSX_BUNDLE_BUNDLE_NAME "TEMPLATE_PROJECT_NAME iOS App"
     MACOSX_BUNDLE_BUNDLE_VERSION "TEMPLATE_APP_VERSION"
