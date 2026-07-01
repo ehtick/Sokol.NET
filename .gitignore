@@ -13,3 +13,7 @@ examples/*/android/
 
 # Build outputs (APKs, AABs, IPAs, etc.)
 examples/*/output/
+
+# .NET SDK resolver backup temp files (left behind by wasm/browser-wasm builds; the SDK
+# writes one per build/restore and never cleans them up)
+*.SdkResolver.*.proj.Backup.tmp
