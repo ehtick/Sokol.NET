@@ -45,6 +45,27 @@ namespace SokolApplicationBuilder
 
         public static Options? opts;
 
+        /// <summary>
+        /// Delete the .NET SDK resolver backup temp files a wasm/browser build leaves next to the csproj
+        /// (<c>&lt;proj&gt;.SdkResolver.&lt;hash&gt;.proj.Backup.tmp</c>). The SDK writes one per build/restore
+        /// and never cleans them up, so they pile up on disk. Cross-platform (managed File I/O, no shell —
+        /// a shell <c>rm</c> would not run on Windows). Best-effort; never throws.
+        /// </summary>
+        public static void CleanupSdkResolverTempFiles(string dir)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return;
+                foreach (string f in Directory.EnumerateFiles(dir))
+                {
+                    string name = Path.GetFileName(f);
+                    if (name.Contains(".SdkResolver.") && name.EndsWith(".proj.Backup.tmp", StringComparison.OrdinalIgnoreCase))
+                        try { File.Delete(f); } catch { }
+                }
+            }
+            catch { }
+        }
+
         public static string GetUrhoNetHomePath()
         {
 

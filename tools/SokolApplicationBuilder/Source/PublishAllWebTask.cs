@@ -86,6 +86,9 @@ namespace SokolApplicationBuilder
                     Log.LogMessage(MessageImportance.High, $"Published {exampleName}Web successfully.");
                     published++;
                 }
+
+                // Remove the SDK-resolver backup temp files the wasm build leaves next to the csproj.
+                Utils.CleanupSdkResolverTempFiles(exampleDir);
             }
 
             Log.LogMessage(MessageImportance.High, $"Publish all web completed: {published} succeeded, {failedProjects.Count} failed.");

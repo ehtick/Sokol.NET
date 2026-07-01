@@ -142,6 +142,9 @@ namespace SokolApplicationBuilder
                 debugMessageImportance: MessageImportance.High,
                 label: "dotnet-web-build");
 
+            // Remove the SDK-resolver backup temp files the wasm build leaves next to the csproj.
+            Utils.CleanupSdkResolverTempFiles(Path.GetDirectoryName(projectFile) ?? opts.ProjectPath);
+
             if (exitCode != 0)
             {
                 Log.LogError("dotnet publish error");
