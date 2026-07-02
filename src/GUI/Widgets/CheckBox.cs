@@ -111,14 +111,32 @@ public class CheckBox : Widget
     }
 
     public override bool OnMouseEnter(MouseEvent e) { IsHovered = true;  return true; }
-    public override bool OnMouseLeave(MouseEvent e) { IsHovered = false; return true; }
+    public override bool OnMouseLeave(MouseEvent e) { IsHovered = false; IsPressed = false; return true; }
 
     public override bool OnMouseDown(MouseEvent e)
     {
         if (e.Button == MouseButton.Left && Enabled)
         {
-            IsChecked = !IsChecked;
-            RaiseClicked();
+            IsPressed = true;
+            return true;
+        }
+        return false;
+    }
+
+    // Toggle on RELEASE, like Button — not on press. A touch drag-to-scroll that starts on
+    // this checkbox un-presses it when the pan begins (InputRouter fires OnMouseLeave and
+    // swallows the mouse-up), so flick-scrolling a list of checkbox rows no longer toggles
+    // the row the finger happened to land on (device-observed on the invite-players list).
+    public override bool OnMouseUp(MouseEvent e)
+    {
+        if (e.Button == MouseButton.Left && IsPressed)
+        {
+            IsPressed = false;
+            if (IsHovered && Enabled)
+            {
+                IsChecked = !IsChecked;
+                RaiseClicked();
+            }
             return true;
         }
         return false;

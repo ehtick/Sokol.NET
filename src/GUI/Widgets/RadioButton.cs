@@ -138,14 +138,30 @@ public class RadioButton : Widget
     }
 
     public override bool OnMouseEnter(MouseEvent e) { IsHovered = true;  return true; }
-    public override bool OnMouseLeave(MouseEvent e) { IsHovered = false; return true; }
+    public override bool OnMouseLeave(MouseEvent e) { IsHovered = false; IsPressed = false; return true; }
 
     public override bool OnMouseDown(MouseEvent e)
     {
         if (e.Button == MouseButton.Left && Enabled)
         {
-            if (_group != null) _group.Select(this);
-            else { IsChecked = !IsChecked; RaiseClicked(); }
+            IsPressed = true;
+            return true;
+        }
+        return false;
+    }
+
+    // Select on RELEASE, like Button — see CheckBox.OnMouseUp: keeps a touch drag-to-scroll
+    // over a list of radio rows from selecting the row the finger landed on.
+    public override bool OnMouseUp(MouseEvent e)
+    {
+        if (e.Button == MouseButton.Left && IsPressed)
+        {
+            IsPressed = false;
+            if (IsHovered && Enabled)
+            {
+                if (_group != null) _group.Select(this);
+                else { IsChecked = !IsChecked; RaiseClicked(); }
+            }
             return true;
         }
         return false;
