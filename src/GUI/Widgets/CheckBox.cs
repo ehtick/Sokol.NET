@@ -127,12 +127,16 @@ public class CheckBox : Widget
     // this checkbox un-presses it when the pan begins (InputRouter fires OnMouseLeave and
     // swallows the mouse-up), so flick-scrolling a list of checkbox rows no longer toggles
     // the row the finger happened to land on (device-observed on the invite-players list).
+    // The release is validated by POSITION (inside my bounds), NOT by IsHovered: containers
+    // that forward mouse events to child editors manually (PropertyGrid) never send
+    // OnMouseEnter, so hover state is unreliable off the router's hit-test path
+    // (user-observed regression: the GUIDemo PropertyGrid checkbox stopped toggling).
     public override bool OnMouseUp(MouseEvent e)
     {
         if (e.Button == MouseButton.Left && IsPressed)
         {
             IsPressed = false;
-            if (IsHovered && Enabled)
+            if (Enabled && HitTest(e.LocalPosition))
             {
                 IsChecked = !IsChecked;
                 RaiseClicked();

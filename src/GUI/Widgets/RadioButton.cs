@@ -151,13 +151,15 @@ public class RadioButton : Widget
     }
 
     // Select on RELEASE, like Button — see CheckBox.OnMouseUp: keeps a touch drag-to-scroll
-    // over a list of radio rows from selecting the row the finger landed on.
+    // over a list of radio rows from selecting the row the finger landed on. Validated by
+    // release POSITION, not IsHovered — manual-forwarding containers (PropertyGrid) never
+    // send OnMouseEnter, so hover is unreliable off the router's hit-test path.
     public override bool OnMouseUp(MouseEvent e)
     {
         if (e.Button == MouseButton.Left && IsPressed)
         {
             IsPressed = false;
-            if (IsHovered && Enabled)
+            if (Enabled && HitTest(e.LocalPosition))
             {
                 if (_group != null) _group.Select(this);
                 else { IsChecked = !IsChecked; RaiseClicked(); }
