@@ -46,6 +46,7 @@ namespace SokolApplicationBuilder
 
         private string PROJECT_UUID = string.Empty;
         private string PROJECT_NAME = string.Empty;
+        private bool _optimizedHarness = false;   // --type release-harness: Release codegen + HARNESS define
         private string JAVA_PACKAGE_PATH = string.Empty;
         private string VERSION_CODE = string.Empty;
         private string VERSION_NAME = string.Empty;
@@ -93,6 +94,17 @@ namespace SokolApplicationBuilder
             {
                 Log.LogError("Can run only on Apple OSX");
                 return false;
+            }
+
+            // --type release-harness = Release-OPTIMIZED codegen with the in-app harness (HARNESS define),
+            // dev-signed exactly like a release build (automatic signing → sideloadable). Treat it as
+            // "release" for all the config / signing / path derivation below; only the .NET publish's
+            // DefineConstants swaps DEBUG (used by a debug build) for the dedicated HARNESS flag. Mirrors
+            // the Android/desktop release-harness flavor.
+            if (opts.Type?.Equals("release-harness", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                _optimizedHarness = true;
+                opts.Type = "release";
             }
 
             string architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString();
@@ -338,8 +350,11 @@ namespace SokolApplicationBuilder
                     ? "Release" 
                     : "Debug";
 
-                // Include DEBUG symbol for Debug builds (semicolon must be URL-encoded for MSBuild)
-                string defineConstants = configuration == "Debug" ? "__IOS__%3BDEBUG" : "__IOS__";
+                // The in-app harness compiles in via `#if DEBUG || HARNESS`. A debug build defines DEBUG;
+                // a release-harness build defines the dedicated HARNESS flag instead — harness present in an
+                // OPTIMIZED Release build, no debug overhead. A plain release build defines neither.
+                string defineConstants = _optimizedHarness ? "__IOS__%3BHARNESS"
+                                       : (configuration == "Debug" ? "__IOS__%3BDEBUG" : "__IOS__");
 
                 string publishArgs = $"publish \"{projectFile}\" -r ios-arm64 -c {configuration} -p:BuildAsLibrary=true -p:DefineConstants=\"{defineConstants}\"";
                 if (!string.IsNullOrEmpty(opts.LinkerFlags))

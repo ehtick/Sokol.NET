@@ -1241,11 +1241,12 @@ namespace SokolApplicationBuilder
                     // Also include __ANDROID_ARM32__ for 32-bit ARM builds — needed for struct layouts
                     // (e.g. NSVGpaint) that differ between 32-bit and 64-bit pointer sizes.
                     string arm32Extra = arch == "linux-bionic-arm" ? "__ANDROID_ARM32__%3B" : "";
-                    // DEBUG define (compiles in the TestHarness/autopilot) is DECOUPLED from the optimization
-                    // `configuration` above: it rides the debug pipeline (buildType "debug") OR a release-harness
-                    // build. So release-harness = Release-optimized codegen WITH the harness compiled in.
-                    bool withHarness = buildType == "debug" || _optimizedHarness;
-                    string defineConstants = withHarness ? $"{arm32Extra}__ANDROID__%3BDEBUG" : $"{arm32Extra}__ANDROID__";
+                    // The in-app harness compiles in via `#if DEBUG || HARNESS`. A debug build defines DEBUG
+                    // (which implies the harness); a release-harness build defines the dedicated HARNESS flag
+                    // instead — so the harness is present in an OPTIMIZED Release build with NO debug overhead.
+                    // A plain release build defines neither, so the harness vanishes entirely.
+                    string harnessDef = _optimizedHarness ? "%3BHARNESS" : (buildType == "debug" ? "%3BDEBUG" : "");
+                    string defineConstants = $"{arm32Extra}__ANDROID__{harnessDef}";
 
                     var result = Cli.Wrap("dotnet")
                         .WithArguments($"publish \"{projectFile}\" -r {arch} -c {configuration} -p:BuildAsLibrary=true -p:DisableUnsupportedError=true -p:PublishAotUsingRuntimePack=true -p:RemoveSections=true -p:DefineConstants=\"{defineConstants}\" --verbosity quiet")

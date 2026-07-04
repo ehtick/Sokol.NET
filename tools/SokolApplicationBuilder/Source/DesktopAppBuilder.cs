@@ -49,8 +49,9 @@ namespace SokolApplicationBuilder
                     Log.LogMessage(MessageImportance.Normal, $"Using project file: {projectFile}");
                 }
 
-                // Determine build configuration
-                string buildType = opts.Type == "release" ? "Release" : "Debug";
+                // Determine build configuration. --type release-harness = Release-OPTIMIZED codegen WITH the
+                // in-app harness (the HARNESS define is added below); plain release = optimized, no harness.
+                string buildType = (opts.Type == "release" || opts.Type == "release-harness") ? "Release" : "Debug";
                 string targetFramework = string.IsNullOrEmpty(opts.Framework) ? "net10.0" : opts.Framework;
 
                 // Determine build output path (always build to project bin folder)
@@ -70,7 +71,7 @@ namespace SokolApplicationBuilder
                 string dotnetCommand = $"dotnet publish -f {targetFramework} \"{absoluteProjectFile}\" -r {opts.RID} -c {buildType} " +
                                      $"-p:PublishAot=true -p:TrimmerRemoveSymbols=false -p:TrimMode=partial " +
                                      $"-p:DisableUnsupportedError=true -p:PublishAotUsingRuntimePack=true " +
-                                     $"-p:StripSymbols=true -p:DefineConstants=\"_DESKTOP_PUBLISHED_BINARY_\" " +
+                                     $"-p:StripSymbols=true -p:DefineConstants=\"_DESKTOP_PUBLISHED_BINARY_{(opts.Type == "release-harness" ? "%3BHARNESS" : "")}\" " +
                                      $"-o \"{absoluteOutputPath}\"";
 
                 Log.LogMessage(MessageImportance.High, "📦 Publishing .NET project...");
