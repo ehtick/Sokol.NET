@@ -48,6 +48,11 @@ namespace SokolApplicationBuilder
 
         string PROJECT_UUID = string.Empty;
         string PROJECT_NAME = string.Empty;
+        // `--type release-harness`: Release-OPTIMIZED .NET codegen but WITH the in-app TestHarness/autopilot
+        // (the DEBUG define), riding the DEBUG packaging pipeline (gradle assembleDebug → debug-signed,
+        // sideloadable; no release keystore). Lets the automated harness DRIVE an optimized build so we can
+        // A/B Debug-vs-Release BLE throughput (e.g. the Galaxy Tab A8 hub choke). See docs/HARNESS_CLI_RUNBOOK.md.
+        bool _optimizedHarness = false;
         string JAVA_PACKAGE_PATH = string.Empty;
         string VERSION_CODE = string.Empty;
         string VERSION_NAME = string.Empty;
@@ -409,7 +414,13 @@ namespace SokolApplicationBuilder
             {
                 // Parse command line arguments (similar to shell script)
                 bool installApp = opts.Install;
-                string buildType = !string.IsNullOrEmpty(opts.Type) ? opts.Type.ToLower() : "debug";
+                string requestedType = !string.IsNullOrEmpty(opts.Type) ? opts.Type.ToLower() : "debug";
+                // release-harness = Release-optimized codegen + the in-app harness. It rides the DEBUG
+                // packaging pipeline (assembleDebug, debug-signed, sideloadable) — everything downstream
+                // treats it as "debug"; ONLY the .NET publish flips to Release (PublishAssemblies reads
+                // _optimizedHarness). So the sole difference from a plain debug APK is codegen optimization.
+                _optimizedHarness = requestedType == "release-harness";
+                string buildType = _optimizedHarness ? "debug" : requestedType;
                 bool buildAAB = opts.SubTask?.ToLower() == "aab"; // Check if AAB build is requested
 
                 Log.LogMessage(MessageImportance.High, $"Build type: {buildType}");
@@ -1186,8 +1197,9 @@ namespace SokolApplicationBuilder
         {
             var architectures = GetTargetArchitectures();
 
-            // Determine configuration
-            string configuration = buildType == "release" ? "Release" : "Debug";
+            // Determine configuration — release-harness compiles OPTIMIZED (Release) while keeping the
+            // DEBUG define below on, so the in-app TestHarness is present in an otherwise-optimized build.
+            string configuration = (_optimizedHarness || buildType == "release") ? "Release" : "Debug";
 
             // Add scripts directory to PATH for android_fake_clang.cmd access on Windows
             string sokolNetHome = Utils.GetSokolNetHome();
@@ -1229,7 +1241,11 @@ namespace SokolApplicationBuilder
                     // Also include __ANDROID_ARM32__ for 32-bit ARM builds — needed for struct layouts
                     // (e.g. NSVGpaint) that differ between 32-bit and 64-bit pointer sizes.
                     string arm32Extra = arch == "linux-bionic-arm" ? "__ANDROID_ARM32__%3B" : "";
-                    string defineConstants = configuration == "Debug" ? $"{arm32Extra}__ANDROID__%3BDEBUG" : $"{arm32Extra}__ANDROID__";
+                    // DEBUG define (compiles in the TestHarness/autopilot) is DECOUPLED from the optimization
+                    // `configuration` above: it rides the debug pipeline (buildType "debug") OR a release-harness
+                    // build. So release-harness = Release-optimized codegen WITH the harness compiled in.
+                    bool withHarness = buildType == "debug" || _optimizedHarness;
+                    string defineConstants = withHarness ? $"{arm32Extra}__ANDROID__%3BDEBUG" : $"{arm32Extra}__ANDROID__";
 
                     var result = Cli.Wrap("dotnet")
                         .WithArguments($"publish \"{projectFile}\" -r {arch} -c {configuration} -p:BuildAsLibrary=true -p:DisableUnsupportedError=true -p:PublishAotUsingRuntimePack=true -p:RemoveSections=true -p:DefineConstants=\"{defineConstants}\" --verbosity quiet")
