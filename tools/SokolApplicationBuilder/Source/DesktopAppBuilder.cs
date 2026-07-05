@@ -49,6 +49,16 @@ namespace SokolApplicationBuilder
                     Log.LogMessage(MessageImportance.Normal, $"Using project file: {projectFile}");
                 }
 
+                // Default the runtime identifier to the host OS/arch when --rid is omitted. Without this the
+                // publish command emits an empty "-r  -c Release", where -r swallows -c as its value and the
+                // dangling "Release" becomes a second project → MSB1008 / "Switch: Release". Android/iOS builders
+                // derive their own RID from the architecture, so only the desktop path needs this fallback.
+                if (string.IsNullOrWhiteSpace(opts.RID))
+                {
+                    opts.RID = GetDefaultDesktopRid();
+                    Log.LogMessage(MessageImportance.Normal, $"No --rid specified; defaulting to host RID: {opts.RID}");
+                }
+
                 // Determine build configuration. --type release-harness = Release-OPTIMIZED codegen WITH the
                 // in-app harness (the HARNESS define is added below); plain release = optimized, no harness.
                 string buildType = (opts.Type == "release" || opts.Type == "release-harness") ? "Release" : "Debug";
@@ -123,6 +133,27 @@ namespace SokolApplicationBuilder
                 Log.LogError($"Desktop build failed: {ex.Message}");
                 return false;
             }
+        }
+
+        // Portable RID for the current host (e.g. osx-arm64, win-x64, linux-x64). NativeAOT publish needs a
+        // portable RID, so build it from OS + process architecture rather than RuntimeInformation.RuntimeIdentifier
+        // (which can return version-specific RIDs like "osx.15-arm64" that the runtime pack won't resolve).
+        private static string GetDefaultDesktopRid()
+        {
+            string os = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "win"
+                      : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "osx"
+                      : "linux";
+
+            string arch = RuntimeInformation.ProcessArchitecture switch
+            {
+                Architecture.Arm64 => "arm64",
+                Architecture.X64 => "x64",
+                Architecture.X86 => "x86",
+                Architecture.Arm => "arm",
+                _ => "x64"
+            };
+
+            return $"{os}-{arch}";
         }
 
         private string GetProjectName(string projectPath)
