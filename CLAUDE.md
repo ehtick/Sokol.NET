@@ -58,7 +58,7 @@ Pre-built libraries live in `libs/`. Rebuild only when changing C/C++ sources in
 .\scripts\build-vs2022-windows.ps1        # Windows
 ./scripts/build-linux-library.sh          # Linux
 ./scripts/build-web-library.sh            # Emscripten/WASM
-./scripts/build-android-sokol-libraries.sh  # Android NDK (multi-arch)
+./scripts/build-android-sokol-libraries-via-apk.sh  # Android (multi-arch, via APK build + .so extraction)
 ./scripts/build-ios-sokol-library.sh all  # iOS
 ```
 
