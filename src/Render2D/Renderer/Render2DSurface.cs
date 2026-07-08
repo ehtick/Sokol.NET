@@ -99,6 +99,15 @@ public sealed unsafe class Render2DSurface : IDisposable
     UIColor _clear;
     bool    _inited;
 
+    /// <summary>Number of currently Init'd surfaces (each holds a set of sokol shaders/pipelines). Used by
+    /// the test harness to assert screen teardown frees its surface — this must stay bounded, not grow with
+    /// the number of game screens opened (an unfreed surface leaks toward SHADER_POOL_EXHAUSTED).</summary>
+    public static int LiveCount { get; private set; }
+
+    /// <summary>Monotonic count of every surface ever Init'd — lets a leak test confirm surfaces were
+    /// actually created/churned (guards against a vacuous "count stayed low because nothing rendered").</summary>
+    public static int TotalCreated { get; private set; }
+
     public bool IsValid => _colorImg.id != 0;
     /// <summary>A 1×1 white texture view — bind for non-textured (dynamic) particle batches.</summary>
     public sg_view WhiteView => _whiteView;
@@ -107,6 +116,7 @@ public sealed unsafe class Render2DSurface : IDisposable
     {
         if (_inited) return;
         _inited = true;
+        LiveCount++; TotalCreated++;
 
         // ── scene pipeline ────────────────────────────────────────────────────────────────────────
         _sceneShader = sg_make_shader(r2d_scene_shader_desc(sg_query_backend()));
@@ -507,6 +517,43 @@ public sealed unsafe class Render2DSurface : IDisposable
         }
     }
 
+    /// <summary>Outline of a rounded rectangle, <paramref name="thickness"/> wide, centred on the path
+    /// (4 straight edge strips inset by the corner radius + 4 quarter-ring corners). Relies on MSAA for
+    /// edge AA, like <see cref="FillRoundedRect"/>.</summary>
+    public void StrokeRoundedRect(Rect r, float radius, float thickness, UIColor col)
+    {
+        if (thickness <= 0f) return;
+        radius = MathF.Max(0f, MathF.Min(radius, MathF.Min(r.Width, r.Height) * 0.5f));
+        float half = thickness * 0.5f;
+        float x0 = r.X, y0 = r.Y, x1 = r.X + r.Width, y1 = r.Y + r.Height;
+        FillQuad(new(x0 + radius, y0 - half), new(x1 - radius, y0 - half), new(x1 - radius, y0 + half), new(x0 + radius, y0 + half), col); // top
+        FillQuad(new(x0 + radius, y1 - half), new(x1 - radius, y1 - half), new(x1 - radius, y1 + half), new(x0 + radius, y1 + half), col); // bottom
+        FillQuad(new(x0 - half, y0 + radius), new(x0 + half, y0 + radius), new(x0 + half, y1 - radius), new(x0 - half, y1 - radius), col); // left
+        FillQuad(new(x1 - half, y0 + radius), new(x1 + half, y0 + radius), new(x1 + half, y1 - radius), new(x1 - half, y1 - radius), col); // right
+        if (radius > 0.5f)
+        {
+            const float HP = MathF.PI * 0.5f;
+            StrokeArc(new(x0 + radius, y0 + radius), radius, half, MathF.PI,      MathF.PI + HP, col);  // top-left
+            StrokeArc(new(x1 - radius, y0 + radius), radius, half, MathF.PI + HP, MathF.PI * 2f, col);  // top-right
+            StrokeArc(new(x1 - radius, y1 - radius), radius, half, 0f,            HP,            col);   // bottom-right
+            StrokeArc(new(x0 + radius, y1 - radius), radius, half, HP,            MathF.PI,      col);   // bottom-left
+        }
+    }
+
+    void StrokeArc(Vector2 c, float radius, float half, float a0, float a1, UIColor col)
+    {
+        float ri = MathF.Max(0f, radius - half), ro = radius + half;
+        int seg = Math.Clamp((int)(ro * 0.5f) + 3, 4, 24);
+        float step = (a1 - a0) / seg;
+        Vector2 dPrev = new(MathF.Cos(a0), MathF.Sin(a0));
+        for (int i = 1; i <= seg; i++)
+        {
+            Vector2 dCur = new(MathF.Cos(a0 + i * step), MathF.Sin(a0 + i * step));
+            FillQuad(c + dPrev * ri, c + dCur * ri, c + dCur * ro, c + dPrev * ro, col);
+            dPrev = dCur;
+        }
+    }
+
     // ── particle batch (called by SgParticleRenderer) ─────────────────────────────────────────────
     public void BeginParticleBatch(BlendMode blend, sg_view tex) { _curBlend = blend; _curTex = tex; _curStart = _instCount; }
 
@@ -556,6 +603,7 @@ public sealed unsafe class Render2DSurface : IDisposable
         _blitPip = default; _blitShader = default; _blitSampler = default;
         _bloomExtractPip = default; _bloomBlurPip = default; _bloomCompositePip = default;
         _bloomExtractShader = default; _bloomBlurShader = default;
+        if (_inited) LiveCount--;
         _inited = false;
     }
 }
