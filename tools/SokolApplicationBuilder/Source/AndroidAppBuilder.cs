@@ -1201,6 +1201,21 @@ namespace SokolApplicationBuilder
             // DEBUG define below on, so the in-app TestHarness is present in an otherwise-optimized build.
             string configuration = (_optimizedHarness || buildType == "release") ? "Release" : "Debug";
 
+            // Harden STORE release builds ONLY (plain `--type release`, i.e. the App Store / Play
+            // artifact) against reverse-engineering — see JamboreeArcade docs/UNLOCK_ANTI_PIRACY.md §5.2:
+            //   • StripSymbols — removes the ELF symbol table so the .so carries no linker symbols
+            //                    (a disassembler gets no function labels; verified: no .symtab, 9 ABI exports).
+            // We deliberately KEEP StackTraceSupport ON (do NOT set it false): NativeAOT's StackTraceMetadata
+            // is what makes a production crash report readable — managed exceptions carry method names, not
+            // bare addresses. Diagnosing crashes (BLE especially, RULE #1) is worth more than hiding method
+            // names, which leak via reflection metadata anyway (JSON source-gen), so disabling stack traces
+            // buys little RE resistance for a real diagnostics loss. Not applied to release-harness/debug
+            // either, but those keep symbols too.
+            bool hardenRelease = buildType == "release" && !_optimizedHarness;
+            string releaseHardeningArgs = hardenRelease
+                ? "-p:StripSymbols=true "
+                : "";
+
             // Add scripts directory to PATH for android_fake_clang.cmd access on Windows
             string sokolNetHome = Utils.GetSokolNetHome();
             string scriptsDir = Path.Combine(sokolNetHome, "scripts");
@@ -1249,7 +1264,7 @@ namespace SokolApplicationBuilder
                     string defineConstants = $"{arm32Extra}__ANDROID__{harnessDef}";
 
                     var result = Cli.Wrap("dotnet")
-                        .WithArguments($"publish \"{projectFile}\" -r {arch} -c {configuration} -p:BuildAsLibrary=true -p:DisableUnsupportedError=true -p:PublishAotUsingRuntimePack=true -p:RemoveSections=true -p:DefineConstants=\"{defineConstants}\" --verbosity quiet")
+                        .WithArguments($"publish \"{projectFile}\" -r {arch} -c {configuration} -p:BuildAsLibrary=true -p:DisableUnsupportedError=true -p:PublishAotUsingRuntimePack=true -p:RemoveSections=true {releaseHardeningArgs}-p:DefineConstants=\"{defineConstants}\" --verbosity quiet")
                         .WithWorkingDirectory(opts.ProjectPath)
                         .WithEnvironmentVariables(env => 
                         {
