@@ -156,7 +156,13 @@ public class Button : Widget
         if (e.Button == MouseButton.Left && IsPressed)
         {
             IsPressed = false;
-            if (IsHovered && Enabled) RaiseClicked();
+            // Validate the click by the up POSITION (hit-test), not the enter/leave IsHovered flag. IsHovered is
+            // stale when a click handler rebuilds this button mid-press (a panel that Refresh()es itself) — the
+            // fresh button gets no mouse-enter until the cursor moves, so a repeat click made without moving would
+            // be silently dropped. LocalPosition is always current, so consecutive clicks register.
+            var p = e.LocalPosition;
+            bool over = p.X >= 0f && p.Y >= 0f && p.X <= Bounds.Width && p.Y <= Bounds.Height;
+            if (over && Enabled) RaiseClicked();
             return true;
         }
         return false;
