@@ -204,6 +204,23 @@ namespace SokolApplicationBuilder
                     Log.LogMessage(MessageImportance.High, "");
                 }
 
+                // List devices reachable over the local network (WiFi) via devicectl (Xcode 15+). These are
+                // paired devices with "Connect via network" enabled — deployable without a cable.
+                Log.LogMessage(MessageImportance.High, "📶 Network (WiFi) iOS Devices:");
+                Log.LogMessage(MessageImportance.High, "=============================");
+                var wifiDevices = IOSBuildTask.DiscoverWifiDevices();
+                if (wifiDevices.Count == 0)
+                {
+                    Log.LogMessage(MessageImportance.High, "No iOS devices reachable over WiFi.");
+                    Log.LogMessage(MessageImportance.High, "(Pair the device once over USB, then enable 'Connect via network' in Xcode → Window → Devices and Simulators.)");
+                }
+                else
+                {
+                    foreach (var d in wifiDevices)
+                        Log.LogMessage(MessageImportance.High, $"Device: {d.Name} ({d.Id})");
+                }
+                Log.LogMessage(MessageImportance.High, "");
+
                 // List simulators
                 Log.LogMessage(MessageImportance.High, "📱 iOS Simulators:");
                 Log.LogMessage(MessageImportance.High, "==================");

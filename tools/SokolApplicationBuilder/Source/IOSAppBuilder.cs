@@ -756,98 +756,65 @@ namespace SokolApplicationBuilder
                 // when several devices are connected, prompt to choose one (or all) — matching the
                 // Android flow. (A prior change auto-picked usbDevices[0], so a multi-device deploy
                 // silently installed on only the first device.)
-                var selectedDevices = new List<(string Id, string Name)>();
+                var selectedDevices = new List<(string Id, string Name, string Via)>();
 
                 if (!string.IsNullOrEmpty(opts.IOSDeviceId))
                 {
-                    selectedDevices.Add((opts.IOSDeviceId, opts.IOSDeviceId));
+                    selectedDevices.Add((opts.IOSDeviceId, opts.IOSDeviceId, "specified"));
                     Log.LogMessage(MessageImportance.High, $"Using specified iOS device: {opts.IOSDeviceId}");
                 }
                 else
                 {
+                    // Discover every reachable device across BOTH transports and let the user pick. USB via
+                    // ios-deploy -c (unchanged); WiFi via devicectl. A device on the cable ALWAYS deploys over USB:
+                    // USB entries come first, and a device reachable both ways is kept only as its USB entry (deduped
+                    // by UDID) — so cabled deployment is never regressed, WiFi only ADDS network-only devices.
+                    var usbDevices = new List<(string Id, string Name, string Via)>();
                     var checkResult = Cli.Wrap("which")
                         .WithArguments("ios-deploy")
                         .WithValidation(CommandResultValidation.None)
                         .ExecuteBufferedAsync().GetAwaiter().GetResult();
 
-                    if (checkResult.ExitCode != 0)
+                    if (checkResult.ExitCode == 0)
                     {
-                        Log.LogError("ios-deploy not found and no --ios-device specified. Install with: brew install ios-deploy");
-                        return false;
-                    }
+                        var deviceResult = Cli.Wrap("ios-deploy")
+                            .WithArguments("-c --timeout 2")
+                            .WithValidation(CommandResultValidation.None)
+                            .ExecuteBufferedAsync().GetAwaiter().GetResult();
 
-                    var deviceResult = Cli.Wrap("ios-deploy")
-                        .WithArguments("-c --timeout 2")
-                        .WithValidation(CommandResultValidation.None)
-                        .ExecuteBufferedAsync().GetAwaiter().GetResult();
-
-                    var usbDevices = new List<(string Id, string Name)>();
-                    foreach (var rawLine in deviceResult.StandardOutput.Split('\n'))
-                    {
-                        if (!rawLine.Contains("Found")) continue;
-                        var afterFound = rawLine.Substring(rawLine.IndexOf("Found") + 6);
-                        var idEnd      = afterFound.IndexOf(" ");
-                        if (idEnd <= 0) continue;
-                        var id   = afterFound.Substring(0, idEnd).Trim();
-                        var name = "Unknown";
-                        var aka  = afterFound.IndexOf("a.k.a.");
-                        if (aka >= 0) name = afterFound.Substring(aka + 7).Trim('\'', ' ');
-                        usbDevices.Add((id, name));
-                    }
-
-                    if (usbDevices.Count == 0)
-                    {
-                        Log.LogError("No iOS devices found via USB. Connect a device with a cable or pass --ios-device <UDID> for WiFi install.");
-                        return false;
-                    }
-
-                    if (usbDevices.Count == 1)
-                    {
-                        selectedDevices.Add(usbDevices[0]);
-                        Log.LogMessage(MessageImportance.High, $"✅ Found single device: {usbDevices[0].Name} ({usbDevices[0].Id})");
+                        foreach (var rawLine in deviceResult.StandardOutput.Split('\n'))
+                        {
+                            if (!rawLine.Contains("Found")) continue;
+                            var afterFound = rawLine.Substring(rawLine.IndexOf("Found") + 6);
+                            var idEnd      = afterFound.IndexOf(" ");
+                            if (idEnd <= 0) continue;
+                            var id   = afterFound.Substring(0, idEnd).Trim();
+                            var name = "Unknown";
+                            var aka  = afterFound.IndexOf("a.k.a.");
+                            if (aka >= 0) name = afterFound.Substring(aka + 7).Trim('\'', ' ');
+                            usbDevices.Add((id, name, "USB"));
+                        }
                     }
                     else
                     {
-                        Log.LogMessage(MessageImportance.High, $"📱 Multiple iOS devices detected ({usbDevices.Count} devices):");
-                        Log.LogMessage(MessageImportance.High, "======================================================");
-                        for (int i = 0; i < usbDevices.Count; i++)
-                            Log.LogMessage(MessageImportance.High, $"{i + 1}) {usbDevices[i].Name} ({usbDevices[i].Id})");
-                        Log.LogMessage(MessageImportance.High, $"{usbDevices.Count + 1}) All devices");
-
-                        if (opts.Interactive)
-                        {
-                            Console.WriteLine();
-                            int selection = -1;
-                            while (selection < 1 || selection > usbDevices.Count + 1)
-                            {
-                                Console.Write($"Select device (1-{usbDevices.Count + 1}): ");
-                                string? input = Console.ReadLine();
-                                if (int.TryParse(input, out selection) && selection >= 1 && selection <= usbDevices.Count + 1)
-                                {
-                                    if (selection == usbDevices.Count + 1)
-                                    {
-                                        selectedDevices = new List<(string Id, string Name)>(usbDevices);
-                                        Log.LogMessage(MessageImportance.High, $"✅ Selected all devices ({usbDevices.Count} devices)");
-                                    }
-                                    else
-                                    {
-                                        selectedDevices.Add(usbDevices[selection - 1]);
-                                        Log.LogMessage(MessageImportance.High, $"✅ Selected device: {usbDevices[selection - 1].Name} ({usbDevices[selection - 1].Id})");
-                                    }
-                                    break;
-                                }
-
-                                Console.WriteLine($"❌ Invalid selection. Please enter a number between 1 and {usbDevices.Count + 1}.");
-                                selection = -1;
-                            }
-                        }
-                        else
-                        {
-                            selectedDevices.Add(usbDevices[0]);
-                            Log.LogMessage(MessageImportance.High, $"⚠️  Using first device: {usbDevices[0].Name} ({usbDevices[0].Id})");
-                            Log.LogWarning("Multiple devices found. Using the first one. Pass --ios-device <UDID> to choose, or --interactive to be prompted.");
-                        }
+                        // ios-deploy is only needed for the USB scan; without it we can still deploy over WiFi.
+                        Log.LogMessage(MessageImportance.High, "ios-deploy not found — skipping the USB scan and looking for network (WiFi) devices instead. For USB installs: brew install ios-deploy");
                     }
+
+                    // WiFi devices on the local network, excluding any already seen on USB (USB preferred).
+                    var usbIds = new HashSet<string>(usbDevices.Select(d => d.Id), StringComparer.OrdinalIgnoreCase);
+                    var wifiDevices = DiscoverWifiDevices(usbIds);
+
+                    var allDevices = new List<(string Id, string Name, string Via)>();
+                    allDevices.AddRange(usbDevices);    // USB first → the non-interactive default stays a cabled device
+                    allDevices.AddRange(wifiDevices);
+
+                    if (allDevices.Count == 0)
+                    {
+                        Log.LogError("No iOS devices found via USB or WiFi. Connect a cable, enable 'Connect via network' for the device (Xcode → Window → Devices and Simulators), or pass --ios-device <UDID>.");
+                        return false;
+                    }
+                    selectedDevices = ChooseDevices(allDevices);
                 }
 
                 // Install (and optionally launch) on each selected device.
@@ -855,7 +822,7 @@ namespace SokolApplicationBuilder
                 foreach (var device in selectedDevices)
                 {
                     if (selectedDevices.Count > 1)
-                        Log.LogMessage(MessageImportance.High, $"\n📱 Installing on device: {device.Name} ({device.Id})");
+                        Log.LogMessage(MessageImportance.High, $"\n📱 Installing on device: {device.Name} [{device.Via}] ({device.Id})");
                     if (!InstallAndLaunchOnDevice(device.Id, device.Name, appBundlePath, runAfterInstall))
                         allOk = false;
                 }
@@ -866,6 +833,119 @@ namespace SokolApplicationBuilder
                 Log.LogError($"Failed to install on device: {ex.Message}");
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Pick which discovered device(s) to install on across BOTH transports: one is auto-selected, otherwise
+        /// the user chooses (interactive prompt) or the first is used with a warning (non-interactive) — matching
+        /// the Android flow. Each device carries its transport (USB / WiFi), shown in the list. USB entries come
+        /// first, so the non-interactive default is a cabled device when one is connected. Returns ≥ 1 device.
+        /// </summary>
+        private List<(string Id, string Name, string Via)> ChooseDevices(List<(string Id, string Name, string Via)> devices)
+        {
+            var selected = new List<(string Id, string Name, string Via)>();
+            if (devices.Count == 1)
+            {
+                selected.Add(devices[0]);
+                Log.LogMessage(MessageImportance.High, $"✅ Using {devices[0].Via} device: {devices[0].Name} ({devices[0].Id})");
+                return selected;
+            }
+
+            Log.LogMessage(MessageImportance.High, $"📱 Multiple iOS devices detected ({devices.Count} devices):");
+            Log.LogMessage(MessageImportance.High, "======================================================");
+            for (int i = 0; i < devices.Count; i++)
+                Log.LogMessage(MessageImportance.High, $"{i + 1}) {devices[i].Name}  [{devices[i].Via}]  ({devices[i].Id})");
+            Log.LogMessage(MessageImportance.High, $"{devices.Count + 1}) All devices");
+
+            if (opts.Interactive)
+            {
+                Console.WriteLine();
+                int selection = -1;
+                while (selection < 1 || selection > devices.Count + 1)
+                {
+                    Console.Write($"Select device (1-{devices.Count + 1}): ");
+                    string? input = Console.ReadLine();
+                    if (int.TryParse(input, out selection) && selection >= 1 && selection <= devices.Count + 1)
+                    {
+                        if (selection == devices.Count + 1)
+                        {
+                            selected = new List<(string Id, string Name, string Via)>(devices);
+                            Log.LogMessage(MessageImportance.High, $"✅ Selected all devices ({devices.Count} devices)");
+                        }
+                        else
+                        {
+                            selected.Add(devices[selection - 1]);
+                            Log.LogMessage(MessageImportance.High, $"✅ Selected device: {devices[selection - 1].Name} [{devices[selection - 1].Via}] ({devices[selection - 1].Id})");
+                        }
+                        break;
+                    }
+
+                    Console.WriteLine($"❌ Invalid selection. Please enter a number between 1 and {devices.Count + 1}.");
+                    selection = -1;
+                }
+            }
+            else
+            {
+                selected.Add(devices[0]);
+                Log.LogMessage(MessageImportance.High, $"⚠️  Using first device: {devices[0].Name} [{devices[0].Via}] ({devices[0].Id})");
+                Log.LogWarning("Multiple devices found. Using the first one. Pass --ios-device <UDID> to choose, or --interactive to be prompted.");
+            }
+            return selected;
+        }
+
+        /// <summary>
+        /// Discover iOS devices reachable over the local network (WiFi) via <c>xcrun devicectl list devices</c>.
+        /// Returns (UDID, Name, "WiFi") for each PAIRED device currently reachable on the network (its
+        /// connectionProperties.transportType is "localNetwork"; a cabled device reports "wired" and an unreachable
+        /// one has no transportType), skipping any UDID in <paramref name="excludeUdids"/> (devices already seen on
+        /// USB, which are preferred). Best-effort: returns empty if devicectl is missing/fails, so it can never break
+        /// USB deploy. The device must have "Connect via network" enabled (Xcode → Window → Devices and Simulators).
+        /// Static so the list-devices task can reuse it.
+        /// </summary>
+        public static List<(string Id, string Name, string Via)> DiscoverWifiDevices(HashSet<string>? excludeUdids = null)
+        {
+            var devices = new List<(string Id, string Name, string Via)>();
+            string tmp = Path.Combine(Path.GetTempPath(), $"sokol-devicectl-{Guid.NewGuid():N}.json");
+            try
+            {
+                var result = Cli.Wrap("xcrun")
+                    .WithArguments($"devicectl list devices --json-output \"{tmp}\"")
+                    .WithValidation(CommandResultValidation.None)
+                    .ExecuteBufferedAsync().GetAwaiter().GetResult();
+
+                if (result.ExitCode != 0 || !File.Exists(tmp))
+                    return devices;
+
+                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(tmp));
+                if (!doc.RootElement.TryGetProperty("result", out var res) ||
+                    !res.TryGetProperty("devices", out var arr) || arr.ValueKind != System.Text.Json.JsonValueKind.Array)
+                    return devices;
+
+                foreach (var dev in arr.EnumerateArray())
+                {
+                    if (!dev.TryGetProperty("connectionProperties", out var cp)) continue;
+                    string transport = cp.TryGetProperty("transportType", out var tt) ? (tt.GetString() ?? "") : "";
+                    string pairing   = cp.TryGetProperty("pairingState",  out var ps) ? (ps.GetString() ?? "") : "";
+                    // network-reachable + paired only (a "wired" device is on USB; an unreachable one has no transport)
+                    if (!transport.Equals("localNetwork", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!pairing.Equals("paired", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    string udid = dev.TryGetProperty("hardwareProperties", out var hw) && hw.TryGetProperty("udid", out var u)
+                        ? (u.GetString() ?? "") : "";
+                    if (string.IsNullOrEmpty(udid)) continue;
+                    if (excludeUdids != null && excludeUdids.Contains(udid)) continue;
+
+                    string name = dev.TryGetProperty("deviceProperties", out var dp) && dp.TryGetProperty("name", out var n)
+                        ? (n.GetString() ?? "iOS device") : "iOS device";
+                    devices.Add((udid, name, "WiFi"));
+                }
+            }
+            catch { /* best-effort: WiFi discovery is optional and must never break USB deploy */ }
+            finally
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { /* best effort cleanup */ }
+            }
+            return devices;
         }
 
         /// <summary>
