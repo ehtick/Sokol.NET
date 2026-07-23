@@ -791,7 +791,12 @@ namespace SokolApplicationBuilder
                             var id   = afterFound.Substring(0, idEnd).Trim();
                             var name = "Unknown";
                             var aka  = afterFound.IndexOf("a.k.a.");
-                            if (aka >= 0) name = afterFound.Substring(aka + 7).Trim('\'', ' ');
+                            if (aka >= 0)
+                            {
+                                var rest = afterFound.Substring(aka + 6);
+                                int q1 = rest.IndexOf('\''), q2 = rest.LastIndexOf('\'');
+                                name = q2 > q1 && q1 >= 0 ? rest.Substring(q1 + 1, q2 - q1 - 1) : rest.Trim();
+                            }
                             usbDevices.Add((id, name, "USB"));
                         }
                     }
@@ -909,7 +914,7 @@ namespace SokolApplicationBuilder
             try
             {
                 var result = Cli.Wrap("xcrun")
-                    .WithArguments($"devicectl list devices --json-output \"{tmp}\"")
+                    .WithArguments($"devicectl list devices --timeout {DevicectlLaunchTimeoutSeconds} --json-output \"{tmp}\"")
                     .WithValidation(CommandResultValidation.None)
                     .ExecuteBufferedAsync().GetAwaiter().GetResult();
 
@@ -1019,7 +1024,7 @@ namespace SokolApplicationBuilder
                 if (!string.IsNullOrEmpty(bundleId))
                 {
                     var launchResult = Cli.Wrap("xcrun")
-                        .WithArguments($"devicectl device process launch --device {targetDeviceId} {bundleId}")
+                        .WithArguments($"devicectl device process launch --timeout {DevicectlLaunchTimeoutSeconds} --device {targetDeviceId} {bundleId}")
                         .WithStandardOutputPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
                         .WithStandardErrorPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
                         .WithValidation(CommandResultValidation.None)
@@ -1043,6 +1048,16 @@ namespace SokolApplicationBuilder
         /// waits forever and the build appears stuck.</summary>
         private const int IosDeployWaitSeconds = 30;
 
+        /// <summary>Overall bound for a devicectl call. UNBOUNDED IS NOT SAFE: when CoreDevice reports the
+        /// device as "connecting" rather than "available (paired)" — a locked device, a half-established
+        /// tunnel, a pairing that needs re-trusting — <c>devicectl device install</c> never returns, so the
+        /// build hangs with no error and the ios-deploy USB fallback below is never reached. Generous
+        /// enough for a first install of a large NativeAOT bundle over WiFi.</summary>
+        private const int DevicectlTimeoutSeconds = 180;
+
+        /// <summary>Bound for the launch call, which only has to start an already-installed app.</summary>
+        private const int DevicectlLaunchTimeoutSeconds = 60;
+
         /// <summary>
         /// Installs the app bundle using <c>xcrun devicectl</c> (Xcode 15+, iOS 17+).
         /// Works over WiFi and USB; no extra tools required beyond a standard Xcode install.
@@ -1055,7 +1070,7 @@ namespace SokolApplicationBuilder
                 Log.LogMessage(MessageImportance.High, $"[Install] Trying xcrun devicectl for {deviceName}...");
 
                 var result = Cli.Wrap("xcrun")
-                    .WithArguments($"devicectl device install app --device {deviceId} \"{appBundlePath}\"")
+                    .WithArguments($"devicectl device install app --timeout {DevicectlTimeoutSeconds} --device {deviceId} \"{appBundlePath}\"")
                     .WithStandardOutputPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
                     .WithStandardErrorPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
                     .WithValidation(CommandResultValidation.None)
