@@ -964,23 +964,37 @@ namespace SokolApplicationBuilder
             bool overWifi = string.Equals(via, "WiFi", StringComparison.OrdinalIgnoreCase);
 
             // ── Install ───────────────────────────────────────────────────────
-            // Primary: xcrun devicectl — works over WiFi and USB (Xcode 15+, iOS 17+). Over WiFi the
-            // control channel drops if the device locks or the tunnel is re-established ("Connection reset
-            // by peer" / CoreDeviceError 4000), which is usually transient — so retry before giving up.
-            bool installed = TryInstallViaDevicectl(targetDeviceId, targetDeviceName, appBundlePath);
-            for (int attempt = 2; !installed && overWifi && attempt <= DevicectlWifiAttempts; attempt++)
+            // Pick the tool by TRANSPORT — they are not interchangeable.
+            //
+            // On the CABLE, ios-deploy first. It talks to the device directly and installs this app in
+            // ~10s. devicectl goes through CoreDevice, which routinely parks a cabled phone in the
+            // "connecting" state (see `xcrun devicectl list devices`); in that state
+            // `devicectl device install` blocks for its entire timeout and then fails, so leading with it
+            // cost a minute or more per deploy and looked like a hang. It stays as the fallback for a
+            // machine without ios-deploy.
+            //
+            // Over WiFi it is the reverse: ios-deploy is cable-only — it blocks on "Waiting for iOS device
+            // to be connected" until something appears on the cable — so devicectl is the only option. Its
+            // control channel drops transiently when the device locks or the tunnel re-establishes
+            // ("Connection reset by peer" / CoreDeviceError 4000), hence the retries.
+            bool installed;
+            if (overWifi)
             {
-                Log.LogMessage(MessageImportance.High,
-                    $"[Install] WiFi control channel dropped — retry {attempt}/{DevicectlWifiAttempts} in 3s (keep the device UNLOCKED)...");
-                System.Threading.Thread.Sleep(3000);
                 installed = TryInstallViaDevicectl(targetDeviceId, targetDeviceName, appBundlePath);
+                for (int attempt = 2; !installed && attempt <= DevicectlWifiAttempts; attempt++)
+                {
+                    Log.LogMessage(MessageImportance.High,
+                        $"[Install] WiFi control channel dropped — retry {attempt}/{DevicectlWifiAttempts} in 3s (keep the device UNLOCKED)...");
+                    System.Threading.Thread.Sleep(3000);
+                    installed = TryInstallViaDevicectl(targetDeviceId, targetDeviceName, appBundlePath);
+                }
             }
-
-            // Fallback: ios-deploy — USB ONLY in practice. It blocks on "Waiting for iOS device to be
-            // connected" until a device shows up on the CABLE, so running it for a network-only device
-            // hangs the build forever (it looks stuck, with no error). Skip it for WiFi devices.
-            if (!installed && !overWifi)
+            else
+            {
                 installed = TryInstallViaIosDeploy(targetDeviceId, targetDeviceName, appBundlePath);
+                if (!installed)
+                    installed = TryInstallViaDevicectl(targetDeviceId, targetDeviceName, appBundlePath);
+            }
 
             if (!installed)
             {
@@ -1021,6 +1035,9 @@ namespace SokolApplicationBuilder
                     Log.LogWarning($"plutil failed: {ex.Message}");
                 }
 
+                // Launching stays on devicectl: ios-deploy needs a DeviceSupport bundle for the device's iOS
+                // version and simply refuses ("Unable to locate DeviceSupport directory") on a current
+                // release, so it is not an alternative here — only for the install above, which needs none.
                 if (!string.IsNullOrEmpty(bundleId))
                 {
                     var launchResult = Cli.Wrap("xcrun")
@@ -1031,7 +1048,9 @@ namespace SokolApplicationBuilder
                         .ExecuteBufferedAsync().GetAwaiter().GetResult();
 
                     if (launchResult.ExitCode != 0)
-                        Log.LogWarning($"App launch failed (exit {launchResult.ExitCode}): {launchResult.StandardError}");
+                        Log.LogWarning($"App launch failed (exit {launchResult.ExitCode}) — the app IS installed, so just tap it on " +
+                                       $"the device. devicectl cannot reach {targetDeviceName} (check `xcrun devicectl list devices`: " +
+                                       $"it should read 'available (paired)', not 'connecting'). {launchResult.StandardError}");
                     else
                         Log.LogMessage(MessageImportance.High, $"App launched successfully on device: {targetDeviceName}!");
                 }
