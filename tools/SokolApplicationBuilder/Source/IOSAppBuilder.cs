@@ -823,7 +823,7 @@ namespace SokolApplicationBuilder
                 {
                     if (selectedDevices.Count > 1)
                         Log.LogMessage(MessageImportance.High, $"\n📱 Installing on device: {device.Name} [{device.Via}] ({device.Id})");
-                    if (!InstallAndLaunchOnDevice(device.Id, device.Name, appBundlePath, runAfterInstall))
+                    if (!InstallAndLaunchOnDevice(device.Id, device.Name, appBundlePath, runAfterInstall, device.Via))
                         allOk = false;
                 }
                 return allOk;
@@ -951,20 +951,41 @@ namespace SokolApplicationBuilder
         /// <summary>
         /// Install the app bundle on ONE device (xcrun devicectl first, ios-deploy fallback) and,
         /// when requested, launch it. Returns false only if every install method failed.
+        /// <paramref name="via"/> is the transport the device was discovered on ("USB" / "WiFi").
         /// </summary>
-        private bool InstallAndLaunchOnDevice(string targetDeviceId, string targetDeviceName, string appBundlePath, bool runAfterInstall)
+        private bool InstallAndLaunchOnDevice(string targetDeviceId, string targetDeviceName, string appBundlePath,
+                                              bool runAfterInstall, string via = "USB")
         {
-            // ── Install ───────────────────────────────────────────────────────
-            // Primary: xcrun devicectl — works over WiFi and USB (Xcode 15+, iOS 17+)
-            bool installed = TryInstallViaDevicectl(targetDeviceId, targetDeviceName, appBundlePath);
+            bool overWifi = string.Equals(via, "WiFi", StringComparison.OrdinalIgnoreCase);
 
-            // Fallback: ios-deploy without --no-wifi (supports WiFi if paired, and USB)
-            if (!installed)
+            // ── Install ───────────────────────────────────────────────────────
+            // Primary: xcrun devicectl — works over WiFi and USB (Xcode 15+, iOS 17+). Over WiFi the
+            // control channel drops if the device locks or the tunnel is re-established ("Connection reset
+            // by peer" / CoreDeviceError 4000), which is usually transient — so retry before giving up.
+            bool installed = TryInstallViaDevicectl(targetDeviceId, targetDeviceName, appBundlePath);
+            for (int attempt = 2; !installed && overWifi && attempt <= DevicectlWifiAttempts; attempt++)
+            {
+                Log.LogMessage(MessageImportance.High,
+                    $"[Install] WiFi control channel dropped — retry {attempt}/{DevicectlWifiAttempts} in 3s (keep the device UNLOCKED)...");
+                System.Threading.Thread.Sleep(3000);
+                installed = TryInstallViaDevicectl(targetDeviceId, targetDeviceName, appBundlePath);
+            }
+
+            // Fallback: ios-deploy — USB ONLY in practice. It blocks on "Waiting for iOS device to be
+            // connected" until a device shows up on the CABLE, so running it for a network-only device
+            // hangs the build forever (it looks stuck, with no error). Skip it for WiFi devices.
+            if (!installed && !overWifi)
                 installed = TryInstallViaIosDeploy(targetDeviceId, targetDeviceName, appBundlePath);
 
             if (!installed)
             {
-                Log.LogError($"All installation methods failed for device {targetDeviceName} ({targetDeviceId}).");
+                if (overWifi)
+                    Log.LogError($"Could not install on {targetDeviceName} ({targetDeviceId}) over WiFi after {DevicectlWifiAttempts} attempts. " +
+                                 "Unlock the device and keep it awake, confirm it is on the SAME network as this Mac " +
+                                 "(Xcode → Window → Devices and Simulators → 'Connect via network'), then retry — or plug in a cable, " +
+                                 "which deploys over USB.");
+                else
+                    Log.LogError($"All installation methods failed for device {targetDeviceName} ({targetDeviceId}).");
                 return false;
             }
 
@@ -1013,6 +1034,14 @@ namespace SokolApplicationBuilder
 
             return true;
         }
+
+        /// <summary>How many times to try devicectl on a WiFi device before giving up (the control channel
+        /// drops transiently when the device locks or the tunnel re-establishes).</summary>
+        private const int DevicectlWifiAttempts = 3;
+
+        /// <summary>Seconds ios-deploy may wait for a device on the CABLE before failing. Without a bound it
+        /// waits forever and the build appears stuck.</summary>
+        private const int IosDeployWaitSeconds = 30;
 
         /// <summary>
         /// Installs the app bundle using <c>xcrun devicectl</c> (Xcode 15+, iOS 17+).
@@ -1066,8 +1095,10 @@ namespace SokolApplicationBuilder
 
                 Log.LogMessage(MessageImportance.High, $"[Install] Trying ios-deploy for {deviceName}...");
 
+                // --timeout is REQUIRED: without it ios-deploy waits forever on "Waiting for iOS device to
+                // be connected" when the device isn't on the cable, and the build just hangs.
                 var result = Cli.Wrap(iosDeploy)
-                    .WithArguments($"--id {deviceId} --bundle \"{appBundlePath}\"")
+                    .WithArguments($"--id {deviceId} --timeout {IosDeployWaitSeconds} --bundle \"{appBundlePath}\"")
                     .WithStandardOutputPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
                     .WithStandardErrorPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
                     .WithValidation(CommandResultValidation.None)
