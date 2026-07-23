@@ -22,7 +22,12 @@ public class Label : Widget
         ApplyFont(renderer);
         if (Wrap == TextWrap.Wrap && Bounds.Width > 0)
         {
-            var (w, h) = renderer.MeasureTextBounds(0, 0, Bounds.Width, Text);
+            // Measure at the width Draw actually wraps at — the padding-deflated inner box, NOT the full
+            // bounds. Measuring wider wraps to fewer lines than get drawn, so the reported height comes
+            // up short: inside a ScrollView that shortfall is exactly the tail of the text, and it can
+            // never be scrolled to (the rules overlay lost its last line on a phone).
+            float innerW = MathF.Max(1f, Bounds.Width - Padding.Horizontal);
+            var (w, h) = renderer.MeasureTextBounds(0, 0, innerW, Text);
             return new Vector2(w + Padding.Horizontal, h + Padding.Vertical);
         }
         float tw = renderer.MeasureText(Text);
