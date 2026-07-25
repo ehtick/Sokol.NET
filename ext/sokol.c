@@ -127,6 +127,8 @@ extern "C"
 #include "sokol_fontstash.h"
 #define SOKOL_FILESYSTEM_IMPL
 #include "sokol/sokol_filesystem.h"
+#define SOKOL_CAPTURE_IMPL
+#include "sokol_capture.h"
 
 
 // nanovg.h declarations only; implementation is compiled in nanovg_impl.c
