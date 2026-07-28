@@ -23,14 +23,14 @@ public static class BidiHelper
         // ALL subsequent neutral-only lines (e.g. "?") inherit RTL order.
         var lines = logicalText.Split('\n');
         if (lines.Length <= 1)
-            return Bidi.LogicalToVisual(logicalText);
+            return Bidi.LogicalToVisual(ArabicShaper.Shape(logicalText));
 
         var sb = new System.Text.StringBuilder(logicalText.Length);
         for (int i = 0; i < lines.Length; i++)
         {
             if (i > 0) sb.Append('\n');
             var line = lines[i];
-            sb.Append(ContainsRTL(line) ? Bidi.LogicalToVisual(line) : line);
+            sb.Append(ContainsRTL(line) ? Bidi.LogicalToVisual(ArabicShaper.Shape(line)) : line);
         }
         return sb.ToString();
     }
@@ -118,6 +118,18 @@ public static class BidiHelper
             for (int i = 0; i < identity.Length; i++) identity[i] = i;
             return (lineText, identity);
         }
-        return Bidi.LogicalToVisualWithMap(lineText);
+
+        // Shaping happens before reordering, so the map comes back in two hops and has to be composed:
+        // visual -> shaped (from BiDi) and shaped -> logical (from the shaper). They are not the same
+        // index space, because lam+alef collapses two logical characters into one shaped glyph.
+        string shaped = ArabicShaper.Shape(lineText, out int[] shapedToLogical);
+        var (visual, visualToShaped) = Bidi.LogicalToVisualWithMap(shaped);
+        var map = new int[visualToShaped.Length];
+        for (int i = 0; i < map.Length; i++)
+        {
+            int s = visualToShaped[i];
+            map[i] = (uint)s < (uint)shapedToLogical.Length ? shapedToLogical[s] : 0;
+        }
+        return (visual, map);
     }
 }

@@ -85,7 +85,7 @@ namespace BidiSharp
             foreach (var sequence in sequences)
             {
                 sequence.ResolveWeaks();
-                sequence.ResolveNeutrals();
+                sequence.ResolveNeutrals(input);
                 sequence.ResolveImplicit();
                 sequence.ApplyTypesAndLevels(ref typesList, ref levelsList);
             }
@@ -95,7 +95,41 @@ namespace BidiSharp
             // after this call levelsList holds the final post-L1 levels that rule L4 must consult.
             var reordered = GetReorderedIndexes(baseLevel, typesList, levelsList, lines);
             resolvedLevels = levelsList;
+            ApplyCombiningMarkOrder(input, reordered, levelsList);
             return reordered;
+        }
+
+        private static bool IsCombiningMark(char c)
+        {
+            var cat = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c);
+            return cat == System.Globalization.UnicodeCategory.NonSpacingMark
+                || cat == System.Globalization.UnicodeCategory.EnclosingMark;
+        }
+
+        /// <summary>Rule L3 — a combining mark on a right-to-left base ends up BEFORE that base once L2
+        /// has reversed the run, because it followed the base in logical order. NanoVG/fontstash draws
+        /// glyphs in buffer order and positions a zero-width mark on whatever it follows, so each
+        /// [marks…][base] group that came out of an RTL run is flipped back to [base][marks…].
+        /// Without this an Arabic shadda or a Hebrew niqqud lands on the neighbouring letter.
+        /// <para>Applied to the reorder MAP rather than to the finished string, so the visual→logical
+        /// mapping used for caret placement stays in step with the glyphs.</para></summary>
+        private static void ApplyCombiningMarkOrder(string input, int[] order, byte[] levels)
+        {
+            int i = 0;
+            while (i < order.Length)
+            {
+                if (!IsCombiningMark(input[order[i]])) { i++; continue; }
+
+                int j = i;
+                while (j < order.Length && IsCombiningMark(input[order[j]])) j++;
+
+                // j indexes the base the marks decorate. They only precede it when the run is RTL;
+                // in an LTR run the marks already follow their base and must be left alone.
+                if (j < order.Length && (levels[order[j]] & 1) != 0)
+                    Array.Reverse(order, i, j - i + 1);
+
+                i = j + 1;
+            }
         }
 
         // Entry point for algorithm to return at final correct display order
@@ -367,14 +401,14 @@ namespace BidiSharp
                 {
                     for (int j = i - 1; j >= 0; j--)
                     {
-                        var type = (BidiClass)sequence.types[j];                
+                        var type = (BidiClass)sequence.types[j];
                         if (type == BidiClass.R  || type == BidiClass.AL || type == BidiClass.L)
                         {
-                            if (type == BidiClass.AL)
-                            {
-                                sequence.types[i] = (byte)BidiClass.AN;
-                                break;
-                            }
+                            // Stop at the FIRST strong type whatever it is. Breaking only on AL let the
+                            // scan run past an intervening R or L and pick up an AL further back, which
+                            // turned a European number into an Arabic one that W2 never licensed.
+                            if (type == BidiClass.AL) sequence.types[i] = (byte)BidiClass.AN;
+                            break;
                         }
                     }
                 }
@@ -462,11 +496,17 @@ namespace BidiSharp
                             prevStrong = t;
                             break;
                         }
+                    }
 
-                        if (prevStrong == BidiClass.L)
-                        {
-                            sequence.types[i] = (byte)BidiClass.L;
-                        }
+                    // ⛔ This test used to sit INSIDE the backward scan, so it ran against the initial
+                    // value (sos) on every non-strong character and never against the strong type the
+                    // scan actually found — the loop breaks the moment it finds one. Any EN preceded by
+                    // a neutral in an LTR paragraph was therefore forced to L regardless of the Hebrew
+                    // or Arabic run in front of it, and "bbdge סז 07" reordered as "bbdge זס 07"
+                    // instead of "bbdge 07 זס".
+                    if (prevStrong == BidiClass.L)
+                    {
+                        sequence.types[i] = (byte)BidiClass.L;
                     }
                 }
             }
@@ -475,10 +515,270 @@ namespace BidiSharp
 
         // 3.3.4 Resolve Neutral Types
         // In final results all NIs are resolved to R or L
-        private static void ResolveNeutrals(this IsolatingRunSequence sequence)
-        {
+        // BD16: the maximum bracket-pair stack depth. An opening bracket that would overflow it stops
+        // BD16 for the rest of the sequence, keeping the pairs already identified.
+        private const int MAX_PAIRING_DEPTH = 63;
 
-            // TODO: N0 rule (Paired Brackets algorithm)
+        /// <summary>Bidi_Paired_Bracket: the other half of the pair, and whether THIS character opens it.
+        /// The 61 pairs are the Bidi_Mirrored characters whose General_Category is Ps or Pe.
+        /// ⛔ Openness is stored explicitly rather than inferred from "the opener is the lower code
+        /// point" — that holds for 60 of the 61 pairs and fails for U+298F/U+298E.</summary>
+        private static (char partner, bool open) PairedBracket(char c) => c switch
+        {
+            '\u0028' => ('\u0029', true ),   // LEFT PARENTHESIS
+            '\u0029' => ('\u0028', false),   // RIGHT PARENTHESIS
+            '\u005B' => ('\u005D', true ),   // LEFT SQUARE BRACKET
+            '\u005D' => ('\u005B', false),   // RIGHT SQUARE BRACKET
+            '\u007B' => ('\u007D', true ),   // LEFT CURLY BRACKET
+            '\u007D' => ('\u007B', false),   // RIGHT CURLY BRACKET
+            '\u2045' => ('\u2046', true ),   // LEFT SQUARE BRACKET WITH QUILL
+            '\u2046' => ('\u2045', false),   // RIGHT SQUARE BRACKET WITH QUILL
+            '\u207D' => ('\u207E', true ),   // SUPERSCRIPT LEFT PARENTHESIS
+            '\u207E' => ('\u207D', false),   // SUPERSCRIPT RIGHT PARENTHESIS
+            '\u208D' => ('\u208E', true ),   // SUBSCRIPT LEFT PARENTHESIS
+            '\u208E' => ('\u208D', false),   // SUBSCRIPT RIGHT PARENTHESIS
+            '\u2308' => ('\u2309', true ),   // LEFT CEILING
+            '\u2309' => ('\u2308', false),   // RIGHT CEILING
+            '\u230A' => ('\u230B', true ),   // LEFT FLOOR
+            '\u230B' => ('\u230A', false),   // RIGHT FLOOR
+            '\u2329' => ('\u232A', true ),   // LEFT-POINTING ANGLE BRACKET
+            '\u232A' => ('\u2329', false),   // RIGHT-POINTING ANGLE BRACKET
+            '\u2768' => ('\u2769', true ),   // MEDIUM LEFT PARENTHESIS ORNAMENT
+            '\u2769' => ('\u2768', false),   // MEDIUM RIGHT PARENTHESIS ORNAMENT
+            '\u276A' => ('\u276B', true ),   // MEDIUM FLATTENED LEFT PARENTHESIS ORNAMENT
+            '\u276B' => ('\u276A', false),   // MEDIUM FLATTENED RIGHT PARENTHESIS ORNAMENT
+            '\u276C' => ('\u276D', true ),   // MEDIUM LEFT-POINTING ANGLE BRACKET ORNAMENT
+            '\u276D' => ('\u276C', false),   // MEDIUM RIGHT-POINTING ANGLE BRACKET ORNAMENT
+            '\u276E' => ('\u276F', true ),   // HEAVY LEFT-POINTING ANGLE QUOTATION MARK ORNAMENT
+            '\u276F' => ('\u276E', false),   // HEAVY RIGHT-POINTING ANGLE QUOTATION MARK ORNAMENT
+            '\u2770' => ('\u2771', true ),   // HEAVY LEFT-POINTING ANGLE BRACKET ORNAMENT
+            '\u2771' => ('\u2770', false),   // HEAVY RIGHT-POINTING ANGLE BRACKET ORNAMENT
+            '\u2772' => ('\u2773', true ),   // LIGHT LEFT TORTOISE SHELL BRACKET ORNAMENT
+            '\u2773' => ('\u2772', false),   // LIGHT RIGHT TORTOISE SHELL BRACKET ORNAMENT
+            '\u2774' => ('\u2775', true ),   // MEDIUM LEFT CURLY BRACKET ORNAMENT
+            '\u2775' => ('\u2774', false),   // MEDIUM RIGHT CURLY BRACKET ORNAMENT
+            '\u27C5' => ('\u27C6', true ),   // LEFT S-SHAPED BAG DELIMITER
+            '\u27C6' => ('\u27C5', false),   // RIGHT S-SHAPED BAG DELIMITER
+            '\u27E6' => ('\u27E7', true ),   // MATHEMATICAL LEFT WHITE SQUARE BRACKET
+            '\u27E7' => ('\u27E6', false),   // MATHEMATICAL RIGHT WHITE SQUARE BRACKET
+            '\u27E8' => ('\u27E9', true ),   // MATHEMATICAL LEFT ANGLE BRACKET
+            '\u27E9' => ('\u27E8', false),   // MATHEMATICAL RIGHT ANGLE BRACKET
+            '\u27EA' => ('\u27EB', true ),   // MATHEMATICAL LEFT DOUBLE ANGLE BRACKET
+            '\u27EB' => ('\u27EA', false),   // MATHEMATICAL RIGHT DOUBLE ANGLE BRACKET
+            '\u27EC' => ('\u27ED', true ),   // MATHEMATICAL LEFT WHITE TORTOISE SHELL BRACKET
+            '\u27ED' => ('\u27EC', false),   // MATHEMATICAL RIGHT WHITE TORTOISE SHELL BRACKET
+            '\u27EE' => ('\u27EF', true ),   // MATHEMATICAL LEFT FLATTENED PARENTHESIS
+            '\u27EF' => ('\u27EE', false),   // MATHEMATICAL RIGHT FLATTENED PARENTHESIS
+            '\u2983' => ('\u2984', true ),   // LEFT WHITE CURLY BRACKET
+            '\u2984' => ('\u2983', false),   // RIGHT WHITE CURLY BRACKET
+            '\u2985' => ('\u2986', true ),   // LEFT WHITE PARENTHESIS
+            '\u2986' => ('\u2985', false),   // RIGHT WHITE PARENTHESIS
+            '\u2987' => ('\u2988', true ),   // Z NOTATION LEFT IMAGE BRACKET
+            '\u2988' => ('\u2987', false),   // Z NOTATION RIGHT IMAGE BRACKET
+            '\u2989' => ('\u298A', true ),   // Z NOTATION LEFT BINDING BRACKET
+            '\u298A' => ('\u2989', false),   // Z NOTATION RIGHT BINDING BRACKET
+            '\u298B' => ('\u298C', true ),   // LEFT SQUARE BRACKET WITH UNDERBAR
+            '\u298C' => ('\u298B', false),   // RIGHT SQUARE BRACKET WITH UNDERBAR
+            '\u298D' => ('\u2990', true ),   // LEFT SQUARE BRACKET WITH TICK IN TOP CORNER
+            '\u298E' => ('\u298F', false),   // RIGHT SQUARE BRACKET WITH TICK IN BOTTOM CORNER
+            '\u298F' => ('\u298E', true ),   // LEFT SQUARE BRACKET WITH TICK IN BOTTOM CORNER
+            '\u2990' => ('\u298D', false),   // RIGHT SQUARE BRACKET WITH TICK IN TOP CORNER
+            '\u2991' => ('\u2992', true ),   // LEFT ANGLE BRACKET WITH DOT
+            '\u2992' => ('\u2991', false),   // RIGHT ANGLE BRACKET WITH DOT
+            '\u2993' => ('\u2994', true ),   // LEFT ARC LESS-THAN BRACKET
+            '\u2994' => ('\u2993', false),   // RIGHT ARC GREATER-THAN BRACKET
+            '\u2995' => ('\u2996', true ),   // DOUBLE LEFT ARC GREATER-THAN BRACKET
+            '\u2996' => ('\u2995', false),   // DOUBLE RIGHT ARC LESS-THAN BRACKET
+            '\u2997' => ('\u2998', true ),   // LEFT BLACK TORTOISE SHELL BRACKET
+            '\u2998' => ('\u2997', false),   // RIGHT BLACK TORTOISE SHELL BRACKET
+            '\u29D8' => ('\u29D9', true ),   // LEFT WIGGLY FENCE
+            '\u29D9' => ('\u29D8', false),   // RIGHT WIGGLY FENCE
+            '\u29DA' => ('\u29DB', true ),   // LEFT DOUBLE WIGGLY FENCE
+            '\u29DB' => ('\u29DA', false),   // RIGHT DOUBLE WIGGLY FENCE
+            '\u29FC' => ('\u29FD', true ),   // LEFT-POINTING CURVED ANGLE BRACKET
+            '\u29FD' => ('\u29FC', false),   // RIGHT-POINTING CURVED ANGLE BRACKET
+            '\u2E22' => ('\u2E23', true ),   // TOP LEFT HALF BRACKET
+            '\u2E23' => ('\u2E22', false),   // TOP RIGHT HALF BRACKET
+            '\u2E24' => ('\u2E25', true ),   // BOTTOM LEFT HALF BRACKET
+            '\u2E25' => ('\u2E24', false),   // BOTTOM RIGHT HALF BRACKET
+            '\u2E26' => ('\u2E27', true ),   // LEFT SIDEWAYS U BRACKET
+            '\u2E27' => ('\u2E26', false),   // RIGHT SIDEWAYS U BRACKET
+            '\u2E28' => ('\u2E29', true ),   // LEFT DOUBLE PARENTHESIS
+            '\u2E29' => ('\u2E28', false),   // RIGHT DOUBLE PARENTHESIS
+            '\u2E55' => ('\u2E56', true ),   // LEFT SQUARE BRACKET WITH STROKE
+            '\u2E56' => ('\u2E55', false),   // RIGHT SQUARE BRACKET WITH STROKE
+            '\u2E57' => ('\u2E58', true ),   // LEFT SQUARE BRACKET WITH DOUBLE STROKE
+            '\u2E58' => ('\u2E57', false),   // RIGHT SQUARE BRACKET WITH DOUBLE STROKE
+            '\u2E59' => ('\u2E5A', true ),   // TOP HALF LEFT PARENTHESIS
+            '\u2E5A' => ('\u2E59', false),   // TOP HALF RIGHT PARENTHESIS
+            '\u2E5B' => ('\u2E5C', true ),   // BOTTOM HALF LEFT PARENTHESIS
+            '\u2E5C' => ('\u2E5B', false),   // BOTTOM HALF RIGHT PARENTHESIS
+            '\u3008' => ('\u3009', true ),   // LEFT ANGLE BRACKET
+            '\u3009' => ('\u3008', false),   // RIGHT ANGLE BRACKET
+            '\u300A' => ('\u300B', true ),   // LEFT DOUBLE ANGLE BRACKET
+            '\u300B' => ('\u300A', false),   // RIGHT DOUBLE ANGLE BRACKET
+            '\u300C' => ('\u300D', true ),   // LEFT CORNER BRACKET
+            '\u300D' => ('\u300C', false),   // RIGHT CORNER BRACKET
+            '\u300E' => ('\u300F', true ),   // LEFT WHITE CORNER BRACKET
+            '\u300F' => ('\u300E', false),   // RIGHT WHITE CORNER BRACKET
+            '\u3010' => ('\u3011', true ),   // LEFT BLACK LENTICULAR BRACKET
+            '\u3011' => ('\u3010', false),   // RIGHT BLACK LENTICULAR BRACKET
+            '\u3014' => ('\u3015', true ),   // LEFT TORTOISE SHELL BRACKET
+            '\u3015' => ('\u3014', false),   // RIGHT TORTOISE SHELL BRACKET
+            '\u3016' => ('\u3017', true ),   // LEFT WHITE LENTICULAR BRACKET
+            '\u3017' => ('\u3016', false),   // RIGHT WHITE LENTICULAR BRACKET
+            '\u3018' => ('\u3019', true ),   // LEFT WHITE TORTOISE SHELL BRACKET
+            '\u3019' => ('\u3018', false),   // RIGHT WHITE TORTOISE SHELL BRACKET
+            '\u301A' => ('\u301B', true ),   // LEFT WHITE SQUARE BRACKET
+            '\u301B' => ('\u301A', false),   // RIGHT WHITE SQUARE BRACKET
+            '\uFE59' => ('\uFE5A', true ),   // SMALL LEFT PARENTHESIS
+            '\uFE5A' => ('\uFE59', false),   // SMALL RIGHT PARENTHESIS
+            '\uFE5B' => ('\uFE5C', true ),   // SMALL LEFT CURLY BRACKET
+            '\uFE5C' => ('\uFE5B', false),   // SMALL RIGHT CURLY BRACKET
+            '\uFE5D' => ('\uFE5E', true ),   // SMALL LEFT TORTOISE SHELL BRACKET
+            '\uFE5E' => ('\uFE5D', false),   // SMALL RIGHT TORTOISE SHELL BRACKET
+            '\uFF08' => ('\uFF09', true ),   // FULLWIDTH LEFT PARENTHESIS
+            '\uFF09' => ('\uFF08', false),   // FULLWIDTH RIGHT PARENTHESIS
+            '\uFF3B' => ('\uFF3D', true ),   // FULLWIDTH LEFT SQUARE BRACKET
+            '\uFF3D' => ('\uFF3B', false),   // FULLWIDTH RIGHT SQUARE BRACKET
+            '\uFF5B' => ('\uFF5D', true ),   // FULLWIDTH LEFT CURLY BRACKET
+            '\uFF5D' => ('\uFF5B', false),   // FULLWIDTH RIGHT CURLY BRACKET
+            '\uFF5F' => ('\uFF60', true ),   // FULLWIDTH LEFT WHITE PARENTHESIS
+            '\uFF60' => ('\uFF5F', false),   // FULLWIDTH RIGHT WHITE PARENTHESIS
+            '\uFF62' => ('\uFF63', true ),   // HALFWIDTH LEFT CORNER BRACKET
+            '\uFF63' => ('\uFF62', false),   // HALFWIDTH RIGHT CORNER BRACKET
+            _ => ('\0', false),
+        };
+
+        // BD16 matches brackets under CANONICAL equivalence, so U+2329/U+232A (which decompose to
+        // U+3008/U+3009) pair with either spelling of the angle bracket.
+        private static char CanonicalBracket(char c) => c switch
+        {
+            '\u2329' => '\u3008',
+            '\u232A' => '\u3009',
+            _         => c,
+        };
+
+        // For N0 only, EN and AN count as R; everything else that is not L or R is "no strong type",
+        // which we spell as ON here.
+        private static BidiClass StrongDirectionOf(byte t) => (BidiClass)t switch
+        {
+            BidiClass.L                                   => BidiClass.L,
+            BidiClass.R or BidiClass.EN or BidiClass.AN   => BidiClass.R,
+            _                                             => BidiClass.ON,
+        };
+
+        // BD16: identify the bracket pairs in this isolating run sequence, sorted by opening position.
+        private static List<(int open, int close)> LocateBracketPairs(this IsolatingRunSequence sequence, string text)
+        {
+            var pairs    = new List<(int, int)>();
+            var expected = new char[MAX_PAIRING_DEPTH];   // the closing bracket each open is waiting for
+            var openPos  = new int[MAX_PAIRING_DEPTH];
+            int depth    = 0;
+
+            for (int i = 0; i < sequence.length; i++)
+            {
+                // BD14/BD15: only a bracket whose CURRENT type is ON can open or close a pair.
+                if ((BidiClass)sequence.types[i] != BidiClass.ON) continue;
+
+                char c = text[sequence.indexes[i]];
+                var (partner, isOpen) = PairedBracket(c);
+                if (partner == '\0') continue;
+
+                if (isOpen)
+                {
+                    if (depth == MAX_PAIRING_DEPTH) break;   // stack overflow: keep what we have, stop
+                    expected[depth] = CanonicalBracket(partner);
+                    openPos[depth]  = i;
+                    depth++;
+                }
+                else
+                {
+                    char closing = CanonicalBracket(c);
+                    for (int s = depth - 1; s >= 0; s--)
+                    {
+                        if (expected[s] != closing) continue;
+                        pairs.Add((openPos[s], i));
+                        depth = s;          // pop the match AND everything stacked above it
+                        break;
+                    }
+                }
+            }
+
+            pairs.Sort((a, b) => a.Item1.CompareTo(b.Item1));
+            return pairs;
+        }
+
+        /// <summary>Rule N0 — resolve paired brackets to the same direction so that "(bloom)" inside a
+        /// Hebrew sentence keeps both of its brackets on the same side of the text they enclose.
+        /// Without it the two halves of a pair can resolve independently under N1/N2 and end up
+        /// straddling the wrong runs.</summary>
+        private static void ResolveBrackets(this IsolatingRunSequence sequence, string text)
+        {
+            var pairs = sequence.LocateBracketPairs(text);
+            if (pairs.Count == 0) return;
+
+            BidiClass e = GetTypeForLevel(sequence.level);                    // embedding direction
+            BidiClass o = e == BidiClass.L ? BidiClass.R : BidiClass.L;       // opposite direction
+
+            foreach (var (op, cl) in pairs)
+            {
+                // N0 b/c: which strong direction does the bracket pair enclose?
+                bool foundE = false, foundO = false;
+                for (int k = op + 1; k < cl; k++)
+                {
+                    var s = StrongDirectionOf(sequence.types[k]);
+                    if (s == BidiClass.ON) continue;
+                    if (s == e) { foundE = true; break; }
+                    foundO = true;
+                }
+
+                BidiClass resolved;
+                if (foundE)
+                {
+                    resolved = e;                                             // N0 b
+                }
+                else if (foundO)
+                {
+                    // N0 c: the opposite direction is enclosed — follow the established context
+                    // BEFORE the opening bracket, falling back to sos at the start of the sequence.
+                    BidiClass prior = BidiClass.ON;
+                    for (int k = op - 1; k >= 0; k--)
+                    {
+                        var s = StrongDirectionOf(sequence.types[k]);
+                        if (s != BidiClass.ON) { prior = s; break; }
+                    }
+                    if (prior == BidiClass.ON) prior = sequence.sos;
+                    resolved = prior == o ? o : e;                            // N0 c.1 / c.2
+                }
+                else
+                {
+                    continue;                                                 // N0 d: leave to N1/N2
+                }
+
+                sequence.types[op] = (byte)resolved;
+                sequence.types[cl] = (byte)resolved;
+                sequence.FollowingNsmTakeBracketType(text, op, resolved);
+                sequence.FollowingNsmTakeBracketType(text, cl, resolved);
+            }
+        }
+
+        // N0 tail: characters whose ORIGINAL type (before W1 rewrote them) was NSM and which directly
+        // follow a bracket that N0 just changed must take the bracket's new type, so a combining mark
+        // cannot be left behind in the other direction.
+        private static void FollowingNsmTakeBracketType(this IsolatingRunSequence sequence, string text, int at, BidiClass t)
+        {
+            for (int k = at + 1; k < sequence.length; k++)
+            {
+                if ((BidiClass)Bidi_Types.BidiCharTypes[text[sequence.indexes[k]]] != BidiClass.NSM) break;
+                sequence.types[k] = (byte)t;
+            }
+        }
+
+        private static void ResolveNeutrals(this IsolatingRunSequence sequence, string text)
+        {
+            // N0 runs before N1/N2 and can hand them already-resolved brackets.
+            sequence.ResolveBrackets(text);
 
             // N1
             // Sequence of NIs will resolve to surrounding "strong" type if text on both sides was of same direction.
