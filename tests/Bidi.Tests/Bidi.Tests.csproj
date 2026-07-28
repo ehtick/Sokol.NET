@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Headless tests for the bidirectional-text pipeline: BidiSharp (the Unicode Bidirectional
+    Algorithm) plus Sokol.GUI's ArabicShaper and BidiHelper. NO Sokol / native / graphics — the code
+    under test is pure C# string processing, so the production sources are compiled in directly.
+
+    The golden expectations in BidiGoldenTests were produced by GNU FriBidi, the reference
+    implementation of UAX #9, and are frozen here so the suite needs no external tool to run.
+
+    Run:  dotnet test tests/Bidi.Tests
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <!-- ⛔ NOT the default "Bidi.Tests": xunit.v3 generates its entry point into the root namespace,
+         and a namespace whose first segment is "Bidi" shadows the BidiSharp.Bidi CLASS that
+         BidiHelper.cs refers to as "Bidi.LogicalToVisual" — the production file then fails to
+         compile here while building fine everywhere else. -->
+    <RootNamespace>SokolBidiTests</RootNamespace>
+    <!-- BidiHelper.cs and ArabicShaper.cs rely on implicit System usings, matching how the GUI
+         project compiles them. -->
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <PublishAot>false</PublishAot>
+    <!-- BidiSharp is vendored third-party code and is not warning-clean under our settings. -->
+    <NoWarn>$(NoWarn);CS0168;CS0219;CS8600;CS8602;CS8603;CS8604;CS8618;CS8625</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="3.2.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.13.0" />
+  </ItemGroup>
+
+  <!-- The real production code under test, pulled in directly (no Sokol.GUI.dll reference). -->
+  <ItemGroup>
+    <Compile Include="../../src/GUI/BidiSharp/BidiSharp/Source/Bidi.cs" />
+    <Compile Include="../../src/GUI/BidiSharp/BidiSharp/Source/Bidi_types.cs" />
+    <Compile Include="../../src/GUI/BidiSharp/BidiSharp/Source/BidiClass.cs" />
+    <Compile Include="../../src/GUI/Core/Rendering/BidiHelper.cs" />
+    <Compile Include="../../src/GUI/Core/Rendering/ArabicShaper.cs" />
+  </ItemGroup>
+
+</Project>
