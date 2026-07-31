@@ -57,7 +57,10 @@ set_target_properties(TEMPLATE_PROJECT_NAME-ios-app PROPERTIES
     XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED "YES"
     XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED "YES"
     XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "iPhone Developer"
-    XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@executable_path/Frameworks"
+    # /usr/lib/swift first — the OS Swift runtime dylibs (e.g. weak-linked
+    # libswift_Concurrency) carry @rpath install names; Xcode's own app templates
+    # always search there before the bundle
+    XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "/usr/lib/swift @executable_path/Frameworks"
     XCODE_ATTRIBUTE_DYLIB_INSTALL_NAME_BASE "@rpath"
     # iPad support configurations
     XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"  # 1=iPhone, 2=iPad (Universal)
@@ -103,6 +106,9 @@ set_target_properties(TEMPLATE_PROJECT_NAME-ios-app PROPERTIES
     XCODE_ATTRIBUTE_STRIP_STYLE "non-global"
     XCODE_ATTRIBUTE_DEPLOYMENT_POSTPROCESSING "NO"
     XCODE_ATTRIBUTE_STRIP_INSTALLED_PRODUCT "NO"
+    # Swift lib search paths — needed when a static Swift vendor SDK is linked into the
+    # app executable (IOSStaticFrameworks_*); "$(inherited)" otherwise.
+    XCODE_ATTRIBUTE_LIBRARY_SEARCH_PATHS "TEMPLATE_LIBRARY_SEARCH_PATHS"
 )
 
 # Link against the frameworks (dynamically configured based on detected native libraries)

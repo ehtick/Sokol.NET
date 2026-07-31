@@ -67,7 +67,14 @@ if(ANDROID)
 
 # ── iOS ───────────────────────────────────────────────────────────────────────
 elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    # The Google SDKs are fetched, not vendored (scripts/fetch-googlemobileads-ios.sh).
+    # ⛔ The Google SDKs are needed at COMPILE time only (headers). They are NOT linked
+    # here: GoogleMobileAds 13+ is a static SWIFT framework and absorbed into this
+    # clang-built dylib the Swift runtime aborts at app launch resolving symbolic type
+    # references (device-verified on the iPhone SE). The SDK is linked into the APP
+    # EXECUTABLE instead (SokolApplicationBuilder IOSStaticFrameworks_* prop), and the
+    # shim reaches its classes via the ObjC runtime — this stays a THIN dylib with no
+    # GMA/UMP/Swift link dependencies.
+    # The SDKs are fetched, not vendored (scripts/fetch-googlemobileads-ios.sh).
     set(GMA_DIR "${PLUGIN_ROOT}/vendor/ios")
     set(GMA_XC  "${GMA_DIR}/GoogleMobileAds.xcframework")
     set(UMP_XC  "${GMA_DIR}/UserMessagingPlatform.xcframework")
@@ -99,36 +106,18 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_compile_options(${LIB_NAME} PRIVATE
         "-F${GMA_XC}/${GMA_SLICE}"
         "-F${UMP_XC}/${GMA_SLICE}")
-    # GoogleMobileAds ships as a STATIC framework: it is absorbed into this dylib, so its
-    # transitive dependencies must be linked here — JavaScriptCore for the OMID JS bridge,
-    # and the Swift runtime search paths (the SDK contains Swift; clang drives this link,
-    # so auto-linked swift libs need explicit -L via Xcode's own variables).
+    # THIN link — no GMA/UMP (see the header comment above): the shim resolves the SDK
+    # classes from the main image via the ObjC runtime.
     target_link_libraries(${LIB_NAME} PRIVATE
-        "-F${GMA_XC}/${GMA_SLICE}"
-        "-F${UMP_XC}/${GMA_SLICE}"
-        "-framework GoogleMobileAds"
-        "-framework UserMessagingPlatform"
         "-framework UIKit"
-        "-framework JavaScriptCore"
-        "-lc++")
-
-    # The SDK's Swift objects force-load the compatibility shims; clang drives this link,
-    # so resolve them explicitly from the active toolchain.
-    execute_process(COMMAND xcode-select -p OUTPUT_VARIABLE XCODE_DEV OUTPUT_STRIP_TRAILING_WHITESPACE)
-    set(SWIFT_COMPAT_DIR "${XCODE_DEV}/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/iphoneos")
-    target_link_libraries(${LIB_NAME} PRIVATE
-        "-L${SWIFT_COMPAT_DIR}"
-        "-lswiftCompatibility51"
-        "-lswiftCompatibility56"
-        "-lswiftCompatibilityConcurrency"
-        "-lswiftCompatibilityPacks")
+        "-framework Foundation"
+        "-lobjc")
 
     set_target_properties(${LIB_NAME} PROPERTIES
         FRAMEWORK                        TRUE
         MACOSX_FRAMEWORK_IDENTIFIER      com.sokolnet.plugins.ads
         FRAMEWORK_VERSION                A
         XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
-        XCODE_ATTRIBUTE_LIBRARY_SEARCH_PATHS "$(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(SDKROOT)/usr/lib/swift"
     )
 
     set(IOS_OUT "${PLUGIN_ROOT}/libs/ios/${IOS_ARCH_DIR}/$<LOWER_CASE:$<CONFIG>>")

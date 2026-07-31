@@ -65,6 +65,7 @@ namespace SokolApplicationBuilder
         private string iOSIcon = string.Empty;
         private string appVersion = "1.0"; // Application version (common across all platforms)
         private Dictionary<string, string> iOSNativeLibraries = new Dictionary<string, string>(); // iOS native library paths
+        private Dictionary<string, string> iOSStaticFrameworks = new Dictionary<string, string>(); // dirs of .xcframework bundles linked into the app EXECUTABLE
         // Arbitrary Info.plist key/value pairs from IOSInfoPlistKey_* properties in Directory.Build.props
         private Dictionary<string, string> iOSInfoPlistKeys = new Dictionary<string, string>();
         // Raw Info.plist XML fragments from IOSInfoPlistRawFragment_* properties — for values the
@@ -143,6 +144,19 @@ namespace SokolApplicationBuilder
 
                 // Read iOS properties from Directory.Build.props
                 ReadIOSPropertiesFromDirectoryBuildProps(projectDir);
+
+                // Static app-executable SDKs are declared opt-in — if declared they must exist
+                // (they are typically fetched, not vendored, e.g. plugins/Ads/scripts/fetch-googlemobileads-ios.sh)
+                foreach (var group in iOSStaticFrameworks)
+                {
+                    if (!Directory.Exists(group.Value) ||
+                        Directory.GetDirectories(group.Value, "*.xcframework", SearchOption.TopDirectoryOnly).Length == 0)
+                    {
+                        Log.LogError($"❌ IOSStaticFrameworks_{group.Key}Path: no .xcframework bundles found at {group.Value}");
+                        Log.LogError("   These SDKs are fetched, not vendored — run the owning plugin's fetch script first");
+                        return false;
+                    }
+                }
 
                 // Setup development team (with caching support)
                 if (!SetupDevelopmentTeam(projectName))
@@ -1341,6 +1355,31 @@ namespace SokolApplicationBuilder
                                 propertyCount++;
                             }
                         }
+                        else if (elementName.StartsWith("IOSStaticFrameworks_") && elementName.EndsWith("Path"))
+                        {
+                            // IOSStaticFrameworks_[Name]Path → a directory of .xcframework bundles whose
+                            // DEVICE slice is linked INTO THE APP EXECUTABLE (static vendor SDKs). A
+                            // static SWIFT framework (e.g. GoogleMobileAds 13+) absorbed into a plugin
+                            // dylib aborts at launch in the Swift runtime — it must live in the main
+                            // image. These are linked, never embedded (static archives have no runtime
+                            // presence of their own).
+                            string groupName = elementName.Substring("IOSStaticFrameworks_".Length);
+                            groupName = groupName.Substring(0, groupName.Length - "Path".Length);
+
+                            if (!string.IsNullOrEmpty(element.Value))
+                            {
+                                string basePath = element.Value;
+                                basePath = basePath.Replace("$(SokolNetHome)", Utils.GetSokolNetHome(), StringComparison.OrdinalIgnoreCase);
+                                basePath = basePath.Replace("$(HomeDir)", Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), StringComparison.OrdinalIgnoreCase);
+
+                                string absoluteFwPath = Path.IsPathRooted(basePath)
+                                    ? basePath
+                                    : Path.Combine(projectPath, basePath);
+
+                                iOSStaticFrameworks[groupName] = absoluteFwPath;
+                                propertyCount++;
+                            }
+                        }
                         else if (elementName.StartsWith("IOSInfoPlistKey_"))
                         {
                             // Extract the plist key name from IOSInfoPlistKey_[PlistKeyName]
@@ -1598,12 +1637,76 @@ namespace SokolApplicationBuilder
                 }
             }
 
+            // Static vendor SDKs linked into the APP EXECUTABLE (IOSStaticFrameworks_*Path).
+            // A static SWIFT framework (e.g. GoogleMobileAds 13+) must live in the main image —
+            // absorbed into a clang-built plugin dylib the Swift runtime aborts at launch
+            // resolving symbolic type references. -ObjC keeps the SDKs' ObjC classes alive
+            // (nothing in the exe references them; plugin dylibs reach them via the ObjC
+            // runtime), and the Swift compatibility shims + JavaScriptCore + libc++ cover the
+            // SDKs' link-time needs (flag set proven in plugins/Ads/native/CMakeLists.txt).
+            bool anyStaticFramework = false;
+            foreach (var group in iOSStaticFrameworks)
+            {
+                if (!Directory.Exists(group.Value))
+                {
+                    continue;
+                }
+
+                foreach (string xcframework in Directory.GetDirectories(group.Value, "*.xcframework", SearchOption.TopDirectoryOnly))
+                {
+                    string sliceDir = Path.Combine(xcframework, "ios-arm64");
+                    if (!Directory.Exists(sliceDir))
+                    {
+                        sliceDir = Directory.GetDirectories(xcframework, "ios-*", SearchOption.TopDirectoryOnly)
+                            .FirstOrDefault(d => !Path.GetFileName(d).Contains("simulator"));
+                    }
+                    if (string.IsNullOrEmpty(sliceDir) || !Directory.Exists(sliceDir))
+                    {
+                        Log.LogWarning($"No device slice (ios-arm64) found in {xcframework} — skipping");
+                        continue;
+                    }
+
+                    string staticFwName = Path.GetFileNameWithoutExtension(xcframework);
+                    frameworkLinks.Add($"\"-F{sliceDir}\"");
+                    frameworkLinks.Add($"\"-framework {staticFwName}\"");
+                    anyStaticFramework = true;
+                    Log.LogMessage(MessageImportance.High, $"   🔗 Linking static framework into the app executable: {staticFwName}");
+                }
+            }
+            if (anyStaticFramework)
+            {
+                frameworkLinks.Add("\"-ObjC\"");
+                frameworkLinks.Add("\"-framework JavaScriptCore\"");
+                frameworkLinks.Add("\"-lc++\"");
+                frameworkLinks.Add("\"-lswiftCompatibility51\"");
+                frameworkLinks.Add("\"-lswiftCompatibility56\"");
+                frameworkLinks.Add("\"-lswiftCompatibilityConcurrency\"");
+                frameworkLinks.Add("\"-lswiftCompatibilityPacks\"");
+                // What swiftc adds for deployment < iOS 15: the OS concurrency runtime, weak.
+                // Without it the Swift runtime aborts resolving concurrency type metadata
+                // ("missing weak symbol", mangling 'ScP') the moment the SDK touches it.
+                frameworkLinks.Add("\"-Wl,-weak-lswift_Concurrency\"");
+            }
+
             // Replace placeholders in CMakeLists.txt
             string embedFrameworksList = string.Join(";", frameworkList);
             string frameworkLinksList = string.Join("\n    ", frameworkLinks);
 
             content = content.Replace("TEMPLATE_EMBED_FRAMEWORKS_LIST", embedFrameworksList);
             content = content.Replace("TEMPLATE_FRAMEWORK_LINKS", frameworkLinksList);
+            // The Swift compatibility shims resolve from the toolchain swift lib dir. Resolved
+            // to an ABSOLUTE path here — $(TOOLCHAIN_DIR) is unreliable in the app target's link
+            // (Xcode 26 resolved it to the Metal toolchain cryptex → 'swiftCompatibility51 not
+            // found'); xcode-select gives the real default toolchain.
+            string swiftLibSearchPaths = "$(inherited)";
+            if (anyStaticFramework)
+            {
+                string xcodeDev = Cli.Wrap("xcode-select").WithArguments("-p")
+                    .ExecuteBufferedAsync().GetAwaiter().GetResult().StandardOutput.Trim();
+                swiftLibSearchPaths =
+                    $"$(inherited) {xcodeDev}/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/iphoneos $(SDKROOT)/usr/lib/swift";
+            }
+            content = content.Replace("TEMPLATE_LIBRARY_SEARCH_PATHS", swiftLibSearchPaths);
 
             if (iOSNativeLibraries.Count > 0)
             {

@@ -1,9 +1,22 @@
 /* sokol_ads_ios.m -- Google Mobile Ads implementation for Sokol.NET (iOS).
    Requires GoogleMobileAds.xcframework + UserMessagingPlatform.xcframework
    (fetched by scripts/fetch-googlemobileads-ios.sh — not vendored in the repo).
+
+   ⛔ The Google SDK is linked into the APP EXECUTABLE, not into this dylib.
+   GoogleMobileAds 13+ is a STATIC SWIFT framework; absorbed into a clang-built
+   plugin dylib the Swift runtime aborts at launch resolving symbolic type
+   references (device-verified on iPhone SE). The app builder links the SDK
+   into the app binary (IOSStaticFrameworks_* prop, with -ObjC so the classes
+   survive although nothing in the exe references them); this shim stays a THIN
+   dylib that reaches the SDK classes through the ObjC runtime
+   (NSClassFromString), so it carries no GMA/UMP/Swift link dependencies at
+   all. The headers are still required at compile time for the types,
+   protocols and block signatures.
+
    The APPLICATION_ID comes from Info.plist's GADApplicationIdentifier, injected
    by the app builder. Interstitials present from the key window's root VC. */
 #import <UIKit/UIKit.h>
+#import <objc/message.h>
 #import <GoogleMobileAds/GoogleMobileAds.h>
 #import <UserMessagingPlatform/UserMessagingPlatform.h>
 
@@ -12,6 +25,10 @@
 /* sokol_ads_queue.c */
 extern void sokolads__emit(int type, int code);
 extern void sokolads__consume(void);
+
+/* Emitted as the code of *_FAILED when the app executable was built without
+   the Google SDK — the managed layer then backs off exactly like a no-fill. */
+#define SOKOLADS_ERR_NO_SDK (-1)
 
 static bool _sa_npa_only;
 static GADInterstitialAd* _sa_loaded;
@@ -36,35 +53,76 @@ static id<GADFullScreenContentDelegate> _sa_delegate;
 }
 @end
 
+/* The view controller to present from: the KEY window of the foreground-active
+   window scene, walked down to the topmost already-presented controller.
+   Not `UIApplication.windows.firstObject` — that API is deprecated, its order is
+   undefined (a system text-effects/keyboard window can come first), and
+   presenting on a controller that already presents one fails outright. */
 static UIViewController* _sa_root_vc(void) {
-    return [UIApplication sharedApplication].windows.firstObject.rootViewController;
+    UIWindow* key = nil;
+    UIWindow* anyVisible = nil;
+    for (UIScene* scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        if (scene.activationState != UISceneActivationStateForegroundActive) continue;
+        for (UIWindow* w in ((UIWindowScene*)scene).windows) {
+            if (w.hidden) continue;
+            if (w.isKeyWindow) { key = w; break; }
+            if (!anyVisible) anyVisible = w;
+        }
+        if (key) break;
+    }
+    UIWindow* win = key ?: anyVisible;
+    UIViewController* vc = win.rootViewController;
+    /* Presenting on a controller that already presents one fails outright. */
+    while (vc.presentedViewController) vc = vc.presentedViewController;
+    return vc;
+}
+
+/* SDK singletons resolved from the MAIN IMAGE at runtime; the typed
+   objc_msgSend casts keep exactly the signatures the headers declare. */
+static GADMobileAds* _sa_gad(void) {
+    Class cls = NSClassFromString(@"GADMobileAds");
+    if (!cls) return nil;
+    return ((GADMobileAds* (*)(Class, SEL))objc_msgSend)(cls, @selector(sharedInstance));
 }
 
 void sokolads_init(const char* app_id, bool npa_only, bool child_directed) {
     (void)app_id;   /* iOS reads GADApplicationIdentifier from Info.plist */
     _sa_npa_only = npa_only;
     dispatch_async(dispatch_get_main_queue(), ^{
-        /* Family app: never serve above-G inventory (MONETIZATION_FEATURES §1.3). */
-        GADMobileAds.sharedInstance.requestConfiguration.maxAdContentRating =
-            GADMaxAdContentRatingGeneral;
+        GADMobileAds* gad = _sa_gad();
+        if (!gad) return;   /* SDK not linked into the app — shim stays inert */
+        /* Family app: never serve above-G inventory (MONETIZATION_FEATURES §1.3).
+           @"G" == GADMaxAdContentRatingGeneral (verified against the GMA 13.7
+           binary — this dylib deliberately links no GMA symbols, so it cannot
+           use the extern constant). */
+        gad.requestConfiguration.maxAdContentRating = @"G";
         if (child_directed) {
-            GADMobileAds.sharedInstance.requestConfiguration.tagForChildDirectedTreatment = @YES;
+            gad.requestConfiguration.tagForChildDirectedTreatment = @YES;
         }
-        [GADMobileAds.sharedInstance startWithCompletionHandler:nil];
+        [gad startWithCompletionHandler:nil];
     });
 }
 
 void sokolads_consent_gather(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        UMPRequestParameters* params = [[UMPRequestParameters alloc] init];
-        [UMPConsentInformation.sharedInstance
-            requestConsentInfoUpdateWithParameters:params
+        Class infoCls   = NSClassFromString(@"UMPConsentInformation");
+        Class paramsCls = NSClassFromString(@"UMPRequestParameters");
+        Class formCls   = NSClassFromString(@"UMPConsentForm");
+        if (!infoCls || !paramsCls || !formCls) {
+            sokolads__emit(SOKOLADS_EVENT_CONSENT_FAILED, SOKOLADS_ERR_NO_SDK);
+            return;
+        }
+        UMPRequestParameters* params = [[paramsCls alloc] init];
+        UMPConsentInformation* info =
+            ((UMPConsentInformation* (*)(Class, SEL))objc_msgSend)(infoCls, @selector(sharedInstance));
+        [info requestConsentInfoUpdateWithParameters:params
             completionHandler:^(NSError* _Nullable error) {
                 if (error) {
                     sokolads__emit(SOKOLADS_EVENT_CONSENT_FAILED, (int)error.code);
                     return;
                 }
-                [UMPConsentForm loadAndPresentIfRequiredFromViewController:_sa_root_vc()
+                [formCls loadAndPresentIfRequiredFromViewController:_sa_root_vc()
                     completionHandler:^(NSError* _Nullable formError) {
                         if (formError) sokolads__emit(SOKOLADS_EVENT_CONSENT_FAILED, (int)formError.code);
                         else           sokolads__emit(SOKOLADS_EVENT_CONSENT_READY, 0);
@@ -77,15 +135,25 @@ void sokolads_load_interstitial(const char* ad_unit_id) {
     if (!ad_unit_id) return;
     NSString* unit = [NSString stringWithUTF8String:ad_unit_id];
     dispatch_async(dispatch_get_main_queue(), ^{
-        GADRequest* request = [GADRequest request];
-        if (_sa_npa_only) {
-            GADExtras* extras = [[GADExtras alloc] init];
-            extras.additionalParameters = @{ @"npa" : @"1" };
-            [request registerAdNetworkExtras:extras];
+        Class interCls = NSClassFromString(@"GADInterstitialAd");
+        Class reqCls   = NSClassFromString(@"GADRequest");
+        if (!interCls || !reqCls) {
+            _sa_loaded = nil;
+            sokolads__emit(SOKOLADS_EVENT_LOAD_FAILED, SOKOLADS_ERR_NO_SDK);
+            return;
         }
-        [GADInterstitialAd loadWithAdUnitID:unit
-                                    request:request
-                          completionHandler:^(GADInterstitialAd* ad, NSError* error) {
+        GADRequest* request = ((GADRequest* (*)(Class, SEL))objc_msgSend)(reqCls, @selector(request));
+        if (_sa_npa_only) {
+            Class extrasCls = NSClassFromString(@"GADExtras");
+            if (extrasCls) {
+                GADExtras* extras = [[extrasCls alloc] init];
+                extras.additionalParameters = @{ @"npa" : @"1" };
+                [request registerAdNetworkExtras:extras];
+            }
+        }
+        [interCls loadWithAdUnitID:unit
+                           request:request
+                 completionHandler:^(GADInterstitialAd* ad, NSError* error) {
             if (error) {
                 _sa_loaded = nil;
                 sokolads__emit(SOKOLADS_EVENT_LOAD_FAILED, (int)error.code);
