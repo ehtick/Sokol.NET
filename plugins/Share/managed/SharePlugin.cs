@@ -69,6 +69,22 @@ public static unsafe class SharePlugin
         return path;
     }
 
+    // Share a caller-composed moment: an already-written PNG (or null for text-only) + text.
+    // For apps that capture their own screenshot (e.g. Sokol.NET ScreenCapture) and compose
+    // their own localized message, instead of the ShareScore card above.
+    public static void ShareMoment(string? imagePath, string text)
+    {
+        if (imagePath == null)
+        {
+#if __ANDROID__ || __IOS__ || __MACOS__
+            SokolShare.ShareImageText(null, text);
+#endif
+            // Windows/Linux fall back to mail clients that need an attachment; text-only is a no-op there.
+            return;
+        }
+        ShareImageAndText(imagePath, text);
+    }
+
     // ── Platform dispatch ─────────────────────────────────────────────────────
 
     static void ShareImageAndText(string imagePath, string text)
