@@ -1,0 +1,3 @@
+# Google Play Billing Library (one-time products).
+# The AAR's manifest merge adds the com.android.vending.BILLING permission.
+com.android.billingclient:billing:7.1.1
