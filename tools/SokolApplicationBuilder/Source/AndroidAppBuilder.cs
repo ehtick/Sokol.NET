@@ -2505,6 +2505,12 @@ KeyAlias={keystoreInfo.KeyAlias}
                             {
                                 properties[element.Name.LocalName] = element.Value;
                             }
+                            // AdMob ids (app + unit ids) — referenced by plugin manifest fragments
+                            // via $(PropertyName|default) tokens (see SubstituteManifestTokens).
+                            if (element.Name.LocalName.StartsWith("AdMob", StringComparison.OrdinalIgnoreCase))
+                            {
+                                properties[element.Name.LocalName] = element.Value;
+                            }
                         }
                     }
                 }
@@ -2521,6 +2527,24 @@ KeyAlias={keystoreInfo.KeyAlias}
             }
 
             return properties;
+        }
+
+        // Replace $(PropertyName) / $(PropertyName|default) tokens in an injected manifest
+        // fragment with values from Directory.Build.props (as read by
+        // ReadAndroidPropertiesFromDirectoryBuildProps — Android*/AdMob*/AppVersion). An
+        // undefined/empty property falls back to the token's |default, else empty. Gradle's
+        // own ${applicationId} placeholders pass through untouched (different syntax).
+        string SubstituteManifestTokens(string fragment, Dictionary<string, string> props)
+        {
+            return System.Text.RegularExpressions.Regex.Replace(fragment,
+                @"\$\(([A-Za-z0-9_]+)(\|([^)]*))?\)",
+                m =>
+                {
+                    string name = m.Groups[1].Value;
+                    string fallback = m.Groups[3].Success ? m.Groups[3].Value : "";
+                    return props.TryGetValue(name, out string? v) && !string.IsNullOrEmpty(v)
+                        ? v : fallback;
+                });
         }
 
         string GenerateAndroidManifest(string appName, Dictionary<string, string> androidProperties, List<string> activePluginAndroidPaths)
@@ -2671,23 +2695,23 @@ KeyAlias={keystoreInfo.KeyAlias}
             manifest.AppendLine("      </intent-filter>");
             manifest.AppendLine("    </activity>");
 
-            // Inject Providers.xml (e.g. FileProvider) before </application>
-            string providersXmlPath = Path.Combine(opts.ProjectPath, "platform/android/manifest/Providers.xml");
-            if (!File.Exists(providersXmlPath))
+            // Inject manifest fragments (FileProvider, ad SDK meta-data, …) before </application>:
+            // the project's own platform/android/manifest/Providers.xml first, then EVERY active
+            // plugin's — multiple plugins can each contribute their fragment (Share + Ads). The
+            // fragments are appended verbatim except for $(PropertyName) / $(PropertyName|default)
+            // tokens, substituted from Directory.Build.props — how a plugin references app
+            // configuration like the AdMob APPLICATION_ID without shipping it.
+            var manifestFragments = new List<string>();
+            string projectProviders = Path.Combine(opts.ProjectPath, "platform/android/manifest/Providers.xml");
+            if (File.Exists(projectProviders)) manifestFragments.Add(projectProviders);
+            foreach (string pluginAndroid in activePluginAndroidPaths)
             {
-                foreach (string pluginAndroid in activePluginAndroidPaths)
-                {
-                    string pluginProviders = Path.Combine(pluginAndroid, "manifest", "Providers.xml");
-                    if (File.Exists(pluginProviders))
-                    {
-                        providersXmlPath = pluginProviders;
-                        break;
-                    }
-                }
+                string pluginProviders = Path.Combine(pluginAndroid, "manifest", "Providers.xml");
+                if (File.Exists(pluginProviders)) manifestFragments.Add(pluginProviders);
             }
-            if (File.Exists(providersXmlPath))
+            foreach (string fragmentPath in manifestFragments)
             {
-                string extra = File.ReadAllText(providersXmlPath);
+                string extra = SubstituteManifestTokens(File.ReadAllText(fragmentPath), androidProperties);
                 manifest.AppendLine(extra);
             }
 

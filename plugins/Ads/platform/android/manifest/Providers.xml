@@ -1,0 +1,8 @@
+<!-- AdMob APPLICATION_ID (app configuration, not plugin content): the builder
+     substitutes $(AdMobAppId_Android) from the consuming app's
+     Directory.Build.props; the fallback after '|' is Google's published TEST
+     app id, so a project that never sets the property can build and show test
+     ads but can never accidentally serve production inventory. -->
+<meta-data
+    android:name="com.google.android.gms.ads.APPLICATION_ID"
+    android:value="$(AdMobAppId_Android|ca-app-pub-3940256099942544~3347511713)" />

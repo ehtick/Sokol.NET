@@ -67,6 +67,11 @@ namespace SokolApplicationBuilder
         private Dictionary<string, string> iOSNativeLibraries = new Dictionary<string, string>(); // iOS native library paths
         // Arbitrary Info.plist key/value pairs from IOSInfoPlistKey_* properties in Directory.Build.props
         private Dictionary<string, string> iOSInfoPlistKeys = new Dictionary<string, string>();
+        // Raw Info.plist XML fragments from IOSInfoPlistRawFragment_* properties — for values the
+        // string-only IOSInfoPlistKey_ hook can't express (arrays/dicts, e.g. SKAdNetworkItems).
+        // The property value is inserted UNESCAPED at top-level <dict> scope; XDocument already
+        // un-escapes &lt;-style entities, so escaped XML in the props arrives here as real XML.
+        private Dictionary<string, string> iOSInfoPlistRawFragments = new Dictionary<string, string>();
 
         private string CLANG_CMD = string.Empty;
         private string AR_CMD = string.Empty;
@@ -578,6 +583,12 @@ namespace SokolApplicationBuilder
                     {
                         extraPlistSb.Append($"\n    <key>{System.Security.SecurityElement.Escape(kv.Key)}</key>");
                         extraPlistSb.Append($"\n    <string>{System.Security.SecurityElement.Escape(kv.Value)}</string>");
+                    }
+                    // Raw fragments (IOSInfoPlistRawFragment_*) go in unescaped — the author owns
+                    // their XML validity (needed for array/dict values like SKAdNetworkItems).
+                    foreach (var kv in iOSInfoPlistRawFragments)
+                    {
+                        extraPlistSb.Append("\n    " + kv.Value.Trim());
                     }
                     plistContent = plistContent.Replace("@TEMPLATE_IOS_PLIST_EXTRA_KEYS@", extraPlistSb.ToString());
 
@@ -1337,6 +1348,16 @@ namespace SokolApplicationBuilder
                             if (!string.IsNullOrEmpty(plistKey) && !string.IsNullOrEmpty(element.Value))
                             {
                                 iOSInfoPlistKeys[plistKey] = element.Value;
+                                propertyCount++;
+                            }
+                        }
+                        else if (elementName.StartsWith("IOSInfoPlistRawFragment_"))
+                        {
+                            // Raw plist XML fragment (arrays/dicts) — inserted unescaped.
+                            string fragName = elementName.Substring("IOSInfoPlistRawFragment_".Length);
+                            if (!string.IsNullOrEmpty(fragName) && !string.IsNullOrEmpty(element.Value))
+                            {
+                                iOSInfoPlistRawFragments[fragName] = element.Value;
                                 propertyCount++;
                             }
                         }
