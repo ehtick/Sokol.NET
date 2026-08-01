@@ -86,7 +86,11 @@ public static class Billing
 #if __ANDROID__ || __IOS__
         SokolBilling.Restore();
 #else
-        _stubQueue.Enqueue(new BillingEvent { Type = BillingEventType.RestoreDone });
+        // Desktop/web have no store, so the enumeration is NOT authoritative — report it as a
+        // failed query. Emitting success would tell an entitlement cache that the player owns
+        // nothing, and a cache that reconciles on that would wipe real purchases on any build
+        // without a store.
+        _stubQueue.Enqueue(new BillingEvent { Type = BillingEventType.RestoreDone, Code = CodeUnavailable });
 #endif
     }
 

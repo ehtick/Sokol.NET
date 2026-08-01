@@ -172,11 +172,16 @@ public final class SokolBilling {
             .setProductType(BillingClient.ProductType.INAPP)
             .build();
         client.queryPurchasesAsync(params, (r, purchases) -> {
-            if (r.getResponseCode() == BillingClient.BillingResponseCode.OK) {
+            int rc = r.getResponseCode();
+            if (rc == BillingClient.BillingResponseCode.OK) {
                 for (Purchase p : purchases) reportPurchase(p);
             }
             if (explicitRestore) {
-                nativeOnEvent(EV_RESTORE_DONE, 0, null, null, null, null);
+                // ⛔ Carry the response code. A FAILED query reports zero purchases, which is
+                // indistinguishable from "you own nothing" unless the consumer is told the query
+                // never answered — and an entitlement cache that reconciles against that will
+                // revoke a paying customer for being offline. code 0 (OK) = the store answered.
+                nativeOnEvent(EV_RESTORE_DONE, rc, null, null, null, null);
             }
         });
     }

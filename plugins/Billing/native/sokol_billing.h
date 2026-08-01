@@ -28,7 +28,13 @@ typedef enum sokolbilling_event_type {
     SOKOLBILLING_EVENT_PURCHASE_OK        = 3, /* sku + proof (+ signature)      */
     SOKOLBILLING_EVENT_PURCHASE_CANCELLED = 4, /* sku                            */
     SOKOLBILLING_EVENT_PURCHASE_FAILED    = 5, /* sku + code                     */
-    SOKOLBILLING_EVENT_RESTORE_DONE       = 6, /* restore enumeration finished   */
+    SOKOLBILLING_EVENT_RESTORE_DONE       = 6, /* restore finished; code 0 = the
+                                                  store ANSWERED (0+ purchases are
+                                                  authoritative), non-zero = the
+                                                  query failed and the enumeration
+                                                  means nothing. Reconciling an
+                                                  entitlement cache against a failed
+                                                  query revokes offline customers.  */
 } sokolbilling_event_type;
 
 typedef struct sokolbilling_event {

@@ -129,6 +129,13 @@ public func sokolbilling_restore() {
         for await result in Transaction.currentEntitlements {
             _ = reportVerified(result)
         }
+        /* code 0 = the enumeration is AUTHORITATIVE, and on StoreKit 2 it always is:
+           currentEntitlements reads Apple's own signed local cache, so an offline device
+           still lists what it owns. That is why a failed sync is NOT reported as an error
+           here, unlike Android — there, a failed queryPurchasesAsync returns an empty list
+           that is indistinguishable from "owns nothing", so it must report its code.
+           ⛔ Do not "fix" this into reporting sync failures: it would block legitimate
+           offline reconciliation on iOS for no gain. */
         emit(EV_RESTORE_DONE)
     }
 }
