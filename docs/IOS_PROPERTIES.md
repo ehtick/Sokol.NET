@@ -132,7 +132,7 @@ Here's a complete example with iOS configuration alongside Android configuration
    <!-- Android Configuration -->
    <PropertyGroup>
       <AndroidMinSdkVersion>26</AndroidMinSdkVersion>
-      <AndroidTargetSdkVersion>34</AndroidTargetSdkVersion>
+      <AndroidTargetSdkVersion>36</AndroidTargetSdkVersion>
       <AndroidFullscreen>true</AndroidFullscreen>
       <AndroidScreenOrientation>landscape</AndroidScreenOrientation>
       <AndroidKeepScreenOn>true</AndroidKeepScreenOn>

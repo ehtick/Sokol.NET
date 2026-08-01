@@ -40,7 +40,10 @@ namespace SokolApplicationBuilder
 {
     public class AndroidBuildTask : Task
     {
-
+        // Fallbacks when a project's Directory.Build.props doesn't specify them.
+        // Google Play requires new apps/updates to target Android 16 (API 36) or higher.
+        const string DefaultMinSdkVersion = "26";
+        const string DefaultTargetSdkVersion = "36";
 
         Options opts;
         Dictionary<string, string> envVarsDict = new();
@@ -620,6 +623,16 @@ namespace SokolApplicationBuilder
                 content = content.Replace("applicationId = 'com.example.native_activity'", $"applicationId = '{packageName}'");
                 content = content.Replace("namespace 'com.example.native_activity'", $"namespace '{packageName}'");
                 
+                // Update SDK levels from Directory.Build.props. Gradle's defaultConfig.targetSdk
+                // overrides the manifest's <uses-sdk>, so without this the property would be ignored.
+                // compileSdk must be >= targetSdk, so it tracks the same value.
+                string gradleMinSdk = androidProperties.GetValueOrDefault("AndroidMinSdkVersion", DefaultMinSdkVersion);
+                string gradleTargetSdk = androidProperties.GetValueOrDefault("AndroidTargetSdkVersion", DefaultTargetSdkVersion);
+                content = System.Text.RegularExpressions.Regex.Replace(content, @"compileSdk\s+\d+", $"compileSdk {gradleTargetSdk}");
+                content = System.Text.RegularExpressions.Regex.Replace(content, @"minSdk\s+\d+", $"minSdk {gradleMinSdk}");
+                content = System.Text.RegularExpressions.Regex.Replace(content, @"targetSdk\s+\d+", $"targetSdk {gradleTargetSdk}");
+                content = System.Text.RegularExpressions.Regex.Replace(content, @"-DANDROID_PLATFORM=android-\d+", $"-DANDROID_PLATFORM=android-{gradleMinSdk}");
+
                 // Update versionCode and versionName from Directory.Build.props
                 string versionCode = androidProperties.GetValueOrDefault("AndroidVersionCode", "1");
                 string versionName = androidProperties.GetValueOrDefault("AppVersion", "1.0");
@@ -2576,8 +2589,8 @@ KeyAlias={keystoreInfo.KeyAlias}
             manifest.AppendLine();
 
             // SDK versions
-            string minSdk = androidProperties.GetValueOrDefault("AndroidMinSdkVersion", "26");
-            string targetSdk = androidProperties.GetValueOrDefault("AndroidTargetSdkVersion", "35");
+            string minSdk = androidProperties.GetValueOrDefault("AndroidMinSdkVersion", DefaultMinSdkVersion);
+            string targetSdk = androidProperties.GetValueOrDefault("AndroidTargetSdkVersion", DefaultTargetSdkVersion);
             manifest.AppendLine($"  <uses-sdk android:minSdkVersion=\"{minSdk}\" android:targetSdkVersion=\"{targetSdk}\"/>");
 
             // Permissions - read from Directory.Build.props

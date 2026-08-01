@@ -35,7 +35,7 @@ Open `Directory.Build.props` and add icon properties:
   <!-- Android Configuration -->
   <PropertyGroup>
     <AndroidMinSdkVersion>26</AndroidMinSdkVersion>
-    <AndroidTargetSdkVersion>34</AndroidTargetSdkVersion>
+    <AndroidTargetSdkVersion>36</AndroidTargetSdkVersion>
     
     <!-- 📱 Add this line -->
     <AndroidIcon>myicon.png</AndroidIcon>
@@ -265,7 +265,7 @@ Here's a complete minimal Directory.Build.props with icons:
   <!-- Android Configuration -->
   <PropertyGroup>
     <AndroidMinSdkVersion>26</AndroidMinSdkVersion>
-    <AndroidTargetSdkVersion>34</AndroidTargetSdkVersion>
+    <AndroidTargetSdkVersion>36</AndroidTargetSdkVersion>
     <AndroidFullscreen>true</AndroidFullscreen>
     <AndroidScreenOrientation>landscape</AndroidScreenOrientation>
     <AndroidIcon>myicon.png</AndroidIcon>

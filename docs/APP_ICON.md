@@ -201,7 +201,7 @@ Here's a complete example showing both Android and iOS icon configuration:
    <!-- Android Configuration -->
    <PropertyGroup>
       <AndroidMinSdkVersion>26</AndroidMinSdkVersion>
-      <AndroidTargetSdkVersion>34</AndroidTargetSdkVersion>
+      <AndroidTargetSdkVersion>36</AndroidTargetSdkVersion>
       <AndroidFullscreen>true</AndroidFullscreen>
       <AndroidScreenOrientation>landscape</AndroidScreenOrientation>
       

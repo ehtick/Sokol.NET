@@ -39,18 +39,24 @@ These tasks will:
    - **Why required**: Google Play enforces 16KB page size support for apps targeting Android 15+ (API 35+)
    - All native libraries are automatically built with proper 16KB alignment
 
-2. **Java JDK** - Required for signing and bundletool
+2. **Android SDK Platform 36** - **Required for Google Play submission**
+   - Google Play requires new apps and updates to target Android 16 (API 36) or higher
+   - Install with `sdkmanager --install "platforms;android-36"`
+   - Builds default to `targetSdk`/`compileSdk` 36; override per project with
+     `<AndroidTargetSdkVersion>` in `Directory.Build.props` (see [ANDROID_PROPERTIES.md](ANDROID_PROPERTIES.md))
+
+3. **Java JDK** - Required for signing and bundletool
    ```bash
    java -version  # Should be installed
    ```
 
-3. **bundletool** (for local AAB testing) - Optional but recommended for installing AAB on devices
+4. **bundletool** (for local AAB testing) - Optional but recommended for installing AAB on devices
    - Download from: https://github.com/google/bundletool/releases
    - Place in one of these locations:
      - `<project-root>/tools/bundletool.jar`
      - Anywhere in your `ANDROID_SDK_ROOT` or `ANDROID_HOME`
 
-4. **Android Debug Keystore** - Created automatically if not present at `~/.android/debug.keystore`
+5. **Android Debug Keystore** - Created automatically if not present at `~/.android/debug.keystore`
 
 ## Building AAB Files
 

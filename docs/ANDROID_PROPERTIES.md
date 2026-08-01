@@ -21,13 +21,16 @@ When building for Android, SokolApplicationBuilder automatically:
   <!-- Minimum Android SDK version (default: 26) -->
   <AndroidMinSdkVersion>26</AndroidMinSdkVersion>
   
-  <!-- Target Android SDK version (default: 35) -->
-  <AndroidTargetSdkVersion>35</AndroidTargetSdkVersion>
+  <!-- Target Android SDK version (default: 36 — Google Play requires Android 16 / API 36+) -->
+  <AndroidTargetSdkVersion>36</AndroidTargetSdkVersion>
 </PropertyGroup>
 ```
 
 **Important for Google Play Submission:**
 
+- **API 36 Required**: Google Play requires new apps and updates to target Android 16 (API 36) or higher.
+  `AndroidTargetSdkVersion` drives both `targetSdk` and `compileSdk` in the generated Gradle project, so
+  lowering it below 36 will make Play reject the upload.
 - **NDK 27+ Required**: Google Play requires 16KB page size support for apps targeting Android 15+ (API 35+)
 - **Automatic Selection**: The build system automatically selects NDK 27+ when available, even if older NDK versions are present in environment variables
 - **Recommended**: Install NDK 29 or later for best compatibility
@@ -135,6 +138,11 @@ Control how your app handles device orientation changes:
 | `locked` | Locks to current rotation |
 | `behind` | Same orientation as activity below it |
 
+**⚠️ Android 16 (API 36) large screens**: apps targeting API 36 have `screenOrientation` ignored on
+displays whose smallest width is ≥ 600dp (tablets, unfolded foldables, desktop windowing) — the app is
+freely rotatable and resizable there. Phones are unaffected. A locked-orientation app must therefore
+still lay out correctly in the other orientation on a tablet.
+
 **Common Use Cases:**
 
 ```xml
@@ -206,7 +214,7 @@ Here's a complete example `Directory.Build.props` with Android configuration in 
    <PropertyGroup>
       <!-- SDK Versions -->
       <AndroidMinSdkVersion>26</AndroidMinSdkVersion>
-      <AndroidTargetSdkVersion>34</AndroidTargetSdkVersion>
+      <AndroidTargetSdkVersion>36</AndroidTargetSdkVersion>
       
       <!-- Permissions (semicolon-separated) -->
       <AndroidPermissions>android.permission.RECORD_AUDIO;android.permission.WAKE_LOCK;android.permission.INTERNET;android.permission.WRITE_EXTERNAL_STORAGE;android.permission.CAMERA</AndroidPermissions>
@@ -253,7 +261,7 @@ For a game that needs audio recording and camera access:
 <PropertyGroup>
   <!-- SDK Versions -->
   <AndroidMinSdkVersion>26</AndroidMinSdkVersion>
-  <AndroidTargetSdkVersion>34</AndroidTargetSdkVersion>
+  <AndroidTargetSdkVersion>36</AndroidTargetSdkVersion>
   
   <!-- Permissions -->
   <AndroidPermissions>android.permission.INTERNET;android.permission.RECORD_AUDIO;android.permission.CAMERA;android.permission.WAKE_LOCK</AndroidPermissions>
@@ -276,7 +284,7 @@ For an immersive fullscreen game without system UI:
 <PropertyGroup>
   <!-- SDK Versions -->
   <AndroidMinSdkVersion>26</AndroidMinSdkVersion>
-  <AndroidTargetSdkVersion>34</AndroidTargetSdkVersion>
+  <AndroidTargetSdkVersion>36</AndroidTargetSdkVersion>
   
   <!-- Permissions -->
   <AndroidPermissions>android.permission.INTERNET;android.permission.WAKE_LOCK</AndroidPermissions>
@@ -295,7 +303,7 @@ When building, you'll see output like:
 ```
 📋 Read 7 Android properties from Directory.Build.props
    - AndroidMinSdkVersion: 26
-   - AndroidTargetSdkVersion: 34
+   - AndroidTargetSdkVersion: 36
    - AndroidPermissions: android.permission.RECORD_AUDIO;android.permission.WAKE_LOCK;...
    - AndroidAllowBackup: false
    - AndroidFullBackupContent: false

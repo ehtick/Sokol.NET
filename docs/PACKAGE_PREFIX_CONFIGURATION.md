@@ -59,7 +59,7 @@ Here's a complete example of a `Directory.Build.props` file with custom package 
       
       <!-- SDK Versions -->
       <AndroidMinSdkVersion>26</AndroidMinSdkVersion>
-      <AndroidTargetSdkVersion>34</AndroidTargetSdkVersion>
+      <AndroidTargetSdkVersion>36</AndroidTargetSdkVersion>
       
       <!-- ... other Android properties ... -->
    </PropertyGroup>

@@ -58,7 +58,7 @@ Here's a complete `Directory.Build.props` with version configuration:
    <PropertyGroup>
       <AndroidPackagePrefix>com.mycompany</AndroidPackagePrefix>
       <AndroidMinSdkVersion>26</AndroidMinSdkVersion>
-      <AndroidTargetSdkVersion>34</AndroidTargetSdkVersion>
+      <AndroidTargetSdkVersion>36</AndroidTargetSdkVersion>
    </PropertyGroup>
 
    <!-- iOS Configuration -->

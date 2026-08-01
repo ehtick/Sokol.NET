@@ -100,7 +100,7 @@
       
       <!-- SDK Versions -->
       <AndroidMinSdkVersion>26</AndroidMinSdkVersion>
-      <AndroidTargetSdkVersion>34</AndroidTargetSdkVersion>
+      <AndroidTargetSdkVersion>36</AndroidTargetSdkVersion>
       
       <!-- Permissions (semicolon-separated) -->
       <AndroidPermissions>android.permission.WAKE_LOCK;android.permission.INTERNET</AndroidPermissions>

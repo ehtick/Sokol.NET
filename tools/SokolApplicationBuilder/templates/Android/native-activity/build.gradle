@@ -4,7 +4,8 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.7.3'
+        // 8.10.1 is the newest AGP that runs on the wrapper's Gradle 8.12.1 and supports compileSdk 36
+        classpath 'com.android.tools.build:gradle:8.10.1'
     }
 }
 
