@@ -45,7 +45,7 @@ public final class SokolBilling {
     static Activity activity;
     static BillingClient client;
     static boolean ready;
-    static final List<Runnable> pending = new ArrayList<>();
+    static final List<Pending> pending = new ArrayList<>();
     static final Map<String, ProductDetails> products = new HashMap<>();
 
     private SokolBilling() {}
@@ -66,35 +66,63 @@ public final class SokolBilling {
     static void connect() {
         client.startConnection(new BillingClientStateListener() {
             @Override public void onBillingSetupFinished(BillingResult r) {
-                if (r.getResponseCode() != BillingClient.BillingResponseCode.OK) return;
-                List<Runnable> run;
+                if (r.getResponseCode() != BillingClient.BillingResponseCode.OK) {
+                    // ⛔ FAIL the queued work; do not just return. Leaving it in `pending`
+                    // strands it forever: offline, a queued restore never reaches
+                    // queryPurchasesAsync, so RESTORE_DONE is never emitted and the caller
+                    // waits on "contacting the store…" with no way out (user-reported
+                    // 2026-08-01, airplane mode). A caller must always get an answer.
+                    failPending(r.getResponseCode());
+                    return;
+                }
+                List<Pending> run;
                 synchronized (pending) {
                     ready = true;
                     run = new ArrayList<>(pending);
                     pending.clear();
                 }
-                for (Runnable x : run) x.run();
+                for (Pending x : run) x.onReady.run();
                 /* Replay owned purchases so the app's entitlement cache heals
                    (refunds/family changes reconcile the same way on resume). */
                 queryOwned(false);
             }
             @Override public void onBillingServiceDisconnected() {
                 synchronized (pending) { ready = false; }
+                // Anything queued at this moment would wait for a reconnect that only a
+                // future call triggers. An explicit failure beats an indefinite hang.
+                failPending(BillingClient.BillingResponseCode.SERVICE_DISCONNECTED);
             }
         });
     }
 
-    /** Run r once the client is connected; reconnect lazily if the service dropped. */
-    static void whenReady(Runnable r) {
+    static void failPending(int code) {
+        List<Pending> fail;
+        synchronized (pending) { fail = new ArrayList<>(pending); pending.clear(); }
+        for (Pending p : fail) p.onFail.run(code);
+    }
+
+    /** A queued request: what to run once connected, and how to answer if we never connect. */
+    interface FailCallback { void run(int code); }
+    static final class Pending {
+        final Runnable onReady; final FailCallback onFail;
+        Pending(Runnable onReady, FailCallback onFail) { this.onReady = onReady; this.onFail = onFail; }
+    }
+
+    /** Run r once the client is connected; reconnect lazily if the service dropped.
+        onFail is invoked instead if the connection cannot be established. */
+    static void whenReady(Runnable r, FailCallback onFail) {
         boolean now;
         synchronized (pending) {
             now = ready && client != null && client.isReady();
-            if (!now) pending.add(r);
+            if (!now) pending.add(new Pending(r, onFail));
         }
         if (now) {
             r.run();
         } else if (client != null && activity != null) {
             activity.runOnUiThread(() -> { if (!client.isReady()) connect(); });
+        } else {
+            // No client/activity at all — nothing will ever drain the queue.
+            failPending(BillingClient.BillingResponseCode.SERVICE_UNAVAILABLE);
         }
     }
 
@@ -108,7 +136,7 @@ public final class SokolBilling {
             } else {
                 nativeOnEvent(EV_PRODUCT_FAILED, 0, sku, null, null, null);
             }
-        }));
+        }), code -> nativeOnEvent(EV_PRODUCT_FAILED, code, sku, null, null, null));
     }
 
     public static void purchase(final String sku) {
@@ -131,11 +159,12 @@ public final class SokolBilling {
                 }
                 /* OK -> the result arrives in onPurchasesUpdated. */
             });
-        }));
+        }), code -> nativeOnEvent(EV_PURCHASE_FAILED, code, sku, null, null, null));
     }
 
     public static void restore() {
-        whenReady(() -> queryOwned(true));
+        whenReady(() -> queryOwned(true),
+                  code -> nativeOnEvent(EV_RESTORE_DONE, code, null, null, null, null));
     }
 
     interface DetailsCallback { void run(ProductDetails details); }
