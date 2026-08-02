@@ -80,6 +80,18 @@ See example projects (`assimp_simple`, `spine_simple`, `ozz_shdfeatures`) and th
 
 **Recommended**: For glTF 2.0 models, use the **GltfViewer** example - a production-ready, full-featured glTF viewer with PBR rendering, animations, and advanced material support.
 
+### Optional Plugins
+Self-contained add-ons in [`plugins/`](plugins/README.md), opted into per project. Each ships its own
+managed C# source, native backend, build scripts and README, builds into its own
+`plugins/<Name>/libs/`, and never touches the repo-root `libs/`:
+- **Share**: Native share sheet — post a score plus a generated image — Android, iOS, macOS, Windows, Linux
+- **Ads**: AdMob interstitials with UMP consent — Android, iOS
+- **Billing**: One-time in-app purchases (Google Play Billing / StoreKit 2) — Android, iOS
+
+`Ads` and `Billing` have no desktop or web backend, but their managed layer still completes every
+call through the normal event path, so UI flows compile and behave the same on every platform.
+See [plugins/README.md](plugins/README.md) for the directory convention and the opt-in steps.
+
 ## 🎮 Example Applications
 
 The `examples/` folder contains 72 sample applications demonstrating various features:
@@ -381,6 +393,7 @@ Sokol.NET/
 │   ├── android/
 │   ├── ios/
 │   └── emscripten/
+├── plugins/          # Optional self-contained add-ons (Share, Ads, Billing)
 ├── tools/            # Build tools and utilities
 │   └── SokolApplicationBuilder/
 ├── bindgen/          # C# binding generator
