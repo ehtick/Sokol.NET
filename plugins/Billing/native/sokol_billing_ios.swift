@@ -149,6 +149,6 @@ public func sokolbilling_restore() {
    signed local cache. Emitting SYNC_DONE here would hand a consumer an "authoritative"
    answer that says nothing new, and any consumer that reconciles on it would then be
    reconciling iOS entitlements against a code path never designed for them.
-   See ENTITLEMENT_REVOCATION.md §3 (Scope: iOS unchanged, decided separately). */
+   Whether iOS ever wants an equivalent is a consumer-side decision, not this plugin's. */
 @_cdecl("sokolbilling_sync")
 public func sokolbilling_sync() { }
