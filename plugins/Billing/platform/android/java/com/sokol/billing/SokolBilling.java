@@ -7,6 +7,7 @@ import com.android.billingclient.api.BillingClient;
 import com.android.billingclient.api.BillingClientStateListener;
 import com.android.billingclient.api.BillingFlowParams;
 import com.android.billingclient.api.BillingResult;
+import com.android.billingclient.api.ConsumeParams;
 import com.android.billingclient.api.PendingPurchasesParams;
 import com.android.billingclient.api.ProductDetails;
 import com.android.billingclient.api.Purchase;
@@ -173,6 +174,35 @@ public final class SokolBilling {
     public static void sync() {
         whenReady(() -> queryOwned(false),
                   code -> nativeOnEvent(EV_SYNC_DONE, code, null, null, null, null));
+    }
+
+    /** TEST TOOL: consume the owned purchase of `sku`, so Play stops reporting it
+        (to the app the next sync is indistinguishable from a revocation) and the
+        SKU becomes purchasable again. Entitlement products are never consumed in
+        production — this exists to reset a refunded-but-not-revoked "zombie"
+        purchase that Play will neither re-sell nor let the Console refund again.
+        Always ends in a re-enumeration, so the caller gets a SYNC_DONE either way. */
+    public static void consume(final String sku) {
+        whenReady(() -> {
+            QueryPurchasesParams params = QueryPurchasesParams.newBuilder()
+                .setProductType(BillingClient.ProductType.INAPP)
+                .build();
+            client.queryPurchasesAsync(params, (r, purchases) -> {
+                if (r.getResponseCode() != BillingClient.BillingResponseCode.OK) {
+                    nativeOnEvent(EV_SYNC_DONE, r.getResponseCode(), null, null, null, null);
+                    return;
+                }
+                Purchase target = null;
+                for (Purchase p : purchases)
+                    if (p.getProducts().contains(sku)) { target = p; break; }
+                if (target == null) { queryOwned(false); return; }
+                client.consumeAsync(
+                    ConsumeParams.newBuilder()
+                        .setPurchaseToken(target.getPurchaseToken())
+                        .build(),
+                    (cr, token) -> queryOwned(false));
+            });
+        }, code -> nativeOnEvent(EV_SYNC_DONE, code, null, null, null, null));
     }
 
     interface DetailsCallback { void run(ProductDetails details); }

@@ -24,6 +24,7 @@ static jmethodID _sb_query;
 static jmethodID _sb_purchase;
 static jmethodID _sb_restore;
 static jmethodID _sb_sync;
+static jmethodID _sb_consume;
 
 static JNIEnv* _sb_env(void)
 {
@@ -70,6 +71,8 @@ static bool _sb_resolve(JNIEnv* env, ANativeActivity* activity)
                        "(Ljava/lang/String;)V");
     _sb_restore  = (*env)->GetStaticMethodID(env, _sb_class, "restore", "()V");
     _sb_sync     = (*env)->GetStaticMethodID(env, _sb_class, "sync", "()V");
+    _sb_consume  = (*env)->GetStaticMethodID(env, _sb_class, "consume",
+                       "(Ljava/lang/String;)V");
     (*env)->DeleteLocalRef(env, cls);
     return true;
 }
@@ -108,6 +111,7 @@ static void _sb_call_void(jmethodID method)
 
 void sokolbilling_restore(void) { _sb_call_void(_sb_restore); }
 void sokolbilling_sync(void)    { _sb_call_void(_sb_sync); }
+void sokolbilling_consume(const char* sku) { _sb_call_str(_sb_consume, sku); }
 
 /* Upcall from com.sokol.billing.SokolBilling (any Java thread). */
 JNIEXPORT void JNICALL

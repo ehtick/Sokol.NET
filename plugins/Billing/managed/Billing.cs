@@ -119,6 +119,21 @@ public static class Billing
 #endif
     }
 
+    /// <summary>TEST TOOL (Android): consume the owned one-time purchase of <paramref name="sku"/>.
+    /// The store then stops reporting it — the next <see cref="Sync"/> answer is indistinguishable
+    /// from a revocation — and the SKU becomes purchasable again. Exists to reset a
+    /// refunded-but-not-revoked purchase, which Play will neither re-sell nor let the Console
+    /// refund again. Completes like <see cref="Sync"/> (<see cref="BillingEventType.SyncDone"/>
+    /// after a re-enumeration). No-op on iOS; a failed sync on desktop/web.</summary>
+    public static void Consume(string sku)
+    {
+#if __ANDROID__
+        SokolBilling.Consume(sku);
+#else
+        _stubQueue.Enqueue(new BillingEvent { Type = BillingEventType.SyncDone, Code = CodeUnavailable });
+#endif
+    }
+
     /// <summary>Drain pending store events; call once per frame from the game loop.</summary>
     public static void Poll()
     {

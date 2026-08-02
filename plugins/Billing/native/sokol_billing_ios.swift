@@ -152,3 +152,8 @@ public func sokolbilling_restore() {
    Whether iOS ever wants an equivalent is a consumer-side decision, not this plugin's. */
 @_cdecl("sokolbilling_sync")
 public func sokolbilling_sync() { }
+
+/* Android-only test tool (see sokol_billing.h). The symbol must exist for the
+   app's static link; StoreKit has no consume for non-consumables. */
+@_cdecl("sokolbilling_consume")
+public func sokolbilling_consume(_ sku: UnsafePointer<CChar>?) { }

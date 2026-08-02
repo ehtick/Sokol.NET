@@ -368,6 +368,8 @@ extern "C" {
 
 #if defined(__OBJC__)
 
+SWIFT_EXTERN void sokolbilling_consume(char const * _Nullable sku) SWIFT_NOEXCEPT;
+
 SWIFT_EXTERN void sokolbilling_init(void) SWIFT_NOEXCEPT;
 
 SWIFT_EXTERN void sokolbilling_purchase(char const * _Nullable cSku) SWIFT_NOEXCEPT;

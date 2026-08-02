@@ -86,6 +86,14 @@ void sokolbilling_restore(void);
    since StoreKit's currentEntitlements is Apple's own signed local cache. */
 void sokolbilling_sync(void);
 
+/* TEST TOOL (Android): consume the owned one-time purchase of `sku`. Play then
+   stops reporting it -- to the app the next sync is indistinguishable from a
+   revocation -- and the SKU becomes purchasable again. Exists to reset a
+   refunded-but-not-revoked purchase, which Play will neither re-sell nor let
+   the Console refund again. Completes like sokolbilling_sync() -> SYNC_DONE
+   after a re-enumeration. No-op on iOS. */
+void sokolbilling_consume(const char* sku);
+
 /* Pop one queued event. Returns false when the queue is empty.
    Strings in *out stay valid until the next call. */
 bool sokolbilling_poll_event(sokolbilling_event* out);
