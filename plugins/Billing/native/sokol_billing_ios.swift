@@ -139,3 +139,16 @@ public func sokolbilling_restore() {
         emit(EV_RESTORE_DONE)
     }
 }
+
+/* Deliberately does NOTHING on iOS, and the symbol exists only so the managed P/Invoke
+   links (a missing one breaks the whole app's static link, not just this call).
+
+   The Android counterpart exists because Play's queryPurchasesAsync is the only way to
+   learn that a purchase was refunded. StoreKit has no such gap: Transaction.updates
+   already pushes revocations to a running app, and currentEntitlements is Apple's own
+   signed local cache. Emitting SYNC_DONE here would hand a consumer an "authoritative"
+   answer that says nothing new, and any consumer that reconciles on it would then be
+   reconciling iOS entitlements against a code path never designed for them.
+   See ENTITLEMENT_REVOCATION.md §3 (Scope: iOS unchanged, decided separately). */
+@_cdecl("sokolbilling_sync")
+public func sokolbilling_sync() { }

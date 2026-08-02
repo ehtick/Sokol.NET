@@ -75,6 +75,17 @@ void sokolbilling_purchase(const char* sku);
    -> zero or more PURCHASE_OK, then RESTORE_DONE. */
 void sokolbilling_restore(void);
 
+/* Same enumeration, but as a BACKGROUND sync -> zero or more PURCHASE_OK, then
+   SYNC_DONE. Call it when the app returns to the foreground: the store's answer
+   is what reveals a purchase that was refunded or revoked while you were away,
+   and a cache that only ever hears PURCHASE_OK can never learn that.
+
+   Distinct from sokolbilling_restore() because that one answers a USER's
+   "Restore purchases" tap; a consumer that shows the result in its UI must be
+   able to tell the two apart. Android only today -- on iOS this is a no-op,
+   since StoreKit's currentEntitlements is Apple's own signed local cache. */
+void sokolbilling_sync(void);
+
 /* Pop one queued event. Returns false when the queue is empty.
    Strings in *out stay valid until the next call. */
 bool sokolbilling_poll_event(sokolbilling_event* out);

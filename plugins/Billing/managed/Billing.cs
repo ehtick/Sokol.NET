@@ -102,6 +102,23 @@ public static class Billing
 #endif
     }
 
+    /// <summary>Re-enumerate owned purchases as a BACKGROUND sync — call it when the app returns
+    /// to the foreground. Answers with zero or more <see cref="BillingEventType.PurchaseOk"/>
+    /// then <see cref="BillingEventType.SyncDone"/>; a consumer learns a purchase was refunded
+    /// or revoked from that set, which the connect-time replay alone can never tell it.
+    /// Not <see cref="Restore"/>: that one answers a user's "Restore purchases" tap and its
+    /// completion event drives UI. No-op on iOS (StoreKit pushes revocations itself).</summary>
+    public static void Sync()
+    {
+#if __ANDROID__ || __IOS__
+        SokolBilling.Sync();
+#else
+        // No store: report a query that never answered, so a consumer that reconciles on this
+        // treats it as "proves nothing" rather than "you own nothing" and wipes real purchases.
+        _stubQueue.Enqueue(new BillingEvent { Type = BillingEventType.SyncDone, Code = CodeUnavailable });
+#endif
+    }
+
     /// <summary>Drain pending store events; call once per frame from the game loop.</summary>
     public static void Poll()
     {

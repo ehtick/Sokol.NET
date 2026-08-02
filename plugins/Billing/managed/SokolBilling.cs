@@ -41,6 +41,10 @@ internal static class SokolBilling
                CallingConvention = CallingConvention.Cdecl)]
     internal static extern void Restore();
 
+    [DllImport(Lib, EntryPoint = "sokolbilling_sync",
+               CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void Sync();
+
     [DllImport(Lib, EntryPoint = "sokolbilling_poll_event",
                CallingConvention = CallingConvention.Cdecl)]
     [return: MarshalAs(UnmanagedType.I1)]

@@ -376,6 +376,8 @@ SWIFT_EXTERN void sokolbilling_query_product(char const * _Nullable cSku) SWIFT_
 
 SWIFT_EXTERN void sokolbilling_restore(void) SWIFT_NOEXCEPT;
 
+SWIFT_EXTERN void sokolbilling_sync(void) SWIFT_NOEXCEPT;
+
 #endif // defined(__OBJC__)
 #if __has_attribute(external_source_symbol)
 # pragma clang attribute pop

@@ -168,6 +168,13 @@ public final class SokolBilling {
                   code -> nativeOnEvent(EV_RESTORE_DONE, code, null, null, null, null));
     }
 
+    /** Background re-enumeration (app foregrounded). Same query as restore(), but it completes
+        with SYNC_DONE so a consumer never mistakes it for the answer to a user's Restore tap. */
+    public static void sync() {
+        whenReady(() -> queryOwned(false),
+                  code -> nativeOnEvent(EV_SYNC_DONE, code, null, null, null, null));
+    }
+
     interface DetailsCallback { void run(ProductDetails details); }
 
     static void queryDetails(final String sku, final DetailsCallback cb) {
