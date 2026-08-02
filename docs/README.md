@@ -6,7 +6,7 @@ This folder contains guides and reference documentation for building, running, a
 
 This directory also hosts the **interactive WebAssembly examples showcase** for GitHub Pages:
 
-- **[Live Showcase](https://elix22.github.io/Sokol.NET/)** - Try all 36 examples in your browser
+- **[Live Showcase](https://elix22.github.io/Sokol.NET/)** - Try all 61 examples in your browser
 - **[GitHub Pages Setup Guide](GITHUB_PAGES_SETUP.md)** - Deploy the showcase
 - **[Build Script](../scripts/build-all-web-examples.sh)** - Build all WebAssembly examples
 

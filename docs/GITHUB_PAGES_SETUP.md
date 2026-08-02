@@ -16,7 +16,8 @@ Run the build script to compile all examples and copy them to the `docs/` folder
 ```
 
 This will:
-- Build all 36 examples for WebAssembly
+- Build every example listed in the script's `EXAMPLES` array for WebAssembly (35 today; the array
+  is the source of truth, and it is a subset — the live showcase currently hosts more than it builds)
 - Copy the compiled output to `docs/examples/`
 - Take approximately 15-30 minutes depending on your machine
 
@@ -72,7 +73,7 @@ Add a prominent link to the live showcase in your README.md:
 ```markdown
 ## 🌐 Live Examples
 
-**[Try all 36 examples in your browser →](https://elix22.github.io/Sokol.NET/)**
+**[Try all 61 examples in your browser →](https://elix22.github.io/Sokol.NET/)**
 
 Experience Sokol.NET's capabilities instantly with interactive WebAssembly examples. No installation required!
 ```
