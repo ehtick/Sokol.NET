@@ -34,7 +34,7 @@ All powered by **.NET NativeAOT** for near-native performance on Android devices
 - **Cross-Platform**: Deploy to Windows, macOS, Linux, Android, iOS, and WebAssembly from a single codebase
 - **High Performance**: Leverages .NET NativeAOT for near-native performance with zero overhead
 - **Modern Graphics**: Unified API supporting Direct3D 11, Metal, OpenGL, OpenGL ES, and WebGL
-- **Rich Examples**: 38 example applications demonstrating various graphics techniques and features
+- **Rich Examples**: 68 example applications demonstrating various graphics techniques and features
 - **Production Ready**: Includes ImGui, Assimp, glTF, Spine, Ozz animation, and more integrations
 
 ## 🚀 Supported Platforms
@@ -94,7 +94,7 @@ See [plugins/README.md](plugins/README.md) for the directory convention and the 
 
 ## 🎮 Example Applications
 
-The `examples/` folder contains 72 sample applications demonstrating various features:
+The `examples/` folder contains 68 sample applications demonstrating various features:
 
 ### Graphics Fundamentals
 - **[clear](examples/clear)** - Basic window and clear color
@@ -377,7 +377,7 @@ Comprehensive documentation is available in the **[`docs/`](docs/)** folder:
 
 ```
 Sokol.NET/
-├── examples/          # 36 example applications
+├── examples/          # 68 example applications
 ├── src/              # C# bindings and core libraries
 ├── ext/              # Native C/C++ dependencies
 │   ├── sokol/       # Sokol headers
