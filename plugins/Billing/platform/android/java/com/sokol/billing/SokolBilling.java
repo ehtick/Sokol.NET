@@ -41,6 +41,7 @@ public final class SokolBilling {
     static final int EV_PURCHASE_CANCELLED = 4;
     static final int EV_PURCHASE_FAILED    = 5;
     static final int EV_RESTORE_DONE       = 6;
+    static final int EV_SYNC_DONE          = 7;
 
     static Activity activity;
     static BillingClient client;
@@ -195,7 +196,8 @@ public final class SokolBilling {
         });
     }
 
-    /** Emit PURCHASE_OK for every owned purchase; RESTORE_DONE only when explicit. */
+    /** Emit PURCHASE_OK for every owned purchase, then the matching completion event:
+        RESTORE_DONE for a user-initiated restore, SYNC_DONE for the automatic replay. */
     static void queryOwned(final boolean explicitRestore) {
         QueryPurchasesParams params = QueryPurchasesParams.newBuilder()
             .setProductType(BillingClient.ProductType.INAPP)
@@ -205,13 +207,18 @@ public final class SokolBilling {
             if (rc == BillingClient.BillingResponseCode.OK) {
                 for (Purchase p : purchases) reportPurchase(p);
             }
-            if (explicitRestore) {
-                // ⛔ Carry the response code. A FAILED query reports zero purchases, which is
-                // indistinguishable from "you own nothing" unless the consumer is told the query
-                // never answered — and an entitlement cache that reconciles against that will
-                // revoke a paying customer for being offline. code 0 (OK) = the store answered.
-                nativeOnEvent(EV_RESTORE_DONE, rc, null, null, null, null);
-            }
+            // ⛔ Carry the response code. A FAILED query reports zero purchases, which is
+            // indistinguishable from "you own nothing" unless the consumer is told the query
+            // never answered — and an entitlement cache that reconciles against that will
+            // revoke a paying customer for being offline. code 0 (OK) = the store answered.
+            //
+            // The AUTOMATIC replay must also be announced (as SYNC_DONE): the PURCHASE_OK
+            // stream is add-only, so without a completion event nothing downstream can ever
+            // learn that a purchase was refunded/revoked — Google's `queryPurchasesAsync`
+            // guidance is that the returned set IS the entitlement. A separate type keeps it
+            // from being mistaken for the answer to a user's "Restore purchases" tap.
+            nativeOnEvent(explicitRestore ? EV_RESTORE_DONE : EV_SYNC_DONE,
+                          rc, null, null, null, null);
         });
     }
 

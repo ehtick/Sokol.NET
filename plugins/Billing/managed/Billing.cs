@@ -25,6 +25,14 @@ public enum BillingEventType
     PurchaseCancelled = 4,
     PurchaseFailed    = 5,
     RestoreDone       = 6,
+
+    /// <summary>An automatic owned-purchase sync finished (store connect, not a user restore).
+    /// <c>Code == 0</c> means the store ANSWERED, so the <see cref="PurchaseOk"/> events that
+    /// preceded it are the complete set of what is owned — the only signal from which a
+    /// consumer can infer a REVOKED purchase (the replay itself is add-only). A non-zero code
+    /// means the query failed and its emptiness means nothing. Distinct from
+    /// <see cref="RestoreDone"/> so a background sync never answers a "Restore purchases" tap.</summary>
+    SyncDone          = 7,
 }
 
 public readonly struct BillingEvent

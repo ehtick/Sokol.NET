@@ -35,6 +35,18 @@ typedef enum sokolbilling_event_type {
                                                   means nothing. Reconciling an
                                                   entitlement cache against a failed
                                                   query revokes offline customers.  */
+    SOKOLBILLING_EVENT_SYNC_DONE          = 7, /* an AUTOMATIC owned-purchase sync
+                                                  finished (on connect, not a user
+                                                  restore); same code semantics as
+                                                  RESTORE_DONE. Emitted so a cache
+                                                  can learn that a SKU is no longer
+                                                  owned — the PURCHASE_OK replay is
+                                                  add-only and can never say that.
+                                                  Kept distinct from RESTORE_DONE so
+                                                  a background sync never answers the
+                                                  user's "Restore purchases" tap.
+                                                  Android only today; iOS reads
+                                                  Apple's own signed local cache.    */
 } sokolbilling_event_type;
 
 typedef struct sokolbilling_event {
