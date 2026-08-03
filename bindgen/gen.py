@@ -27,6 +27,7 @@ tasks = [
     [ '../ext/manifold/bindings/c/include/manifold/manifoldc.h', 'manifold_', [] ],
     [ '../ext/sokol/sokol_filesystem.h',     'sfs_',     [] ],
     [ '../ext/sokol_capture.h',              'scap_',    ['sg_'] ],
+    [ '../ext/sokol_safearea.h',             'ssafe_',   ['sapp_'] ],
     [ '../ext/nanovg/src/sokol_nanovg.h',    'nvg',      ['sg_'] ],
     [ '../ext/nanosvg/src/nanosvg.h',        'nsvg',     [] ],
     [ '../ext/nanosvg/src/nanosvgrast.h',    'nsvg',     [] ],

@@ -39,6 +39,7 @@ module_names = {
     'manifold_': 'Manifoldc',
     'sfs_':      'SFilesystem',
     'scap_':     'SCapture',
+    'ssafe_':    'SSafeArea',
     'nvg':       'NanoVG',
     'nsvg':      'NanoSVG',
     'ma_':       'MiniAudio',
@@ -116,6 +117,7 @@ library_names = {
     'manifold_': 'manifoldc',  # manifoldc uses separate library
     'sfs_':      'sokol',
     'scap_':     'sokol',
+    'ssafe_':    'sokol',
     'nvg':       'sokol',
     'nsvg':      'sokol',
     'ma_':       'miniaudio',
@@ -153,6 +155,7 @@ c_source_paths = {
     'manifold_': 'c/manifoldc.c',  # manifoldc has its own CMake build — no single .c source
     'sfs_':      'c/sokol_filesystem.c',
     'scap_':     'c/sokol_capture.c',
+    'ssafe_':    'c/sokol_safearea.c',
     'nvg':       'c/nanovg.c',
     'nsvg':      'c/nanosvg.c',
     'ma_':       'c/miniaudio.c',

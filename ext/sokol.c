@@ -129,6 +129,8 @@ extern "C"
 #include "sokol/sokol_filesystem.h"
 #define SOKOL_CAPTURE_IMPL
 #include "sokol_capture.h"
+#define SOKOL_SAFEAREA_IMPL
+#include "sokol_safearea.h"
 
 
 // nanovg.h declarations only; implementation is compiled in nanovg_impl.c
