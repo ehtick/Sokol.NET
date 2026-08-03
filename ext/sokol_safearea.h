@@ -100,6 +100,23 @@ SOKOL_SAFEAREA_API_DECL bool ssafe_supported(void);
    platform has no cutout or the query failed. Does nothing if out_ltrb is null. */
 SOKOL_SAFEAREA_API_DECL void ssafe_get(float* out_ltrb);
 
+/* iOS only (no-op elsewhere): defer the system's bottom-edge swipe gesture, so the
+   FIRST upward swipe from the home-indicator strip goes to the app instead of
+   sending it to the background -- a second swipe still leaves, so the user is never
+   trapped. Without this a drag started near the bottom edge is stolen by iOS, which
+   matters for drag-driven scenes (jigsaw pieces, aiming, dragging a level).
+
+   Apple's guidance is to defer only where the app genuinely needs the edge, so call
+   it with true when a full-screen interactive scene appears and false when it goes
+   away, rather than leaving it on for menus.
+
+   ⛔ sokol_app owns the root UIViewController and creates it as a PLAIN
+   UIViewController, so this cannot be a subclass and must not be a category (that
+   would change every view controller in the process, including system sheets).
+   Instead the one instance is isa-swizzled into a private subclass created on first
+   use -- per-instance, allocated once, and nothing else in the app is affected. */
+SOKOL_SAFEAREA_API_DECL void ssafe_defer_bottom_gestures(bool enable);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
@@ -117,6 +134,41 @@ SOKOL_SAFEAREA_API_DECL void ssafe_get(float* out_ltrb);
 #if defined(__APPLE__) && defined(TARGET_OS_IOS) && TARGET_OS_IOS
 
 #import <UIKit/UIKit.h>
+#include <objc/runtime.h>
+#include <objc/message.h>
+
+/* Edge mask reported by the swizzled getter; read live so enable/disable both work
+   without ever un-swizzling. */
+static UIRectEdge _ssafe_defer_edges = UIRectEdgeNone;
+
+static NSUInteger _ssafe_deferred_edges_imp(id self, SEL _cmd) {
+    (void)self; (void)_cmd;
+    return (NSUInteger)_ssafe_defer_edges;
+}
+
+/* Give the ROOT view controller (and only it) an override of
+   -preferredScreenEdgesDeferringSystemGestures. Runs once; safe to call again. */
+static void _ssafe_install_gesture_override(UIViewController* vc) {
+    static Class patched = Nil;
+    if (Nil != patched) {
+        return;
+    }
+    Class base = object_getClass(vc);
+    Class sub  = objc_allocateClassPair(base, "SokolSafeAreaViewController", 0);
+    if (Nil == sub) {
+        /* Name already taken (double init): fall back to the registered one. */
+        sub = objc_getClass("SokolSafeAreaViewController");
+        if (Nil == sub) {
+            return;
+        }
+    } else {
+        class_addMethod(sub, @selector(preferredScreenEdgesDeferringSystemGestures),
+                        (IMP)_ssafe_deferred_edges_imp, "Q@:");
+        objc_registerClassPair(sub);
+    }
+    object_setClass(vc, sub);
+    patched = sub;
+}
 
 static void _ssafe_get(float* o) {
     UIWindow* win = (__bridge UIWindow*) sapp_ios_get_window();
@@ -131,6 +183,20 @@ static void _ssafe_get(float* o) {
     o[1] = (float)ins.top    * s;
     o[2] = (float)ins.right  * s;
     o[3] = (float)ins.bottom * s;
+}
+
+static void _ssafe_defer(bool enable) {
+    /* UIKit is main-thread only, and sokol runs the app on its own thread. */
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIWindow* win = (__bridge UIWindow*) sapp_ios_get_window();
+        UIViewController* vc = win.rootViewController;
+        if (nil == vc) {
+            return;
+        }
+        _ssafe_defer_edges = enable ? UIRectEdgeBottom : UIRectEdgeNone;
+        _ssafe_install_gesture_override(vc);
+        [vc setNeedsUpdateOfScreenEdgesDeferringSystemGestures];
+    });
 }
 
 #define _SSAFE_SUPPORTED (1)
@@ -229,6 +295,13 @@ cleanup:
     }
 }
 
+static void _ssafe_defer(bool enable) {
+    /* Android's back/home gestures are not deferrable per-edge the way iOS's are
+       (an app can only exclude small rects via setSystemGestureExclusionRects, which
+       the framebuffer-owning native activity does not expose here). */
+    (void)enable;
+}
+
 #define _SSAFE_SUPPORTED (1)
 
 /*--- desktop / web: no cutouts --------------------------------------------*/
@@ -238,12 +311,20 @@ static void _ssafe_get(float* o) {
     (void)o;
 }
 
+static void _ssafe_defer(bool enable) {
+    (void)enable;   /* only iOS reserves a screen edge for a system gesture */
+}
+
 #define _SSAFE_SUPPORTED (0)
 
 #endif
 
 SOKOL_API_IMPL bool ssafe_supported(void) {
     return _SSAFE_SUPPORTED ? true : false;
+}
+
+SOKOL_API_IMPL void ssafe_defer_bottom_gestures(bool enable) {
+    _ssafe_defer(enable);
 }
 
 SOKOL_API_IMPL void ssafe_get(float* out_ltrb) {

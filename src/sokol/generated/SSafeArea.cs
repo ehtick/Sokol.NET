@@ -31,5 +31,12 @@ public static extern bool ssafe_supported();
 #endif
 public static extern void ssafe_get(ref float out_ltrb);
 
+#if __IOS__
+[DllImport("@rpath/sokol.framework/sokol", EntryPoint = "ssafe_defer_bottom_gestures", CallingConvention = CallingConvention.Cdecl)]
+#else
+[DllImport("sokol", EntryPoint = "ssafe_defer_bottom_gestures", CallingConvention = CallingConvention.Cdecl)]
+#endif
+public static extern void ssafe_defer_bottom_gestures(bool enable);
+
 }
 }
