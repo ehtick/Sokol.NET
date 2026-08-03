@@ -304,7 +304,20 @@ public sealed unsafe class Render2DSurface : IDisposable
         EnsureTarget(pxW, pxH);
         _count = 0; _instCount = 0; _cmds.Clear();
         _clear = clear;
+        _tScale = 1f; _tOrigin = default;   // content transform never leaks across frames
     }
+
+    // ── content transform ───────────────────────────────────────────────────────────────────────
+    float _tScale = 1f;
+    Vector2 _tOrigin;
+
+    /// <summary>Uniform scale + translation applied to every primitive pushed after this call
+    /// (shapes and particles alike). Lets a widget lay out its content in local coordinates while
+    /// the surface spans the full framebuffer: draw the full-bleed background first, then set the
+    /// transform and draw the content. <see cref="Begin"/> resets it to identity.</summary>
+    public void SetContentTransform(float scale, Vector2 origin) { _tScale = scale; _tOrigin = origin; }
+
+    public void ResetContentTransform() { _tScale = 1f; _tOrigin = default; }
 
     /// <summary>Flush scene triangles then particle instances into the offscreen target (one pass).</summary>
     public void End()
@@ -418,7 +431,8 @@ public sealed unsafe class Render2DSurface : IDisposable
     void Push(Vector2 p, UIColor c)
     {
         if (_count >= _verts.Length) Array.Resize(ref _verts, _verts.Length * 2);   // grow, don't drop
-        _verts[_count] = new Vtx { X = p.X, Y = p.Y, R = c.R, G = c.G, B = c.B, A = c.A };
+        _verts[_count] = new Vtx { X = p.X * _tScale + _tOrigin.X, Y = p.Y * _tScale + _tOrigin.Y,
+                                   R = c.R, G = c.G, B = c.B, A = c.A };
         _count++;
     }
 
@@ -562,7 +576,8 @@ public sealed unsafe class Render2DSurface : IDisposable
         if (_instCount >= _insts.Length) Array.Resize(ref _insts, _insts.Length * 2);
         _insts[_instCount] = new Inst
         {
-            PX = pos.X, PY = pos.Y, SX = halfW, SY = halfH, Rot = rot,
+            PX = pos.X * _tScale + _tOrigin.X, PY = pos.Y * _tScale + _tOrigin.Y,
+            SX = halfW * _tScale, SY = halfH * _tScale, Rot = rot,
             R = col.R, G = col.G, B = col.B, A = col.A,
             U0 = u0, V0 = v0, U1 = u1, V1 = v1, Mode = mode,
         };
