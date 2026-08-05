@@ -427,6 +427,29 @@ public sealed unsafe class Render2DSurface : IDisposable
         sg_draw(0, 3, 1);
     }
 
+    // ── draw recording (DrawRecorder) ─────────────────────────────────────────────────────────────
+    // Composite primitives (rounded rects, gradients) record ONE entry and suppress the quads/fans
+    // they are built from. Rects are recorded post-content-transform, i.e. in the same surface-pixel
+    // space the vertices land in. Zero cost when DrawRecorder.Recording is off: one static-bool test
+    // per public primitive (plus a bool save/restore in the composites).
+    bool _recSup;
+
+    void Rec(float x0, float y0, float x1, float y1, string tag)
+    {
+        if (!DrawRecorder.Recording || _recSup) return;
+        DrawRecorder.Add(new Rect(x0 * _tScale + _tOrigin.X, y0 * _tScale + _tOrigin.Y,
+                                  (x1 - x0) * _tScale, (y1 - y0) * _tScale),
+                         DrawRecorder.Kind.GpuShape, tag);
+    }
+
+    void Rec(Vector2 a, Vector2 b, Vector2 c, string tag) =>
+        Rec(MathF.Min(a.X, MathF.Min(b.X, c.X)), MathF.Min(a.Y, MathF.Min(b.Y, c.Y)),
+            MathF.Max(a.X, MathF.Max(b.X, c.X)), MathF.Max(a.Y, MathF.Max(b.Y, c.Y)), tag);
+
+    void Rec(Vector2 a, Vector2 b, Vector2 c, Vector2 d, string tag) =>
+        Rec(MathF.Min(MathF.Min(a.X, b.X), MathF.Min(c.X, d.X)), MathF.Min(MathF.Min(a.Y, b.Y), MathF.Min(c.Y, d.Y)),
+            MathF.Max(MathF.Max(a.X, b.X), MathF.Max(c.X, d.X)), MathF.Max(MathF.Max(a.Y, b.Y), MathF.Max(c.Y, d.Y)), tag);
+
     // ── scene primitives (screen-pixel space; mirror Sokol.GUI.Renderer names) ────────────────────
     void Push(Vector2 p, UIColor c)
     {
@@ -436,22 +459,30 @@ public sealed unsafe class Render2DSurface : IDisposable
         _count++;
     }
 
-    public void FillTri(Vector2 a, Vector2 b, Vector2 c, UIColor col) { Push(a, col); Push(b, col); Push(c, col); }
+    public void FillTri(Vector2 a, Vector2 b, Vector2 c, UIColor col) { Rec(a, b, c, "tri"); Push(a, col); Push(b, col); Push(c, col); }
 
-    public void FillTriVc(Vector2 a, UIColor ca, Vector2 b, UIColor cb, Vector2 c, UIColor cc) { Push(a, ca); Push(b, cb); Push(c, cc); }
+    public void FillTriVc(Vector2 a, UIColor ca, Vector2 b, UIColor cb, Vector2 c, UIColor cc) { Rec(a, b, c, "tri"); Push(a, ca); Push(b, cb); Push(c, cc); }
 
     public void FillQuad(Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3, UIColor col)
-    { Push(p0, col); Push(p1, col); Push(p2, col); Push(p0, col); Push(p2, col); Push(p3, col); }
+    { Rec(p0, p1, p2, p3, "quad"); Push(p0, col); Push(p1, col); Push(p2, col); Push(p0, col); Push(p2, col); Push(p3, col); }
 
-    public void FillRect(Rect r, UIColor col) =>
+    public void FillRect(Rect r, UIColor col)
+    {
+        Rec(r.X, r.Y, r.X + r.Width, r.Y + r.Height, "rect");
+        bool sup = _recSup; _recSup = true;
         FillQuad(new(r.X, r.Y), new(r.X + r.Width, r.Y), new(r.X + r.Width, r.Y + r.Height), new(r.X, r.Y + r.Height), col);
+        _recSup = sup;
+    }
 
     public void FillVerticalGradient(Rect r, UIColor top, UIColor bottom)
     {
+        Rec(r.X, r.Y, r.X + r.Width, r.Y + r.Height, "grad");
         Vector2 tl = new(r.X, r.Y), tr = new(r.X + r.Width, r.Y);
         Vector2 br = new(r.X + r.Width, r.Y + r.Height), bl = new(r.X, r.Y + r.Height);
+        bool sup = _recSup; _recSup = true;
         FillTriVc(tl, top, tr, top, br, bottom);
         FillTriVc(tl, top, br, bottom, bl, bottom);
+        _recSup = sup;
     }
 
     // Per-vertex-colour quad (two triangles p0-p1-p2 / p0-p2-p3) — lets the circle helpers fade a feather edge.
@@ -463,6 +494,7 @@ public sealed unsafe class Render2DSurface : IDisposable
     public void FillCircle(Vector2 center, float radius, UIColor col)
     {
         if (radius <= 0f) return;
+        Rec(center.X - radius, center.Y - radius, center.X + radius, center.Y + radius, "circle");
         int seg = Math.Clamp((int)(radius * 0.8f) + 12, 16, 128);   // tessellation (roundness); the feather below does the edge AA
         float step = MathF.Tau / seg;
         float aa = MathF.Min(1f, radius);
@@ -483,6 +515,8 @@ public sealed unsafe class Render2DSurface : IDisposable
     public void StrokeCircle(Vector2 center, float radius, float thickness, UIColor col)
     {
         if (radius <= 0f || thickness <= 0f) return;
+        float ro0 = radius + MathF.Min(thickness * 0.5f, radius);
+        Rec(center.X - ro0, center.Y - ro0, center.X + ro0, center.Y + ro0, "circle-stroke");
         float half = MathF.Min(thickness * 0.5f, radius);
         float aa = MathF.Min(1f, half);
         float roT = radius + half, roS = roT - aa;            // outer: transparent rim → solid
@@ -504,6 +538,14 @@ public sealed unsafe class Render2DSurface : IDisposable
 
     /// <summary>Filled rounded rectangle (centre cross + 4 edge strips + 4 corner fans).</summary>
     public void FillRoundedRect(Rect r, float radius, UIColor col)
+    {
+        Rec(r.X, r.Y, r.X + r.Width, r.Y + r.Height, "rrect");
+        bool sup = _recSup; _recSup = true;
+        FillRoundedRectRaw(r, radius, col);
+        _recSup = sup;
+    }
+
+    void FillRoundedRectRaw(Rect r, float radius, UIColor col)
     {
         radius = MathF.Min(radius, MathF.Min(r.Width, r.Height) * 0.5f);
         if (radius <= 0.5f) { FillRect(r, col); return; }
@@ -537,6 +579,15 @@ public sealed unsafe class Render2DSurface : IDisposable
     public void StrokeRoundedRect(Rect r, float radius, float thickness, UIColor col)
     {
         if (thickness <= 0f) return;
+        float h0 = thickness * 0.5f;
+        Rec(r.X - h0, r.Y - h0, r.X + r.Width + h0, r.Y + r.Height + h0, "rrect-stroke");
+        bool sup = _recSup; _recSup = true;
+        StrokeRoundedRectRaw(r, radius, thickness, col);
+        _recSup = sup;
+    }
+
+    void StrokeRoundedRectRaw(Rect r, float radius, float thickness, UIColor col)
+    {
         radius = MathF.Max(0f, MathF.Min(radius, MathF.Min(r.Width, r.Height) * 0.5f));
         float half = thickness * 0.5f;
         float x0 = r.X, y0 = r.Y, x1 = r.X + r.Width, y1 = r.Y + r.Height;

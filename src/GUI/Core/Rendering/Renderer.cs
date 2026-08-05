@@ -102,11 +102,63 @@ public sealed class Renderer
             : NVGcompositeOperation.NVG_SOURCE_OVER));
 
     // -------------------------------------------------------------------------
+    // Draw recording (DrawRecorder)
+    // -------------------------------------------------------------------------
+    // Rects are recorded through the CURRENT NVG transform (widgets translate/scale before drawing),
+    // so entries land in the same logical-px screen space regardless of the caller's local coords.
+    // Zero cost when DrawRecorder.Recording is off: one static-bool test per draw call; the
+    // transform query and text measuring below only run while recording.
+
+    // Pending-path bbox for the low-level path API (BeginPath..Fill/Stroke); only maintained while
+    // recording, and only by the PUBLIC path verbs — the shape helpers above talk to nvg directly.
+    float _pMinX, _pMinY, _pMaxX, _pMaxY;
+    bool  _pAny;
+
+    void Rec(float x, float y, float w, float h, DrawRecorder.Kind kind, string tag)
+    {
+        if (!DrawRecorder.Recording) return;
+        unsafe
+        {
+            float* t = stackalloc float[6];
+            nvgCurrentTransform(_vg, ref t[0]);
+            // bbox of the four transformed corners (sx = a·x + c·y + e; sy = b·x + d·y + f)
+            float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+            for (int i = 0; i < 4; i++)
+            {
+                float px = (i & 1) == 0 ? x : x + w;
+                float py = (i & 2) == 0 ? y : y + h;
+                float sx = t[0] * px + t[2] * py + t[4];
+                float sy = t[1] * px + t[3] * py + t[5];
+                if (sx < minX) minX = sx; if (sx > maxX) maxX = sx;
+                if (sy < minY) minY = sy; if (sy > maxY) maxY = sy;
+            }
+            DrawRecorder.Add(new Rect(minX, minY, maxX - minX, maxY - minY), kind, tag);
+        }
+    }
+
+    void PathPt(float x, float y)
+    {
+        if (!DrawRecorder.Recording) return;
+        if (!_pAny) { _pMinX = _pMaxX = x; _pMinY = _pMaxY = y; _pAny = true; return; }
+        if (x < _pMinX) _pMinX = x; if (x > _pMaxX) _pMaxX = x;
+        if (y < _pMinY) _pMinY = y; if (y > _pMaxY) _pMaxY = y;
+    }
+
+    void PathRect(float x, float y, float w, float h) { PathPt(x, y); PathPt(x + w, y + h); }
+
+    void RecPath(string tag)
+    {
+        if (!DrawRecorder.Recording || !_pAny) return;
+        Rec(_pMinX, _pMinY, _pMaxX - _pMinX, _pMaxY - _pMinY, DrawRecorder.Kind.NvgShape, tag);
+    }
+
+    // -------------------------------------------------------------------------
     // Shapes
     // -------------------------------------------------------------------------
 
     public void FillRect(Rect r)
     {
+        Rec(r.X, r.Y, r.Width, r.Height, DrawRecorder.Kind.NvgShape, "rect");
         nvgBeginPath(_vg);
         nvgRect(_vg, r.X, r.Y, r.Width, r.Height);
         nvgFill(_vg);
@@ -114,6 +166,7 @@ public sealed class Renderer
 
     public void StrokeRect(Rect r)
     {
+        Rec(r.X, r.Y, r.Width, r.Height, DrawRecorder.Kind.NvgShape, "rect-stroke");
         nvgBeginPath(_vg);
         nvgRect(_vg, r.X, r.Y, r.Width, r.Height);
         nvgStroke(_vg);
@@ -121,6 +174,7 @@ public sealed class Renderer
 
     public void FillRoundedRect(Rect r, CornerRadius cr)
     {
+        Rec(r.X, r.Y, r.Width, r.Height, DrawRecorder.Kind.NvgShape, "rrect");
         nvgBeginPath(_vg);
         if (cr.IsUniform)
             nvgRoundedRect(_vg, r.X, r.Y, r.Width, r.Height, cr.TopLeft);
@@ -132,6 +186,7 @@ public sealed class Renderer
 
     public void StrokeRoundedRect(Rect r, CornerRadius cr)
     {
+        Rec(r.X, r.Y, r.Width, r.Height, DrawRecorder.Kind.NvgShape, "rrect-stroke");
         nvgBeginPath(_vg);
         if (cr.IsUniform)
             nvgRoundedRect(_vg, r.X, r.Y, r.Width, r.Height, cr.TopLeft);
@@ -143,6 +198,7 @@ public sealed class Renderer
 
     public void FillCircle(Vector2 center, float radius)
     {
+        Rec(center.X - radius, center.Y - radius, radius * 2f, radius * 2f, DrawRecorder.Kind.NvgShape, "circle");
         nvgBeginPath(_vg);
         nvgCircle(_vg, center.X, center.Y, radius);
         nvgFill(_vg);
@@ -150,6 +206,7 @@ public sealed class Renderer
 
     public void StrokeCircle(Vector2 center, float radius)
     {
+        Rec(center.X - radius, center.Y - radius, radius * 2f, radius * 2f, DrawRecorder.Kind.NvgShape, "circle-stroke");
         nvgBeginPath(_vg);
         nvgCircle(_vg, center.X, center.Y, radius);
         nvgStroke(_vg);
@@ -157,6 +214,9 @@ public sealed class Renderer
 
     public void DrawLine(Vector2 a, Vector2 b, float width)
     {
+        if (DrawRecorder.Recording)
+            Rec(MathF.Min(a.X, b.X), MathF.Min(a.Y, b.Y), MathF.Abs(b.X - a.X), MathF.Abs(b.Y - a.Y),
+                DrawRecorder.Kind.NvgShape, "line");
         nvgBeginPath(_vg);
         nvgMoveTo(_vg, a.X, a.Y);
         nvgLineTo(_vg, b.X, b.Y);
@@ -166,6 +226,12 @@ public sealed class Renderer
 
     public void FillTriangle(Vector2 a, Vector2 b, Vector2 c, UIColor color)
     {
+        if (DrawRecorder.Recording)
+        {
+            float minX = MathF.Min(a.X, MathF.Min(b.X, c.X)), minY = MathF.Min(a.Y, MathF.Min(b.Y, c.Y));
+            Rec(minX, minY, MathF.Max(a.X, MathF.Max(b.X, c.X)) - minX,
+                MathF.Max(a.Y, MathF.Max(b.Y, c.Y)) - minY, DrawRecorder.Kind.NvgShape, "tri");
+        }
         SetFillColor(color);
         nvgBeginPath(_vg);
         nvgMoveTo(_vg, a.X, a.Y);
@@ -179,26 +245,27 @@ public sealed class Renderer
     // Low-level path API
     // -------------------------------------------------------------------------
 
-    public void BeginPath()  => nvgBeginPath(_vg);
-    public void MoveTo(float x, float y)  => nvgMoveTo(_vg, x, y);
-    public void LineTo(float x, float y)  => nvgLineTo(_vg, x, y);
+    public void BeginPath()  { _pAny = false; nvgBeginPath(_vg); }
+    public void MoveTo(float x, float y)  { PathPt(x, y); nvgMoveTo(_vg, x, y); }
+    public void LineTo(float x, float y)  { PathPt(x, y); nvgLineTo(_vg, x, y); }
     public void ArcTo(float x1, float y1, float x2, float y2, float radius)
-        => nvgArcTo(_vg, x1, y1, x2, y2, radius);
+    { PathPt(x1, y1); PathPt(x2, y2); nvgArcTo(_vg, x1, y1, x2, y2, radius); }
     public void BezierTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
-        => nvgBezierTo(_vg, c1x, c1y, c2x, c2y, x, y);
+    { PathPt(c1x, c1y); PathPt(c2x, c2y); PathPt(x, y); nvgBezierTo(_vg, c1x, c1y, c2x, c2y, x, y); }
     public void QuadTo(float cx, float cy, float x, float y)
-        => nvgQuadTo(_vg, cx, cy, x, y);
+    { PathPt(cx, cy); PathPt(x, y); nvgQuadTo(_vg, cx, cy, x, y); }
     public void ClosePath()  => nvgClosePath(_vg);
-    public void AddRect(float x, float y, float w, float h)  => nvgRect(_vg, x, y, w, h);
-    public void AddRect(Rect r)  => nvgRect(_vg, r.X, r.Y, r.Width, r.Height);
+    public void AddRect(float x, float y, float w, float h)  { PathRect(x, y, w, h); nvgRect(_vg, x, y, w, h); }
+    public void AddRect(Rect r)  { PathRect(r.X, r.Y, r.Width, r.Height); nvgRect(_vg, r.X, r.Y, r.Width, r.Height); }
     public void AddRoundedRect(float x, float y, float w, float h, float cr)
-        => nvgRoundedRect(_vg, x, y, w, h, cr);
+    { PathRect(x, y, w, h); nvgRoundedRect(_vg, x, y, w, h, cr); }
     public void AddRoundedRectVarying(float x, float y, float w, float h,
         float tlr, float trr, float brr, float blr)
-        => nvgRoundedRectVarying(_vg, x, y, w, h, tlr, trr, brr, blr);
-    public void AddCircle(float cx, float cy, float radius)  => nvgCircle(_vg, cx, cy, radius);
-    public void Fill()   => nvgFill(_vg);
-    public void Stroke() => nvgStroke(_vg);
+    { PathRect(x, y, w, h); nvgRoundedRectVarying(_vg, x, y, w, h, tlr, trr, brr, blr); }
+    public void AddCircle(float cx, float cy, float radius)
+    { PathRect(cx - radius, cy - radius, radius * 2f, radius * 2f); nvgCircle(_vg, cx, cy, radius); }
+    public void Fill()   { RecPath("path"); nvgFill(_vg); }
+    public void Stroke() { RecPath("path-stroke"); nvgStroke(_vg); }
     public void SetFillPaint(NVGpaint paint) => nvgFillPaint(_vg, paint);
 
     // -------------------------------------------------------------------------
@@ -219,12 +286,14 @@ public sealed class Renderer
 
     public void FillWithPaint(NVGpaint paint)
     {
+        RecPath("path-paint");
         nvgFillPaint(_vg, paint);
         nvgFill(_vg);
     }
 
     public void FillRoundedRectWithPaint(Rect r, CornerRadius cr, NVGpaint paint)
     {
+        Rec(r.X, r.Y, r.Width, r.Height, DrawRecorder.Kind.NvgShape, "rrect-paint");
         nvgBeginPath(_vg);
         if (cr.IsUniform)
             nvgRoundedRect(_vg, r.X, r.Y, r.Width, r.Height, cr.TopLeft);
@@ -241,6 +310,7 @@ public sealed class Renderer
     /// <summary>Fill a rect with only the top-left and top-right corners rounded, filled with a paint (gradient/image).</summary>
     public void FillRoundedRectTopWithPaint(Rect r, float cr, NVGpaint paint)
     {
+        Rec(r.X, r.Y, r.Width, r.Height, DrawRecorder.Kind.NvgShape, "rrect-paint");
         nvgBeginPath(_vg);
         nvgRoundedRectVarying(_vg, r.X, r.Y, r.Width, r.Height, cr, cr, 0f, 0f);
         nvgFillPaint(_vg, paint);
@@ -249,6 +319,7 @@ public sealed class Renderer
 
     public void FillCircleWithPaint(float cx, float cy, float radius, NVGpaint paint)
     {
+        Rec(cx - radius, cy - radius, radius * 2f, radius * 2f, DrawRecorder.Kind.NvgShape, "circle-paint");
         nvgBeginPath(_vg);
         nvgCircle(_vg, cx, cy, radius);
         nvgFillPaint(_vg, paint);
@@ -275,6 +346,7 @@ public sealed class Renderer
 
     public void DrawImage(int nvgImageId, Rect dest, float alpha = 1f)
     {
+        Rec(dest.X, dest.Y, dest.Width, dest.Height, DrawRecorder.Kind.NvgImage, "image");
         var paint = nvgImagePattern(_vg, dest.X, dest.Y, dest.Width, dest.Height, 0f, nvgImageId, alpha);
         nvgBeginPath(_vg);
         nvgRect(_vg, dest.X, dest.Y, dest.Width, dest.Height);
@@ -291,6 +363,7 @@ public sealed class Renderer
 
     public void DrawImageFrame(int nvgImageId, Rect dest, int cols, int rows, int frame, float alpha = 1f)
     {
+        Rec(dest.X, dest.Y, dest.Width, dest.Height, DrawRecorder.Kind.NvgImage, "image");
         int c = Math.Max(1, cols), r = Math.Max(1, rows);
         int f = Math.Clamp(frame, 0, c * r - 1);
         int col = f % c, row = f / c;
@@ -323,24 +396,57 @@ public sealed class Renderer
     public void SetLetterSpacing(float sp)   => nvgTextLetterSpacing(_vg, sp);
     public void SetLineHeight(float lh)      => nvgTextLineHeight(_vg, lh);
 
+    /// <summary>Record a single-line string's on-screen bounds. Only called while recording; the
+    /// bounds respect the current font/size/align state, positioned at the draw origin.</summary>
+    void RecText(float x, float y, string visual, string logical)
+    {
+        unsafe
+        {
+            // 4-element buffer, same NativeAOT rule as MeasureText below.
+            float* b = stackalloc float[4];
+            nvgTextBounds(_vg, x, y, visual, null, ref b[0]);
+            Rec(b[0], b[1], b[2] - b[0], b[3] - b[1], DrawRecorder.Kind.NvgText, "text:" + logical);
+        }
+    }
+
+    void RecTextBox(float x, float y, float maxW, string visual, string logical)
+    {
+        unsafe
+        {
+            float* b = stackalloc float[4];
+            nvgTextBoxBounds(_vg, x, y, maxW, visual, null, ref b[0]);
+            Rec(b[0], b[1], b[2] - b[0], b[3] - b[1], DrawRecorder.Kind.NvgText, "text:" + logical);
+        }
+    }
+
     /// <summary>Draw a single-line text string with automatic BiDi reordering. Returns the x-advance.</summary>
     public float DrawText(Vector2 pos, string text) =>
-        nvgText(_vg, pos.X, pos.Y, BidiHelper.ToVisual(text), null);
+        DrawText(pos.X, pos.Y, text);
 
-    public float DrawText(float x, float y, string text) =>
-        nvgText(_vg, x, y, BidiHelper.ToVisual(text), null);
+    public float DrawText(float x, float y, string text)
+    {
+        var visual = BidiHelper.ToVisual(text);
+        if (DrawRecorder.Recording) RecText(x, y, visual, text);
+        return nvgText(_vg, x, y, visual, null);
+    }
 
     /// <summary>Draw text wrapped inside a bounding box with automatic BiDi reordering.</summary>
     public void DrawTextBox(Rect bounds, string text) =>
         DrawTextBox(bounds.X, bounds.Y, bounds.Width, text);
 
     /// <summary>Draw a single-line text string without BiDi reordering (for widgets that handle BiDi at a higher level).</summary>
-    public float DrawTextRaw(float x, float y, string text) =>
-        nvgText(_vg, x, y, text, null);
+    public float DrawTextRaw(float x, float y, string text)
+    {
+        if (DrawRecorder.Recording) RecText(x, y, text, text);
+        return nvgText(_vg, x, y, text, null);
+    }
 
     /// <summary>Draw text wrapped inside a bounding box without BiDi reordering.</summary>
-    public void DrawTextBoxRaw(float x, float y, float maxW, string text) =>
+    public void DrawTextBoxRaw(float x, float y, float maxW, string text)
+    {
+        if (DrawRecorder.Recording) RecTextBox(x, y, maxW, text, text);
         nvgTextBox(_vg, x, y, maxW, text, null);
+    }
 
     /// <summary>Measure rendered advance width of a string at current font/size settings. Applies BiDi reordering.</summary>
     public float MeasureText(string text)
@@ -457,6 +563,7 @@ public sealed class Renderer
     /// <summary>Fill a rounded rect with only the top two corners rounded.</summary>
     public void FillRectWithPaint(Rect r, NVGpaint paint)
     {
+        Rec(r.X, r.Y, r.Width, r.Height, DrawRecorder.Kind.NvgShape, "rect-paint");
         nvgBeginPath(_vg);
         nvgRect(_vg, r.X, r.Y, r.Width, r.Height);
         nvgFillPaint(_vg, paint);
@@ -529,6 +636,8 @@ public sealed class Renderer
 
     public void DrawTextBox(float x, float y, float maxW, string text)
     {
+        // Recorded once for the whole wrapped block (per-line RTL splitting below draws inside it).
+        if (DrawRecorder.Recording) RecTextBox(x, y, maxW, BidiHelper.ToVisual(text), text);
         if (!BidiHelper.IsRTLParagraph(text))
         {
             nvgTextBox(_vg, x, y, maxW, BidiHelper.ToVisual(text), null);
