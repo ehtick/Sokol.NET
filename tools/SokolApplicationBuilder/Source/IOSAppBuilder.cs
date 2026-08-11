@@ -64,10 +64,21 @@ namespace SokolApplicationBuilder
         // do not set the tag build byte-identically to before.
         private string iOSBundleName = string.Empty;
         // Optional <IOSDisplayName>: the name shown under the icon on the Home screen. When set it
-        // becomes CFBundleDisplayName (which iOS prefers) and CFBundleName. When EMPTY the historical
-        // "{project} iOS App" is used for CFBundleName and CFBundleDisplayName is omitted entirely,
-        // so projects that do not set the tag build byte-identically to before.
+        // becomes CFBundleDisplayName (which iOS prefers) and CFBundleName.
+        //
+        // It FALLS BACK to <IOSBundleName>, so an app whose brand is a single legal-in-an-identifier
+        // word sets one tag, not two. Set it explicitly only when the two must differ — and they often
+        // must: a bundle id may not contain a space ("Angry Birds" → com.rovio.AngryBirds), a display
+        // name is localizable and freely changeable while a published bundle id is immutable, and iOS
+        // truncates the icon label at ~12 characters.
+        //
+        // With NEITHER tag set, CFBundleDisplayName is omitted entirely and CFBundleName keeps the
+        // historical "{project} iOS App", so existing projects build byte-identically to before.
         private string iOSDisplayName = string.Empty;
+
+        /// <summary>The Home-screen label: explicit override, else the bundle name, else empty.</summary>
+        private string EffectiveDisplayName =>
+            !string.IsNullOrEmpty(iOSDisplayName) ? iOSDisplayName : iOSBundleName;
         private string iOSMinVersion = "14.0";
         private string iOSScreenOrientation = "both";
         private bool iOSRequiresFullScreen = false;
@@ -518,10 +529,10 @@ namespace SokolApplicationBuilder
                     ? $"{iOSBundlePrefix}.{iOSBundleName}"
                     : "com.elix22.${MACOSX_BUNDLE_EXECUTABLE_NAME}";
 
-                // Home-screen label. Absent ⇒ the historical "{project} iOS App".
-                string bundleDisplayName = string.IsNullOrEmpty(iOSDisplayName)
+                // Home-screen label. Neither tag set ⇒ the historical "{project} iOS App".
+                string bundleDisplayName = string.IsNullOrEmpty(EffectiveDisplayName)
                     ? $"{sanitizedProjectName} iOS App"
-                    : iOSDisplayName;
+                    : EffectiveDisplayName;
 
                 content = content.Replace("TEMPLATE_BUNDLE_DISPLAY_NAME", bundleDisplayName);
                 content = content.Replace("TEMPLATE_BUNDLE_ID", cmakeBundleId);
@@ -610,9 +621,9 @@ namespace SokolApplicationBuilder
                     // CFBundleDisplayName is what iOS actually shows under the icon; it only appears
                     // when <IOSDisplayName> is set, so an unset project keeps the exact plist it had.
                     plistContent = plistContent.Replace("@TEMPLATE_IOS_DISPLAY_NAME@",
-                        string.IsNullOrEmpty(iOSDisplayName)
+                        string.IsNullOrEmpty(EffectiveDisplayName)
                             ? ""
-                            : $"\n    <key>CFBundleDisplayName</key>\n    <string>{System.Security.SecurityElement.Escape(iOSDisplayName)}</string>");
+                            : $"\n    <key>CFBundleDisplayName</key>\n    <string>{System.Security.SecurityElement.Escape(EffectiveDisplayName)}</string>");
                     plistContent = plistContent.Replace("TEMPLATE_PROJECT_NAME", sanitizedProjectName);
                     plistContent = plistContent.Replace("TEMPLATE_IOS_MIN_VERSION", iOSMinVersion);
                     plistContent = plistContent.Replace("@TEMPLATE_IOS_ORIENTATIONS_PLIST@", iosOrientationsPlist);
