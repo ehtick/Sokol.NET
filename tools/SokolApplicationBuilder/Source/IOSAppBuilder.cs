@@ -1743,6 +1743,18 @@ namespace SokolApplicationBuilder
                 return;
             }
 
+            // IOSIcon may point at a pre-made .appiconset DIRECTORY (or a folder containing one) instead of a
+            // single PNG. It is copied VERBATIM, Contents.json included: a generated set already has the exact
+            // idiom/scale/size metadata Apple expects, and the marketing 1024 is flattened opaque (no alpha),
+            // which App Store validation requires and a naive resize of an alpha PNG would violate.
+            // ⛔ Backwards compatibility: a FILE keeps the original resize+generate-Contents.json path below.
+            string? sourceIconSet = FindAppIconSetDirectory(iOSIcon, projectDir);
+            if (sourceIconSet != null)
+            {
+                CopyIOSAppIconSet(sourceIconSet, iosDir);
+                return;
+            }
+
             // Find the icon file
             string sourceIconPath = FindIconFile(iOSIcon, projectDir);
             if (string.IsNullOrEmpty(sourceIconPath) || !File.Exists(sourceIconPath))
@@ -1835,6 +1847,62 @@ namespace SokolApplicationBuilder
             catch (Exception ex)
             {
                 Log.LogWarning($"⚠️  Failed to process iOS icon: {ex.Message}");
+            }
+        }
+
+        /// <summary>Resolve <paramref name="iconPath"/> to a pre-made <c>*.appiconset</c> directory, using the
+        /// same search order as <see cref="FindIconFile"/> (absolute → Assets/ → project-relative). Accepts
+        /// either the .appiconset itself or a parent folder containing exactly one, so both
+        /// <c>docs/branding/icons/ios</c> and <c>docs/branding/icons/ios/AppIcon.appiconset</c> work.
+        /// Returns null when it is not a directory — which is what keeps the single-PNG path the default.</summary>
+        private string? FindAppIconSetDirectory(string iconPath, string projectDir)
+        {
+            string? dir = null;
+            if (Path.IsPathRooted(iconPath) && Directory.Exists(iconPath)) dir = iconPath;
+            else if (Directory.Exists(Path.Combine(projectDir, "Assets", iconPath))) dir = Path.Combine(projectDir, "Assets", iconPath);
+            else if (Directory.Exists(Path.Combine(projectDir, iconPath))) dir = Path.Combine(projectDir, iconPath);
+            if (dir == null) return null;
+
+            if (dir.EndsWith(".appiconset", StringComparison.OrdinalIgnoreCase)) return dir;
+
+            var nested = Directory.GetDirectories(dir, "*.appiconset");
+            if (nested.Length == 1) return nested[0];
+            if (nested.Length > 1)
+            {
+                Log.LogWarning($"⚠️  '{dir}' contains {nested.Length} .appiconset folders — point IOSIcon at the one you want");
+                return null;
+            }
+            Log.LogWarning($"⚠️  iOS icon directory '{dir}' contains no .appiconset — ignoring");
+            return null;
+        }
+
+        /// <summary>Copy a pre-made asset-catalog icon set into <c>Assets.xcassets/AppIcon.appiconset</c>,
+        /// Contents.json and all. The destination is cleared first so a stale icon from a previous build (or
+        /// from the single-PNG path, whose filenames differ) can never survive and get picked up by Xcode.</summary>
+        private void CopyIOSAppIconSet(string setDir, string iosDir)
+        {
+            Log.LogMessage(MessageImportance.High, $"📱 Processing iOS icon SET: {setDir}");
+            try
+            {
+                string appIconDir = Path.Combine(iosDir, "Assets.xcassets", "AppIcon.appiconset");
+                if (Directory.Exists(appIconDir)) Directory.Delete(appIconDir, recursive: true);
+                Directory.CreateDirectory(appIconDir);
+
+                int files = 0;
+                foreach (string src in Directory.GetFiles(setDir))
+                {
+                    File.Copy(src, Path.Combine(appIconDir, Path.GetFileName(src)), overwrite: true);
+                    files++;
+                }
+
+                if (!File.Exists(Path.Combine(appIconDir, "Contents.json")))
+                    Log.LogWarning("⚠️  The copied icon set has no Contents.json — Xcode will not build an AppIcon from it");
+
+                Log.LogMessage(MessageImportance.High, $"✅ iOS icon set copied verbatim ({files} file(s), Contents.json included)");
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning($"⚠️  Failed to copy iOS icon set: {ex.Message}");
             }
         }
 

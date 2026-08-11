@@ -261,6 +261,49 @@ The build system searches for the icon file in the following order:
 <!-- Result: /Users/username/icons/myicon.png -->
 ```
 
+## Pre-made icon SETS (a directory instead of a single PNG)
+
+`AndroidIcon` and `IOSIcon` also accept a **directory**, which is copied **verbatim** instead of being
+re-rendered. Use this when you already generate a full icon set (adaptive icons, an `.appiconset`) from
+a vector source — re-rendering could only degrade it.
+
+The same three resolution rules apply (absolute → `Assets/` → project-relative), so the two forms are
+interchangeable. **A file keeps the original behaviour exactly** — existing projects are unaffected.
+
+```xml
+<AndroidIcon>docs/branding/icons/android</AndroidIcon>   <!-- a directory -> copied verbatim -->
+<IOSIcon>docs/branding/icons/ios</IOSIcon>               <!-- .appiconset, or a folder holding one -->
+```
+
+### Android set layout
+Every `mipmap-*` / `drawable-*` folder is copied into `app/src/main/res/`:
+
+```
+android/
+  mipmap-anydpi-v26/  ic_launcher.xml, ic_launcher_round.xml   <- adaptive icon (API 26+)
+  mipmap-{m,h,x,xx,xxx}dpi/
+      ic_launcher.png              legacy square icon (48dp canvas)
+      ic_launcher_foreground.png   adaptive foreground (108dp canvas)
+      ic_launcher_background.png   adaptive background (108dp canvas)
+```
+Loose files at the set root (e.g. `playstore-icon-512.png`, a README) are **not** copied — a Play
+Console listing icon is uploaded separately and would only bloat the APK.
+
+`android:roundIcon` is added to the manifest **only** when the set actually provides an
+`ic_launcher_round` resource; the single-PNG path never produces one, and referencing a missing mipmap
+fails the resource link.
+
+> ⛔ **The adaptive FOREGROUND must be transparent apart from the art.** If it is exported opaque (white
+> padding baked in) it completely covers the `<background>` layer, and every launcher shows a white icon
+> no matter what colour the background PNG is. Keep the art inside the ~66dp safe zone of the 108dp
+> canvas so circle/squircle masks cannot clip it.
+
+### iOS set layout
+Point `IOSIcon` at an `*.appiconset` (or a folder containing exactly one). It is copied to
+`Assets.xcassets/AppIcon.appiconset` with its own `Contents.json`, and the destination is cleared first
+so a stale icon from a previous build cannot survive. The marketing 1024 icon must be **opaque** (no
+alpha) or App Store validation rejects it.
+
 ## Build Output
 
 When building with icon support, you'll see output like this:

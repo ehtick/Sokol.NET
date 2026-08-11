@@ -813,6 +813,19 @@ namespace SokolApplicationBuilder
                 return;
             }
 
+            // AndroidIcon may point at a pre-made ICON SET DIRECTORY (adaptive icons, per-density layers,
+            // a round icon) instead of a single PNG. A directory is copied VERBATIM — a generated set is
+            // already density-correct and its foreground art is pre-scaled into the adaptive safe zone, so
+            // re-rendering it here could only make it worse.
+            // ⛔ Backwards compatibility: a FILE keeps the original resize-into-every-density behaviour
+            // below, unchanged. Only a directory takes the new path, so existing projects are untouched.
+            string? sourceIconDir = FindIconDirectory(iconPath);
+            if (sourceIconDir != null)
+            {
+                CopyAndroidIconSet(sourceIconDir, androidPath);
+                return;
+            }
+
             // Find the icon file
             string sourceIconPath = FindIconFile(iconPath);
             if (string.IsNullOrEmpty(sourceIconPath) || !File.Exists(sourceIconPath))
@@ -857,6 +870,97 @@ namespace SokolApplicationBuilder
             {
                 Log.LogWarning($"⚠️  Failed to process Android icon: {ex.Message}");
             }
+        }
+
+        /// <summary>Resolve <paramref name="iconPath"/> as a pre-made icon-set DIRECTORY, using exactly the
+        /// same search order as <see cref="FindIconFile"/> (absolute → Assets/ → project-relative) so the two
+        /// forms are interchangeable in Directory.Build.props. Returns null when it is not a directory, which
+        /// is what keeps the single-PNG path the default.</summary>
+        string? FindIconDirectory(string iconPath)
+        {
+            if (Path.IsPathRooted(iconPath) && Directory.Exists(iconPath)) return iconPath;
+
+            string assetsPath = Path.Combine(opts.ProjectPath, "Assets", iconPath);
+            if (Directory.Exists(assetsPath)) return assetsPath;
+
+            string relativePath = Path.Combine(opts.ProjectPath, iconPath);
+            if (Directory.Exists(relativePath)) return relativePath;
+
+            return null;
+        }
+
+        /// <summary>Copy a pre-made Android icon set into <c>app/src/main/res/</c> verbatim: every resource
+        /// directory it contains (<c>mipmap-*</c>, including <c>mipmap-anydpi-v26</c> adaptive XML, and any
+        /// <c>drawable-*</c>). Loose files at the set's root (e.g. <c>playstore-icon-512.png</c>, a README) are
+        /// deliberately NOT copied — a Play Console listing icon is uploaded separately and putting a 512px
+        /// PNG in res/ would only bloat the APK.</summary>
+        void CopyAndroidIconSet(string setDir, string androidPath)
+        {
+            Log.LogMessage(MessageImportance.High, $"📱 Processing Android icon SET: {setDir}");
+            try
+            {
+                string resRoot = Path.Combine(androidPath, "app", "src", "main", "res");
+                int dirs = 0, files = 0;
+
+                foreach (string srcDir in Directory.GetDirectories(setDir))
+                {
+                    string name = Path.GetFileName(srcDir);
+                    // Only real resource directories — anything else is documentation/marketing art.
+                    if (!name.StartsWith("mipmap", StringComparison.OrdinalIgnoreCase) &&
+                        !name.StartsWith("drawable", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Log.LogMessage(MessageImportance.Normal, $"   ↷ skipped non-resource folder: {name}");
+                        continue;
+                    }
+
+                    string destDir = Path.Combine(resRoot, name);
+                    Directory.CreateDirectory(destDir);
+                    foreach (string src in Directory.GetFiles(srcDir))
+                    {
+                        File.Copy(src, Path.Combine(destDir, Path.GetFileName(src)), overwrite: true);
+                        files++;
+                    }
+                    dirs++;
+                    Log.LogMessage(MessageImportance.Normal, $"   ✅ {name}/ ({Directory.GetFiles(srcDir).Length} file(s))");
+                }
+
+                if (dirs == 0)
+                {
+                    Log.LogWarning($"⚠️  Android icon set '{setDir}' contains no mipmap-*/drawable-* folders — nothing copied");
+                    return;
+                }
+
+                Log.LogMessage(MessageImportance.High,
+                    $"✅ Android icon set copied: {dirs} resource folder(s), {files} file(s)" +
+                    (AndroidIconSetHasRound(setDir) ? " (round icon present → android:roundIcon)" : ""));
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning($"⚠️  Failed to copy Android icon set: {ex.Message}");
+            }
+        }
+
+        /// <summary>True when an icon-set directory provides an <c>ic_launcher_round</c> resource, so the
+        /// manifest can reference <c>android:roundIcon</c>. ⛔ Referencing it unconditionally would break every
+        /// project on the single-PNG path, which never produces one.</summary>
+        static bool AndroidIconSetHasRound(string setDir)
+        {
+            try
+            {
+                return Directory.EnumerateFiles(setDir, "ic_launcher_round.*", SearchOption.AllDirectories).Any();
+            }
+            catch { return false; }
+        }
+
+        /// <summary>Does the configured AndroidIcon resolve to a set that carries a round icon? Resolved from
+        /// the property (not from build state) because the manifest is generated BEFORE ProcessAndroidIcon
+        /// runs — both happen inside CopyAndroidTemplate, manifest first.</summary>
+        bool ConfiguredAndroidIconHasRound(Dictionary<string, string> androidProperties)
+        {
+            if (!androidProperties.TryGetValue("AndroidIcon", out string? iconPath) || string.IsNullOrWhiteSpace(iconPath))
+                return false;
+            string? dir = FindIconDirectory(iconPath);
+            return dir != null && AndroidIconSetHasRound(dir);
         }
 
         string FindIconFile(string iconPath)
@@ -2631,6 +2735,11 @@ KeyAlias={keystoreInfo.KeyAlias}
             manifest.AppendLine($"      android:allowBackup=\"{allowBackup.ToString().ToLower()}\"");
             manifest.AppendLine($"      android:fullBackupContent=\"{fullBackupContent.ToString().ToLower()}\"");
             manifest.AppendLine($"      android:icon=\"@mipmap/ic_launcher\"");
+            // ⛔ Only when the configured icon SET actually ships ic_launcher_round. The single-PNG path never
+            // produces one, and referencing a missing mipmap fails the resource link — so this must stay
+            // conditional, not unconditional.
+            if (ConfiguredAndroidIconHasRound(androidProperties))
+                manifest.AppendLine($"      android:roundIcon=\"@mipmap/ic_launcher_round\"");
             manifest.AppendLine($"      android:label=\"{appName}\"");
             manifest.AppendLine($"      android:hasCode=\"{hasCode.ToString().ToLower()}\"");
             
