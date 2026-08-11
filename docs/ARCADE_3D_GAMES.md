@@ -1,7 +1,7 @@
 # Bowling 3D + Darts 3D — Arcade Games on Render3D + Physics3D (Design + Plan)
 
 > **Status:** DESIGN — ready for milestone implementation once `docs/RENDER3D.md` + `docs/PHYSICS3D.md` are approved.
-> **Created:** 2026-06-19 · **Owner:** Sokol.NET / JamboreeArcade
+> **Created:** 2026-06-19 · **Owner:** Sokol.NET
 > **Resolves:** `docs/RENDER3D_PHYSICS3D_KICKOFF.md` §5 **D6** (first proving ground).
 > **Depends on:** `docs/RENDER3D.md` (`Render3DSurface`, primitives, camera, shadow) ·
 > `docs/PHYSICS3D.md` (`PhysicsWorld3`, `Body3`, `Det3`, `DeterminismProbe3D`).
@@ -10,7 +10,7 @@
 
 ## 1. What these are
 
-Two **new** JamboreeArcade games — the "2 additional games" — built as siblings of the existing 2D
+Two **new** the reference app games — the "2 additional games" — built as siblings of the existing 2D
 `BowlingGame`/`DartsGame`, but presented in **3D** on the new framework:
 
 | Existing (2D, shipped) | New (3D, this doc) | Engine used |
@@ -114,7 +114,7 @@ Identical to Darts 2D — integer-only, **always fleet-safe** (no probe gate).
 
 ## 5. Compositing & frame order (per game)
 
-The app loop already drives this (`JamboreeArcade-app.cs:123-149`) for any screen exposing an SG underlay:
+The app loop already drives this (`<app>-app.cs:123-149`) for any screen exposing an SG underlay:
 ```
 view.RenderOffscreen(w,h)   // 3D: shadow pass → scene pass → resolve (its own sg passes)
 begin swapchain pass

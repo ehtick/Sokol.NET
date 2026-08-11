@@ -13,7 +13,7 @@
 | # | Decision | Resolution |
 |---|---|---|
 | **D1** | Render3D origin | **Lean clean-room renderer**, mirroring `src/Render2D`. *Not* an extraction of the GameEditor RenderingServer (`src/Framework/Renderer/Server` — PBR/IBL/CSM/skinning/glTF, editor + ECS coupled). The arcade games need a tiny subset; a small renderer is cheaper to build and to verify on six platforms, and stays decoupled. RenderingServer remains the heavyweight path; Render3D may borrow individual pieces (e.g. the Render2D bloom post) later. |
-| **D2** | Home / packaging | **Example-local first.** Build under `examples/JamboreeArcade/Source/Render3D/` exactly as `Physics2D` lives in the example today, iterate against real devices, **then promote** to a standalone `src/Render3D/` (`Sokol.Render3D`, AOT, hosting the all-platform `sokol-shdc` targets — modelled on `src/Render2D/Render2D.csproj`). |
+| **D2** | Home / packaging | **Example-local first.** Build under `examples/<app>/Source/Render3D/` exactly as `Physics2D` lives in the example today, iterate against real devices, **then promote** to a standalone `src/Render3D/` (`Sokol.Render3D`, AOT, hosting the all-platform `sokol-shdc` targets — modelled on `src/Render2D/Render2D.csproj`). |
 | **D5** | Sim ⇄ render coupling | **Standalone, not ECS.** The game reads each `Body3`'s position + orientation each frame and feeds a draw-list. No Frent/ECS dependency (the editor's path); mirrors how the 2D arcade views read `PhysicsWorld` bodies. |
 
 ---
@@ -21,7 +21,7 @@
 ## 1. Goals & non-goals
 
 ### Goals (MVP)
-- A reusable GPU 3D **scene renderer** any JamboreeArcade game (and, post-promotion, any example) can consume — the 3D analogue of `Render2DSurface`.
+- A reusable GPU 3D **scene renderer** any the reference app game (and, post-promotion, any example) can consume — the 3D analogue of `Render2DSurface`.
 - **Primitive mesh library** — UV sphere, box, capsule, cylinder, plane/quad, cone — built procedurally on the CPU and uploaded once. (Bowling = sphere ball + capsule pins + box lane/walls; Darts = disk board + cone darts.)
 - A **perspective camera**, **one directional light** (Lambert + ambient + Blinn–Phong specular), and **one directional shadow map** (PCF).
 - **Instanced draw** for repeated meshes (10 identical pins) + immediate per-mesh draw for one-offs.
@@ -40,7 +40,7 @@
 ## 2. Placement & naming
 
 ```
-examples/JamboreeArcade/Source/Render3D/        ← lives here FIRST (D2)
+examples/<app>/Source/Render3D/        ← lives here FIRST (D2)
   Render3DSurface.cs        ← the workhorse (offscreen 3D pass + shadow pass + blit)
   IRender3DUnderlay.cs      ← compositing contract (or reuse the shared SG-underlay; see §5)
   Camera3D.cs               ← view+proj, orbit/look-at, screen→world ray (aim/picking)
@@ -58,7 +58,7 @@ examples/JamboreeArcade/Source/Render3D/        ← lives here FIRST (D2)
 
 **Shader compile (example-local):** add `sokol-shdc` targets mirroring `src/Render2D/Render2D.csproj`
 (one call per shader, `--slang glsl430:hlsl5:metal_macos:metal_ios:glsl300es --reflection -f sokol_csharp`,
-umbrella `CompileShaders` target). House them in `examples/JamboreeArcade/Source/Render3D/Render3D.targets`
+umbrella `CompileShaders` target). House them in `examples/<app>/Source/Render3D/Render3D.targets`
 imported by the example's `Directory.Build.props`, or inline in the example csproj.
 
 **On promotion (D2):** `src/Render3D/Render3D.csproj` (`AssemblyName Sokol.Render3D`, `PublishAot`, references
@@ -70,7 +70,7 @@ move into it unchanged.
 ## 3. The compositing contract (the crux — reuse, don't reinvent)
 
 The app frame loop already drives an **SG underlay** for every Render2D game
-(`examples/JamboreeArcade/Source/JamboreeArcade-app.cs:123-149`):
+(`examples/<app>/Source/<app>-app.cs:123-149`):
 
 ```
 underlay = _current?.Underlay;          // IRender2DUnderlay? on the active screen
@@ -236,6 +236,6 @@ is fitted to a caller-supplied world AABB (the lane / the board) so the single m
 - `docs/RENDER2D.md` §5 (Strategy C compositing) — the underlay model reused verbatim.
 - `src/Framework/Renderer/Server/` (RenderingServer) — the heavyweight 3D renderer NOT used here; reference for
   backend-specific shadow/NDC/depth handling and the offscreen→blit-under-NanoVG precedent.
-- `examples/JamboreeArcade/Source/Arcade/PrismRush/Rendering/` (`ISceneRenderer`/`SgSceneRenderer`) — a tiny
+- `examples/<app>/Source/Arcade/PrismRush/Rendering/` (`ISceneRenderer`/`SgSceneRenderer`) — a tiny
   precedent for an SG render path behind an interface.
-- `examples/JamboreeArcade/Source/JamboreeArcade-app.cs:123-149` — the live underlay drive loop.
+- `examples/<app>/Source/<app>-app.cs:123-149` — the live underlay drive loop.

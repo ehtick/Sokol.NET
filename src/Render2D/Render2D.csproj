@@ -4,7 +4,7 @@
     Sokol.Render2D — framework GPU 2D renderer + particle system (see docs/RENDER2D.md).
     Lean: depends only on the Sokol bindings (sokol.csproj) and the Sokol.GUI source (Renderer).
     Consumers normally pull these sources in via a Compile glob (like src/GUI), the same way
-    examples/JamboreeArcade does — this csproj exists to build/verify the component standalone and,
+    the examples do — this csproj exists to build/verify the component standalone and,
     from M1, to host the all-platform sokol-shdc shader-compile targets (modelled on Framework.csproj).
   -->
   <PropertyGroup>

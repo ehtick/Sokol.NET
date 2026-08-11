@@ -1319,7 +1319,7 @@ namespace SokolApplicationBuilder
             string configuration = (_optimizedHarness || buildType == "release") ? "Release" : "Debug";
 
             // Harden STORE release builds ONLY (plain `--type release`, i.e. the App Store / Play
-            // artifact) against reverse-engineering — see JamboreeArcade docs/UNLOCK_ANTI_PIRACY.md §5.2:
+            // artifact) against reverse-engineering:
             //   • StripSymbols — removes the ELF symbol table so the .so carries no linker symbols
             //                    (a disassembler gets no function labels; verified: no .symtab, 9 ABI exports).
             // We deliberately KEEP StackTraceSupport ON (do NOT set it false): NativeAOT's StackTraceMetadata

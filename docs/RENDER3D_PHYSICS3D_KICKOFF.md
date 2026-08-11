@@ -12,7 +12,7 @@
 >
 > ### §5 decisions resolved
 > - **D1** Render3D origin → **lean clean-room** (mirror `src/Render2D`), not a RenderingServer extraction.
-> - **D2** Home/packaging → **example-local first** (`examples/JamboreeArcade/Source/{Render3D,Physics3D}/`, like
+> - **D2** Home/packaging → **example-local first** (`examples/<app>/Source/{Render3D,Physics3D}/`, like
 >   `Physics2D`), promote to `src/Render3D` + `src/Physics3D` once device-proven.
 > - **D3** Physics MVP → **full deterministic rigid-body** (sphere+capsule dynamic, box/plane static, real angular
 >   toppling), with simplified-pin + active-auth fallbacks documented (`PHYSICS3D.md §9`).
@@ -40,7 +40,7 @@ Build **two reusable Sokol.NET framework components**, the 3D analogues of the e
 - **`Sokol.Render3D`** — a reusable GPU 3D scene renderer (meshes, materials, lights, cameras, shadows)
   any app/example can consume. The 3D counterpart of `Sokol.Render2D`.
 - **A custom *deterministic* 3D rigid-body physics engine** — bit-identical results across every platform,
-  the 3D counterpart of `examples/JamboreeArcade/Source/Physics2D/` + `Det.cs`.
+  the 3D counterpart of `examples/<app>/Source/Physics2D/` + `Det.cs`.
 
 **Why custom & deterministic (not Jolt):** the repo already ships Jolt (`src/JoltPhysicsSharp`,
 `ext/JoltPhysics`, `examples/JoltPhysics*`), but Jolt is **not** bit-deterministic across architectures.
@@ -79,12 +79,12 @@ property into rigid-body dynamics. Jolt stays as the *non-deterministic* fallbac
 | What | Where | Why it matters |
 |---|---|---|
 | **Sokol.Render2D** framework component | `src/Render2D/` (`Render2D.csproj`, `Renderer/Render2DSurface.cs`, `Particles/`) | The **template** for a new `src/Render3D/`: `AssemblyName Sokol.Render2D`, AOT, hosts the all-platform `sokol-shdc` compile targets. Mirror its csproj + layout. |
-| **Deterministic 2D physics** | `examples/JamboreeArcade/Source/Physics2D/` (`Aabb`, `Shapes`, `Body`, `Collision`, `PhysicsWorld`) | The engine to mirror in 3D. Pure `+−×÷√`, sequential over stable body order. |
+| **Deterministic 2D physics** | `examples/<app>/Source/Physics2D/` (`Aabb`, `Shapes`, `Body`, `Collision`, `PhysicsWorld`) | The engine to mirror in 3D. Pure `+−×÷√`, sequential over stable body order. |
 | **Determinism toolkit** | `Physics2D/Det.cs` (polynomial sin/cos on integer deci-degrees + `DetRng` xorshift), `Physics2D/DeterminismProbe.cs` (canonical scenario → FNV-1a golden) | The exact recipe + the proof harness; extend both to 3D. |
 | **Existing 3D renderer + its plan** | `examples/GameEditor/` RenderingServer; `examples/GameEditor/docs/RENDERING_SERVER_IMPLEMENTATION_PLAN.md` (+ M1–M3 reviews) | **Primary reference.** Reuse its doc *structure* (Goals/Non-Goals, Reference Impls, Architecture: threading / GC / Sokol thread-safety / resource lifetimes, Milestones). |
 | **Existing framework seams** | `src/Framework/` already has `Physics/`, `Renderer/`, `Scene/`, `ECS/` | Decide (§5 **D2**) whether 3D lives here or as standalone `Sokol.Render3D`/`Sokol.Physics3D`. |
 | **Jolt bindings** | `src/JoltPhysicsSharp/`, `ext/JoltPhysics/`, `examples/JoltPhysics*`, `docs/JOLT_*.md` | API-shape reference + the *non-deterministic* fallback. NOT the deterministic engine. |
-| **SG render-path abstraction (small)** | `examples/JamboreeArcade/Source/Arcade/PrismRush/Rendering/` (`ISceneRenderer`, `SgSceneRenderer`, `GuiSceneRenderer`) | A lightweight example of an SG render path + a GUI fallback. |
+| **SG render-path abstraction (small)** | `examples/<app>/Source/Arcade/PrismRush/Rendering/` (`ISceneRenderer`, `SgSceneRenderer`, `GuiSceneRenderer`) | A lightweight example of an SG render path + a GUI fallback. |
 
 ---
 
@@ -117,7 +117,7 @@ property into rigid-body dynamics. Jolt stays as the *non-deterministic* fallbac
   choice.)
 - **D5 — Physics ⇄ render coupling:** ECS-driven (Frent / `src/Framework/ECS`) or standalone, and how transforms
   sync between sim and renderer.
-- **D6 — First proving ground:** which app validates it — a JamboreeArcade 3D game, a GameEditor runtime path,
+- **D6 — First proving ground:** which app validates it — a reference-app 3D game, a GameEditor runtime path,
   or a fresh minimal sample?
 
 ---

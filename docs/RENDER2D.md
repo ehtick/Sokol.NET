@@ -4,15 +4,15 @@
 > system** (instanced, tens of thousands of particles, additive/glow) shipped as a **Sokol.NET
 > framework component** — not app-local. It is the optional high-throughput backend behind the
 > *same* `ISceneRenderer` / `IParticleRenderer` seams that already drive the default NanoVG path, so
-> any example can opt into it with **zero gameplay changes**. **Prism Rush** (JamboreeArcade) is the
+> any example can opt into it with **zero gameplay changes**. **Prism Rush** (an example app) is the
 > first consumer and the proving ground — its optional "M5" SG path, promoted here from app-local to a
 > framework unit so every Arcade game (and future framework users) can reuse it.
 >
 > This is the **blueprint** — placement, scope, API, the GPU particle/scene paths, the
 > **compositing** strategy (the real risk), the all-platform shader plan, and milestones. **No
 > production code is written by this document.** It builds on two already-signed-off specs — keep them
-> open: `examples/JamboreeArcade/docs/PARTICLE_SYSTEM.md` **§7.4** (the `SgParticleRenderer` sketch)
-> and `examples/JamboreeArcade/docs/PRISM_RUSH.md` **§8** (`GuiSceneRenderer` vs `SgSceneRenderer`).
+> open: `examples/<app>/docs/PARTICLE_SYSTEM.md` **§7.4** (the `SgParticleRenderer` sketch)
+> and `examples/<app>/docs/PRISM_RUSH.md` **§8** (`GuiSceneRenderer` vs `SgSceneRenderer`).
 > Read **§5 (Compositing)** before writing a line — it is where this design earns its keep.
 
 ---
@@ -65,7 +65,7 @@
 
 ## 2. Placement & naming — **new lean sibling `src/Render2D/`** (recommended)
 
-**Finding that drives this:** examples don't `ProjectReference` the framework DLL — JamboreeArcade
+**Finding that drives this:** examples don't `ProjectReference` the framework DLL — the reference app
 pulls framework code in as **source globs** (`src/GUI/**/*.cs`, `src/sokol/*.cs`) in its
 `Directory.Build.props`. The existing `src/Framework` assembly (`GameEditor.Framework`) also drags in
 **JoltPhysics, Frent ECS, and the whole 3D `RenderingServer`** — a heavy, wrong dependency for a 2D
@@ -76,7 +76,7 @@ party-game app.
 `src/sokol` + `src/GUI`. It is:
 - a real `Render2D.csproj` (Library, `PublishAot`) that **owns the all-platform shader-compile MSBuild
   targets** (copied from `Framework.csproj`'s proven pattern — §7) and can build/verify standalone; and
-- a **source tree apps glob in** exactly like `src/GUI` — e.g. JamboreeArcade adds
+- a **source tree apps glob in** exactly like `src/GUI` — e.g. the reference app adds
   `<Compile Include="../../src/Render2D/**/*.cs">` to its `Directory.Build.props`. The committed,
   all-platform generated shader `.cs` files come along in the glob, so a consumer needs **no shader
   build of its own** for these shaders.
@@ -102,7 +102,7 @@ one implementation rather than the renderer consuming an app-local sim.
   `Affectors`, `ParticlePresets`, `ParticleTextureCache`, `ParticleLayer`.
 - Renderer seam: `IParticleRenderer`, `GuiParticleRenderer` (default, unchanged), **`SgParticleRenderer`** (new).
 - Scene seam: a generalized **`IRender2D`** scene interface + **`GuiSceneRenderer`** (NanoVG) +
-  **`SgSceneRenderer`** (new). Today's `JamboreeArcade.PrismRush.Rendering.ISceneRenderer` becomes a
+  **`SgSceneRenderer`** (new). Today's `<app>.PrismRush.Rendering.ISceneRenderer` becomes a
   thin adapter over (or is migrated to) the framework `IRender2D`.
 
 **Stays app-side (gameplay-specific):**
@@ -112,13 +112,13 @@ one implementation rather than the renderer consuming an app-local sim.
   PrismRush `Aabb` stays in `Physics2D` and is converted at the call boundary.
 
 **Refactor plan (surgical):**
-1. `git mv` the particle files `examples/JamboreeArcade/Source/Particles/**` → `src/Render2D/Particles/**`,
-   change namespace `JamboreeArcade.Particles` → `Sokol.Render2D.Particles`.
-2. Repoint JamboreeArcade: drop the old `Source/Particles` from its compile set, add the
+1. `git mv` the particle files `examples/<app>/Source/Particles/**` → `src/Render2D/Particles/**`,
+   change namespace `<app>.Particles` → `Sokol.Render2D.Particles`.
+2. Repoint the reference app: drop the old `Source/Particles` from its compile set, add the
    `src/Render2D/**` glob, fix `using` namespaces (mechanical).
 3. Generalize `ISceneRenderer` → `Sokol.Render2D.IRender2D` (screen-space primitives + a `Camera2D`
    seam); keep a `PrismRush` adapter so `PrismRushView` is untouched beyond the `using`.
-4. Verify JamboreeArcade still builds & runs **identically on NanoVG** (no behaviour change) **before**
+4. Verify the reference app still builds & runs **identically on NanoVG** (no behaviour change) **before**
    adding any SG code. This is the de-risking checkpoint: promotion must be a no-op for the default path.
 
 > **Decision to confirm (D2).** Promote the **whole** particle module (recommended — one shared
@@ -157,7 +157,7 @@ frame composites *beneath* the NanoVG HUD/chrome.
 
 ### 5.1 The constraint
 
-The JamboreeArcade frame (`JamboreeArcade-app.cs`) draws **everything in one swapchain pass**:
+The reference app's frame (`<app>-app.cs`) draws **everything in one swapchain pass**:
 
 ```
 sg_begin_pass(swapchain, CLEAR)
@@ -350,7 +350,7 @@ toggle (NanoVG default; SG when opted in) — gameplay code never names sokol_gf
 Per [[feedback_rendering_server_milestone_order]] discipline — fixed order, verify each before the next.
 
 - **M0 — Promote & no-op.** Move the particle module + scene seam into `src/Render2D/` (§3),
-  generalize `IRender2D`, repoint JamboreeArcade. **Verify:** JamboreeArcade builds and Prism Rush +
+  generalize `IRender2D`, repoint the reference app. **Verify:** the reference app builds and Prism Rush +
   every particle effect look **identical on NanoVG** on macOS + one device. *No SG code yet.* (This is
   the safety checkpoint: promotion must change nothing.)
 - **M1 — Compositing skeleton.** `Render2DSurface` + offscreen RT + blit pipeline + the `IAppScreen.Underlay`
@@ -414,7 +414,7 @@ low-end Android (Mali-G52) for the particle budget.
   pass). So a consumer can **override/extend** the presets by shipping its own asset at the same path,
   while an app that ships **no** asset folder still gets the built-in sprites. Verified two ways on
   desktop: (a) deleting the app's `Assets/particles/` entirely → gallery still renders from the baked-in
-  set; (b) restoring them → app loads its own copies again. JamboreeArcade keeps its own
+  set; (b) restoring them → app loads its own copies again. the reference app keeps its own
   `Assets/particles/`; the baked-in set exists for future consumers.
 - **Biggest technical unknown (retire early):** the Strategy-C compositing must be proven on **GLES3 +
   WebGL2** in **M1** — that's where Metal/desktop assumptions silently break (CLAUDE.md). M1 exists
@@ -424,9 +424,9 @@ low-end Android (Mali-G52) for the particle budget.
 
 ## 12. References (concepts/precedents in this repo — no code copied)
 
-- `examples/JamboreeArcade/docs/PARTICLE_SYSTEM.md` §7.3/§7.4 — the sim/renderer split + the
+- `examples/<app>/docs/PARTICLE_SYSTEM.md` §7.3/§7.4 — the sim/renderer split + the
   `SgParticleRenderer` sketch this realizes.
-- `examples/JamboreeArcade/docs/PRISM_RUSH.md` §8 — `GuiSceneRenderer` vs `SgSceneRenderer` tradeoffs +
+- `examples/<app>/docs/PRISM_RUSH.md` §8 — `GuiSceneRenderer` vs `SgSceneRenderer` tradeoffs +
   the M5 decision this promotes.
 - `examples/GameEditor` `GameEditor-app.cs` + `RenderingServer` — the offscreen-then-composite
   precedent for running SG under the GUI in one frame.

@@ -4,7 +4,7 @@
 > **Created:** 2026-06-19 · **Owner:** Sokol.NET
 > **Resolves:** `docs/RENDER3D_PHYSICS3D_KICKOFF.md` §5 **D3/D4/D5** for the physics workstream.
 > **Siblings:** `docs/RENDER3D.md` (the renderer) · `docs/ARCADE_3D_GAMES.md` (Bowling 3D + Darts 3D).
-> **Template:** `examples/JamboreeArcade/Source/Physics2D/` (`Det.cs`, `PhysicsWorld.cs`, `Body.cs`,
+> **Template:** `examples/<app>/Source/Physics2D/` (`Det.cs`, `PhysicsWorld.cs`, `Body.cs`,
 > `Shapes.cs`, `Collision.cs`, `DeterminismProbe.cs`) — the 2D engine this is the 3D analogue of.
 
 ---
@@ -17,7 +17,7 @@
 | **D4** | Determinism from day 1 | **Yes.** These are BLE input-replay arcade games (`ArcadeGame`/`ShotInput`): a turn re-simulates from a compact integer packet on every device and must be **bit-identical** on arm64/x64/wasm × Metal/GLES3/WebGL2/D3D11. Determinism is the *reason* this is custom and not Jolt. Every math choice below is made for it. |
 | **D5** | Sim ⇄ render coupling | **Standalone, not ECS.** The game owns the `PhysicsWorld3` + bodies, steps it at a fixed rate, and reads each body's `Position`+`Orientation` for the renderer. Mirrors the 2D arcade games. |
 
-**Packaging (D2):** built **example-local first** at `examples/JamboreeArcade/Source/Physics3D/` (exactly where
+**Packaging (D2):** built **example-local first** at `examples/<app>/Source/Physics3D/` (exactly where
 `Physics2D` lives), promoted to `src/Physics3D/` (`Sokol.Physics3D`) once device-proven.
 
 ---
@@ -182,7 +182,7 @@ Self-contained (engine + `Det3` + `System.Numerics` only) so it runs headless **
 ## 7. Net integration (reuse `ShotInput` exactly)
 
 No new wire format. `Physics3D` plugs into the existing `ArcadeGame`/`ShotInput` input-replay path
-(`examples/JamboreeArcade/Source/Net/ArcadeGame.cs`):
+(`examples/<app>/Source/Net/ArcadeGame.cs`):
 - **Bowling 3D:** `AimDeci` = lane direction, `Power` = release speed, `Spin` = optional hook (a deterministic
   lateral/angular kick at release), `Seed` = unused/lane jitter. Both peers `Fire` the same packet and `Advance`
   the same `PhysicsWorld3` → identical pin layout.
@@ -231,10 +231,10 @@ a SIMD lowering surprise), that **game** degrades gracefully rather than the eng
 
 ## 10. References (precedents mirrored, no code copied)
 
-- `examples/JamboreeArcade/Source/Physics2D/` — `Det.cs` (polynomial trig + `DetRng`), `PhysicsWorld.cs`
+- `examples/<app>/Source/Physics2D/` — `Det.cs` (polynomial trig + `DetRng`), `PhysicsWorld.cs`
   (fixed-order `ResolveCircles` impulse solver), `Body.cs`/`Shapes.cs`/`Collision.cs`, `DeterminismProbe.cs`
   (the exact golden-harness recipe extended here).
-- `examples/JamboreeArcade/Source/Net/ArcadeGame.cs` — `ArcadeGame`/`ShotInput` input-replay model reused unchanged.
+- `examples/<app>/Source/Net/ArcadeGame.cs` — `ArcadeGame`/`ShotInput` input-replay model reused unchanged.
 - `docs/RENDER3D_PHYSICS3D_KICKOFF.md` §2b/§4/§5 — the determinism constraints and the open decisions resolved here.
 - Ericson, *Real-Time Collision Detection* — closest-point routines (segment–segment, point–OBB) used in §4.3
   (algorithms only; implemented fresh with the determinism rules).

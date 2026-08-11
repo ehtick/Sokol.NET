@@ -57,6 +57,12 @@ namespace SokolApplicationBuilder
         
         // iOS properties from Directory.Build.props
         private string iOSBundlePrefix = "com.elix22";
+        // Optional <IOSBundleName>: when set, the bundle identifier becomes
+        // "{IOSBundlePrefix}.{IOSBundleName}" instead of the default (which is derived from the
+        // Xcode target's executable name). This decouples the bundle id from the "-ios-app"
+        // executable name. When it is EMPTY the default below is used verbatim, so projects that
+        // do not set the tag build byte-identically to before.
+        private string iOSBundleName = string.Empty;
         private string iOSMinVersion = "14.0";
         private string iOSScreenOrientation = "both";
         private bool iOSRequiresFullScreen = false;
@@ -456,6 +462,14 @@ namespace SokolApplicationBuilder
 
                 // Replace placeholders in Info.plist
                 string content = File.ReadAllText(infoPlistDest);
+                // The embedded framework's id must DIFFER from the app's, or installd rejects the whole
+                // bundle ("parent bundle has the same identifier as sub-bundle"). Without <IOSBundleName>
+                // they can't collide — the app carries the "-ios-app" suffix — so the default is left
+                // exactly as it was. With the gate on, the app id is {prefix}.{name} and this template
+                // would produce that same string, so the framework takes a ".framework" suffix.
+                if (!string.IsNullOrEmpty(iOSBundleName))
+                    content = content.Replace("TEMPLATE_BUNDLE_PREFIX.TEMPLATE_PROJECT_NAME",
+                                              $"{iOSBundlePrefix}.{iOSBundleName}.framework");
                 content = content.Replace("TEMPLATE_PROJECT_NAME", sanitizedProjectName);
                 content = content.Replace("TEMPLATE_BUNDLE_PREFIX", iOSBundlePrefix);
                 File.WriteAllText(infoPlistDest, content);
@@ -485,6 +499,21 @@ namespace SokolApplicationBuilder
                 // Replace placeholders
                 string content = File.ReadAllText(cmakeDest);
                 string sanitizedProjectName = projectName.Replace("_", "-");
+
+                // Bundle identifier. <IOSBundleName> is an opt-in override: with it the id is
+                // "{IOSBundlePrefix}.{IOSBundleName}", decoupled from the "-ios-app" executable
+                // name. Without it both files keep the exact value they had before — note those two
+                // defaults are NOT the same string (the plist's is the historical literal), so they
+                // are spelled out separately rather than shared.
+                bool hasBundleNameOverride = !string.IsNullOrEmpty(iOSBundleName);
+                string cmakeBundleId = hasBundleNameOverride
+                    ? $"{iOSBundlePrefix}.{iOSBundleName}"
+                    : $"{iOSBundlePrefix}.{sanitizedProjectName}-ios-app";
+                string plistBundleId = hasBundleNameOverride
+                    ? $"{iOSBundlePrefix}.{iOSBundleName}"
+                    : "com.elix22.${MACOSX_BUNDLE_EXECUTABLE_NAME}";
+
+                content = content.Replace("TEMPLATE_BUNDLE_ID", cmakeBundleId);
                 content = content.Replace("TEMPLATE_PROJECT_NAME", sanitizedProjectName);
                 content = content.Replace("TEMPLATE_BUNDLE_PREFIX", iOSBundlePrefix);
                 content = content.Replace("TEMPLATE_APP_VERSION", appVersion);
@@ -566,6 +595,7 @@ namespace SokolApplicationBuilder
                 if (File.Exists(plistSource))
                 {
                     string plistContent = File.ReadAllText(plistSource);
+                    plistContent = plistContent.Replace("@TEMPLATE_IOS_BUNDLE_ID@", plistBundleId);
                     plistContent = plistContent.Replace("TEMPLATE_PROJECT_NAME", sanitizedProjectName);
                     plistContent = plistContent.Replace("TEMPLATE_IOS_MIN_VERSION", iOSMinVersion);
                     plistContent = plistContent.Replace("@TEMPLATE_IOS_ORIENTATIONS_PLIST@", iosOrientationsPlist);
@@ -1272,6 +1302,14 @@ namespace SokolApplicationBuilder
                         propertyCount++;
                     }
 
+                    // iOS Bundle Name (optional override of the bundle id's name part)
+                    var bundleNameElement = propertyGroup.Element("IOSBundleName");
+                    if (bundleNameElement != null && !string.IsNullOrEmpty(bundleNameElement.Value))
+                    {
+                        iOSBundleName = bundleNameElement.Value;
+                        propertyCount++;
+                    }
+
                     // iOS Minimum Version
                     var minVersionElement = propertyGroup.Element("IOSMinVersion");
                     if (minVersionElement != null && !string.IsNullOrEmpty(minVersionElement.Value))
@@ -1410,6 +1448,8 @@ namespace SokolApplicationBuilder
                         Log.LogMessage(MessageImportance.High, $"   - AppVersion: {appVersion}");
                     if (!string.IsNullOrEmpty(iOSBundlePrefix))
                         Log.LogMessage(MessageImportance.High, $"   - IOSBundlePrefix: {iOSBundlePrefix}");
+                        if (!string.IsNullOrEmpty(iOSBundleName))
+                            Log.LogMessage(MessageImportance.High, $"   - IOSBundleName: {iOSBundleName} (bundle id: {iOSBundlePrefix}.{iOSBundleName})");
                     if (!string.IsNullOrEmpty(iOSMinVersion))
                         Log.LogMessage(MessageImportance.High, $"   - IOSMinVersion: {iOSMinVersion}");
                     if (!string.IsNullOrEmpty(iOSScreenOrientation))

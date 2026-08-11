@@ -322,7 +322,7 @@ public sealed class Screen : Widget
         // Popups + top overlays must render ON TOP of everything. There are two strategies, chosen by
         // whether the caller layers something (e.g. ImGui) BETWEEN the UI and the popup:
         //
-        //  • drawActiveOverlay == true (no external layer — JamboreeArcade et al.): draw them VISIBLY
+        //  • drawActiveOverlay == true (no external layer — pure Sokol.GUI apps): draw them VISIBLY
         //    here, last, within THIS single NanoVG frame. Crucially this avoids opening a SECOND NanoVG
         //    frame: a second frame's font-atlas flush is a second sg_update_image on the font texture in
         //    the SAME Sokol frame, which trips VALIDATE_UPDIMG_ONCE → panic whenever the popup baked a
