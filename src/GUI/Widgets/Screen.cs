@@ -85,6 +85,47 @@ public sealed class Screen : Widget
     public float LogicalWidth  { get; private set; }
     public float LogicalHeight { get; private set; }
 
+    // ─── Safe area ───────────────────────────────────────────────────────────
+    /// <summary>
+    /// The display's safe-area insets in LOGICAL px — the band a notch, Dynamic Island, punch-hole
+    /// camera, home indicator or curved edge would otherwise clip. Asked of the OS through
+    /// <c>ext/sokol_safearea.h</c>; zero on desktop, on web, and on any platform that reports no
+    /// cutout. Re-asked only when the framebuffer changes (rotation / fold / resize), since the
+    /// insets cannot change without it.
+    /// </summary>
+    public Thickness SafeAreaInsets { get; private set; }
+
+    private float _safeAreaW = -1f, _safeAreaH = -1f, _safeAreaDpi = -1f;
+    private bool  _safeAreaUnavailable;
+
+    private void RefreshSafeArea(float width, float height, float dpiScale)
+    {
+        if (_safeAreaUnavailable) return;
+        if (width == _safeAreaW && height == _safeAreaH && dpiScale == _safeAreaDpi) return;
+        _safeAreaW = width; _safeAreaH = height; _safeAreaDpi = dpiScale;
+
+        float dpi = dpiScale > 0f ? dpiScale : 1f;
+        try
+        {
+            if (!Sokol.SSafeArea.ssafe_supported())
+            {
+                _safeAreaUnavailable = true;
+                SafeAreaInsets       = Thickness.Zero;
+                return;
+            }
+            Span<float> ltrb = stackalloc float[4];
+            Sokol.SSafeArea.ssafe_get(ref ltrb[0]);   // physical px
+            SafeAreaInsets = new Thickness(ltrb[0] / dpi, ltrb[1] / dpi, ltrb[2] / dpi, ltrb[3] / dpi);
+        }
+        catch
+        {
+            // A native library built before sokol_safearea.h has no entry point — that simply
+            // means "no insets", and must never take the app down.
+            _safeAreaUnavailable = true;
+            SafeAreaInsets       = Thickness.Zero;
+        }
+    }
+
     // ─── Debug frame counter ─────────────────────────────────────────────────
     /// <summary>Increments each Update(). Used to gate per-frame debug logs.</summary>
     internal static int DbgFrame { get; private set; }
@@ -181,6 +222,8 @@ public sealed class Screen : Widget
 
         if (Renderer == null || Renderer.VGContext == IntPtr.Zero) return; // can happen if Update is called before Init
 
+        RefreshSafeArea(width, height, dpiScale);
+
         // Track actual keyboard height from window-height reduction
         // (keyboard_resizes_canvas on iOS, adjustResize on Android).
         bool kbShown = sapp_keyboard_shown();
@@ -199,7 +242,10 @@ public sealed class Screen : Widget
         // so we can't use it to gate Show(). Instead we watch Focus.Focused.
 #if __ANDROID__ || __IOS__
         {
-            float kbH = KeyboardHeight > 0 ? KeyboardHeight : height * 0.45f;
+            // Pass the MEASURED keyboard height, 0 meaning "unknown" — the overlay places itself out
+            // of a keyboard's way differently in each case. Substituting a guessed fraction here is
+            // what used to bury the proxy under a landscape keyboard.
+            float kbH = KeyboardHeight;
             var focused = Focus.Focused;
 
             bool nonProxyTextFocused =
@@ -250,6 +296,15 @@ public sealed class Screen : Widget
 
         // Advance inertial (fling) scrolling each frame.
         Input.UpdateFling();
+
+        // The mobile keyboard overlay must be the LAST root child. Root children are drawn — and
+        // hit-tested — in order, and the overlay is attached once and then left alone, so ANY root
+        // child added afterwards buries it: an app that mounts a new screen by appending its
+        // container (the usual overlapping push/pop transition) leaves the floating edit box
+        // *behind* the screen the box belongs to. Re-appending moves it back to the end.
+        if (_mobileOverlay != null && _mobileOverlay.Parent == this &&
+            !ReferenceEquals(Children[^1], _mobileOverlay))
+            AddChild(_mobileOverlay);
 
         // Screen root children fill the window — bypass CanvasLayout measurement.
         // CanvasLayout would measure TabView as (0,0) because tabs live in _tabs not _children.

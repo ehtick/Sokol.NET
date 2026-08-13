@@ -219,8 +219,7 @@ public class TextBox : Widget
             var screen = Screen.Instance;
             if (screen != null)
             {
-                float kbH = screen.KeyboardHeight > 0 ? screen.KeyboardHeight : screen.LogicalHeight * 0.45f;
-                screen.MobileOverlay.Show(this, kbH);
+                screen.MobileOverlay.Show(this, screen.KeyboardHeight);   // 0 = height not measured yet
             }
         }
 #endif

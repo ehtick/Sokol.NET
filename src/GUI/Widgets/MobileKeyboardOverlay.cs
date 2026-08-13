@@ -140,18 +140,35 @@ public sealed class MobileKeyboardOverlay : Widget
         bool  area = Children.Count > 0 && Children[0] is TextArea;
         float ih   = area ? AreaHeight : BoxHeight;
 
-        // When keyboard_resizes_canvas (iOS) or adjustResize (Android) is active, the
-        // canvas height is already reduced to exclude the keyboard. In that case
-        // _keyboardHeight ≥ 50 % of sh (because sh was shrunk while _keyboardHeight was not).
-        // Avoid subtracting it again — just anchor the proxy to the bottom of the canvas.
-        float bottomMargin = _keyboardHeight >= sh * 0.5f ? 0f : _keyboardHeight;
+        // This overlay floats OUTSIDE the app's content root, so nothing else insets it: it must
+        // honour the display's safe area itself or the proxy lands under the notch / Dynamic Island
+        // / curved edge (in landscape those are the LEFT and RIGHT insets). Only the editable box is
+        // inset — the surface bar behind it still spans the full width, like any background.
+        var   sa    = (Parent as Screen)?.SafeAreaInsets ?? Thickness.Zero;
+        float left  = sa.Left  + Padding;
+        float right = sa.Right + Padding;
+
+        // Where to put the bar depends on whether we actually KNOW how tall the keyboard is.
+        //
+        //  • Known (_keyboardHeight > 0) — keyboard_resizes_canvas (iOS) or adjustResize (Android)
+        //    shrank the canvas, so sh already excludes the keyboard: sit just above the bottom edge,
+        //    right under the player's thumb.
+        //  • Unknown (0) — a fullscreen/immersive Android activity gets no resize at all, and iOS
+        //    reports its keyboard asynchronously, so there is NOTHING to anchor to. Dock the bar at
+        //    the TOP of the safe area, the one band no keyboard can ever cover. ⛔ Do not guess a
+        //    fraction of the screen instead: the old `sh * 0.45f` guess put the box straight under a
+        //    landscape Samsung/Redmi keyboard (measured 55 % of a 1080px-tall canvas), which is the
+        //    defect this replaces — and any fixed fraction is wrong on the next keyboard.
         float extraLift = area ? 0f : 16f;
-        float panY = sh - bottomMargin - ih - Padding * 2 - ih * 0.5f - extraLift;
+        float panY = _keyboardHeight > 0f
+            ? sh - ih - Padding * 2 - ih * 0.5f - extraLift
+            : sa.Top;
+        if (panY < sa.Top) panY = sa.Top;
 
         if (Children.Count > 0)
         {
             var child  = Children[0];
-            child.Bounds = new Rect(Padding, panY + Padding, sw - Padding * 2, ih);
+            child.Bounds = new Rect(left, panY + Padding, MathF.Max(0f, sw - left - right), ih);
             child.PerformLayout(renderer, force: true);
         }
     }
