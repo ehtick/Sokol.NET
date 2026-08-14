@@ -58,10 +58,81 @@ Specify Android permissions as a semicolon-separated list:
 - `android.permission.VIBRATE` - Vibration control
 
 **Default Permissions** (if not specified):
-- `android.permission.RECORD_AUDIO`
 - `android.permission.WAKE_LOCK`
 - `android.permission.INTERNET`
-- `android.permission.WRITE_EXTERNAL_STORAGE`
+
+#### Limiting a permission to old Android versions (`:maxSdk=NN`)
+
+Append `:maxSdk=NN` to emit `android:maxSdkVersion="NN"` — the permission then applies only up to
+that API level. Use it for permissions a newer Android replaced, so modern devices are never asked
+for something they do not need:
+
+```xml
+<AndroidPermissions>android.permission.WRITE_EXTERNAL_STORAGE:maxSdk=28;android.permission.INTERNET</AndroidPermissions>
+```
+
+```xml
+<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
+```
+
+The cap also bounds the runtime request (below), so the app never prompts for it above API 28.
+
+#### Runtime ("dangerous") permissions are requested for you
+
+A manifest entry is enough for *normal* permissions, but Android 6+ (API 23+) also requires a runtime
+prompt for dangerous ones (camera, microphone, location, contacts, Bluetooth on API 31+, …). The
+builder recognises those and injects the request into `SokolNativeActivity.java`, so declaring the
+permission is all you need — there is no app code to write.
+
+Each request is bounded by the permission's own API window:
+
+- **`:maxSdk=NN`** → requested only when `SDK_INT <= NN`.
+- **Permissions introduced after `minSdk`** (e.g. the API-31 Bluetooth permissions) → requested only
+  from the level that introduced them.
+
+> ⚠️ **Why the bounds matter.** Requesting a permission outside its window is not harmlessly ignored:
+> Android opens and immediately closes the permission dialog **showing the user nothing**, and the
+> app sees a plain denial. Any UI that waits for the user's answer then waits for an answer that can
+> never arrive.
+
+### Bluetooth / BLE permissions
+
+Android 12 (API 31) replaced the Bluetooth permission model outright, so an app supporting anything
+older needs **two** sets. Declare the modern three and the builder adds the legacy ones for you
+whenever `AndroidMinSdkVersion` is below 31:
+
+```xml
+<AndroidPermissions>android.permission.BLUETOOTH_SCAN;android.permission.BLUETOOTH_CONNECT;android.permission.BLUETOOTH_ADVERTISE</AndroidPermissions>
+```
+
+```xml
+<uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation"/>
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
+<uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE"/>
+<uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
+<uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"/>
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30"/>
+```
+
+| API level | What Bluetooth needs | Requested at runtime |
+|-----------|----------------------|----------------------|
+| 23–30 | `BLUETOOTH` + `BLUETOOTH_ADMIN` (install-time) and `ACCESS_FINE_LOCATION` | `ACCESS_FINE_LOCATION` |
+| 31+ | `BLUETOOTH_SCAN` / `BLUETOOTH_CONNECT` / `BLUETOOTH_ADVERTISE` | all three |
+
+Notes:
+
+- **`ACCESS_FINE_LOCATION` is not optional on API 23–30.** Without it a BLE scan starts successfully
+  and simply never reports a result — indistinguishable from "nothing is nearby". It is added only
+  alongside `BLUETOOTH_SCAN`; an app that merely connects is not asked for location.
+- **`neverForLocation`** is added to `BLUETOOTH_SCAN` so API 31+ can scan *without* location access.
+  It is an assertion that you never derive the user's physical location from scan results — if your
+  app does, remove it and request location on API 31+ as well.
+- **You can declare the legacy entries yourself** (with `:maxSdk=30`) if you prefer the file to state
+  the full set explicitly; anything already declared is left exactly as written.
+- ⚠️ **Below API 31 the system Location *setting* also gates scanning**, separately from the
+  permission. With Location switched off, a scan returns nothing even though Bluetooth is on and the
+  permission is granted — so an app should check `LocationManager.isLocationEnabled()` and tell the
+  user, rather than appearing to work and finding no devices.
 
 ### Features
 
