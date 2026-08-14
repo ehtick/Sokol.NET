@@ -112,18 +112,22 @@ whenever `AndroidMinSdkVersion` is below 31:
 <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
 <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"/>
 <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30"/>
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" android:maxSdkVersion="30"/>
 ```
 
 | API level | What Bluetooth needs | Requested at runtime |
 |-----------|----------------------|----------------------|
-| 23–30 | `BLUETOOTH` + `BLUETOOTH_ADMIN` (install-time) and `ACCESS_FINE_LOCATION` | `ACCESS_FINE_LOCATION` |
+| 23–30 | `BLUETOOTH` + `BLUETOOTH_ADMIN` (install-time) and the location pair | `ACCESS_FINE_LOCATION` + `ACCESS_COARSE_LOCATION` |
 | 31+ | `BLUETOOTH_SCAN` / `BLUETOOTH_CONNECT` / `BLUETOOTH_ADVERTISE` | all three |
 
 Notes:
 
-- **`ACCESS_FINE_LOCATION` is not optional on API 23–30.** Without it a BLE scan starts successfully
-  and simply never reports a result — indistinguishable from "nothing is nearby". It is added only
-  alongside `BLUETOOTH_SCAN`; an app that merely connects is not asked for location.
+- **Location is not optional on API 23–30.** Without it a BLE scan starts successfully and simply
+  never reports a result — indistinguishable from "nothing is nearby". `ACCESS_FINE_LOCATION` is the
+  one that carries it (either satisfies the scan check on API 23–28, and from API 29 only FINE does);
+  `ACCESS_COARSE_LOCATION` is declared alongside it because that is what Android's BLE guidance
+  prescribes. Both are added only alongside `BLUETOOTH_SCAN` — an app that merely connects is never
+  asked for location.
 - **`neverForLocation`** is added to `BLUETOOTH_SCAN` so API 31+ can scan *without* location access.
   It is an assertion that you never derive the user's physical location from scan results — if your
   app does, remove it and request location on API 31+ as well.

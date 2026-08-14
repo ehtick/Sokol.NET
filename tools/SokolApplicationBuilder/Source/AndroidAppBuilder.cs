@@ -1909,7 +1909,10 @@ link_directories(${{PREBUILT_LIB_PATH}}/${{ANDROID_ABI}})
         /// Bluetooth (install-time permissions — declaring them is granting them).</item>
         /// <item>⛔ ACCESS_FINE_LOCATION is what API 23–30 requires before a BLE SCAN returns any
         /// result at all. Without it scanning succeeds and silently reports nothing — the classic
-        /// trap, and indistinguishable from "no one is nearby".</item>
+        /// trap, and indistinguishable from "no one is nearby". ACCESS_COARSE_LOCATION rides along:
+        /// FINE alone is sufficient on paper (either satisfies the scan check on API 23–28, and from
+        /// API 29 only FINE does), but declaring both is what Android's own BLE guidance prescribes
+        /// and costs nothing — both are capped at 30, so neither is ever requested on Android 12+.</item>
         /// </list>
         /// So an app that declares the modern trio and supports anything older than API 31 gets the
         /// legacy set added automatically, each capped at API 30 so nothing changes on Android 12+
@@ -1939,7 +1942,11 @@ link_directories(${{PREBUILT_LIB_PATH}}/${{ANDROID_ABI}})
 
             Add("android.permission.BLUETOOTH");
             Add("android.permission.BLUETOOTH_ADMIN");
-            if (scan) Add("android.permission.ACCESS_FINE_LOCATION");
+            if (scan)
+            {
+                Add("android.permission.ACCESS_FINE_LOCATION");
+                Add("android.permission.ACCESS_COARSE_LOCATION");
+            }
 
             if (added.Count > 0)
                 Log.LogMessage(MessageImportance.High,
