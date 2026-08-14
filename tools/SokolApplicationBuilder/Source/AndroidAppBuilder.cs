@@ -1872,6 +1872,81 @@ link_directories(${{PREBUILT_LIB_PATH}}/${{ANDROID_ABI}})
         };
 
         /// <summary>
+        /// Permissions that do not EXIST below a given API level. ⛔ Requesting one on an older device
+        /// is not merely useless — Android opens and immediately closes the grant activity without
+        /// showing anything, so a UI that waits for the user's answer waits for an answer that can
+        /// never come. Device-observed on a Redmi 6A (API 28): the three API-31 Bluetooth permissions
+        /// were requested, the package installer came and went in 176 ms, and the app then sat for two
+        /// minutes before reporting "permission was not granted".
+        /// </summary>
+        static readonly Dictionary<string, int> PermissionMinSdk = new(StringComparer.OrdinalIgnoreCase)
+        {
+            { "android.permission.BLUETOOTH_SCAN",      31 },
+            { "android.permission.BLUETOOTH_CONNECT",   31 },
+            { "android.permission.BLUETOOTH_ADVERTISE", 31 },
+        };
+
+        /// <summary>
+        /// Split an AndroidPermissions entry into its name and optional
+        /// <c>android:maxSdkVersion</c>. Syntax: <c>android.permission.X</c> or
+        /// <c>android.permission.X:maxSdk=30</c> (the level ABOVE which the permission no longer
+        /// applies, exactly as the manifest attribute means it).
+        /// </summary>
+        static (string Name, int MaxSdk) ParsePermission(string entry)
+        {
+            int sep = entry.IndexOf(":maxSdk=", StringComparison.OrdinalIgnoreCase);
+            if (sep < 0) return (entry, 0);
+            return int.TryParse(entry[(sep + 8)..], out int max)
+                ? (entry[..sep], max)
+                : (entry[..sep], 0);
+        }
+
+        /// <summary>
+        /// Bluetooth below Android 12 (API 31) is a DIFFERENT permission set, and declaring only the
+        /// API-31 one leaves every older device unable to use BLE at all:
+        /// <list type="bullet">
+        /// <item>BLUETOOTH / BLUETOOTH_ADMIN are what API ≤30 checks for using and advertising over
+        /// Bluetooth (install-time permissions — declaring them is granting them).</item>
+        /// <item>⛔ ACCESS_FINE_LOCATION is what API 23–30 requires before a BLE SCAN returns any
+        /// result at all. Without it scanning succeeds and silently reports nothing — the classic
+        /// trap, and indistinguishable from "no one is nearby".</item>
+        /// </list>
+        /// So an app that declares the modern trio and supports anything older than API 31 gets the
+        /// legacy set added automatically, each capped at API 30 so nothing changes on Android 12+
+        /// (where BLUETOOTH_SCAN's neverForLocation flag keeps scanning out of the location business
+        /// entirely). Location is added only alongside BLUETOOTH_SCAN — an app that merely CONNECTS
+        /// has no business asking for it.
+        /// </summary>
+        void AddLegacyBlePermissions(List<string> permissions, int minSdk)
+        {
+            if (minSdk >= 31) return;
+
+            bool Declared(string name) =>
+                permissions.Exists(p => ParsePermission(p).Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+            bool scan      = Declared("android.permission.BLUETOOTH_SCAN");
+            bool connect   = Declared("android.permission.BLUETOOTH_CONNECT");
+            bool advertise = Declared("android.permission.BLUETOOTH_ADVERTISE");
+            if (!scan && !connect && !advertise) return;
+
+            var added = new List<string>();
+            void Add(string name)
+            {
+                if (Declared(name)) return;      // an explicit declaration always wins
+                permissions.Add($"{name}:maxSdk=30");
+                added.Add(name["android.permission.".Length..]);
+            }
+
+            Add("android.permission.BLUETOOTH");
+            Add("android.permission.BLUETOOTH_ADMIN");
+            if (scan) Add("android.permission.ACCESS_FINE_LOCATION");
+
+            if (added.Count > 0)
+                Log.LogMessage(MessageImportance.High,
+                    $"📶 minSdk {minSdk} < 31: added legacy Bluetooth permissions (maxSdkVersion 30): {string.Join(", ", added)}");
+        }
+
+        /// <summary>
         /// Dynamically injects runtime permission request code into SokolNativeActivity.java for any
         /// "dangerous" permissions declared in AndroidPermissions (Directory.Build.props).
         /// Normal/install-time permissions need only a manifest entry and are skipped.
@@ -1901,7 +1976,8 @@ link_directories(${{PREBUILT_LIB_PATH}}/${{ANDROID_ABI}})
             // Determine which declared permissions are dangerous (need runtime request)
             var declaredPermissions = GetAndroidPermissions(androidProperties);
             var runtimePermissions = declaredPermissions
-                .Where(p => DangerousPermissions.ContainsKey(p))
+                .Select(ParsePermission)
+                .Where(p => DangerousPermissions.ContainsKey(p.Name))
                 .ToList();
 
             if (runtimePermissions.Count == 0)
@@ -1919,10 +1995,19 @@ link_directories(${{PREBUILT_LIB_PATH}}/${{ANDROID_ABI}})
             requestLines.Add("        // Request dangerous permissions at runtime (Activity.requestPermissions, API 23+)");
             requestLines.Add("        {");
             requestLines.Add("            java.util.ArrayList<String> _permsToRequest = new java.util.ArrayList<>();");
-            foreach (string perm in runtimePermissions)
+            foreach (var (perm, maxSdk) in runtimePermissions)
             {
                 string manifestConst = DangerousPermissions[perm];
-                requestLines.Add($"            if (checkSelfPermission({manifestConst}) != android.content.pm.PackageManager.PERMISSION_GRANTED) {{");
+                // ⛔ Ask only where the permission exists. Below its introducing level Android shows no
+                // dialog at all, and above a maxSdkVersion the permission is not even in the manifest —
+                // either way the request is silently refused, which reads to the app as "the user said
+                // no" and dead-ends any UI that waits for a grant.
+                var window = new List<string>();
+                if (PermissionMinSdk.TryGetValue(perm, out int min)) window.Add($"android.os.Build.VERSION.SDK_INT >= {min}");
+                if (maxSdk > 0)                                      window.Add($"android.os.Build.VERSION.SDK_INT <= {maxSdk}");
+                string guard = window.Count > 0 ? string.Join(" && ", window) + " && " : "";
+
+                requestLines.Add($"            if ({guard}checkSelfPermission({manifestConst}) != android.content.pm.PackageManager.PERMISSION_GRANTED) {{");
                 requestLines.Add($"                _permsToRequest.add({manifestConst});");
                 requestLines.Add("            }");
             }
@@ -1951,7 +2036,7 @@ link_directories(${{PREBUILT_LIB_PATH}}/${{ANDROID_ABI}})
                 content = content.Replace("    // @TEMPLATE_RUNTIME_PERMISSIONS_CALLBACK@", callbackCode);
 
             File.WriteAllText(javaActivityPath, content);
-            Log.LogMessage(MessageImportance.High, $"✅ Injected runtime permission requests for: {string.Join(", ", runtimePermissions)}");
+            Log.LogMessage(MessageImportance.High, $"✅ Injected runtime permission requests for: {string.Join(", ", runtimePermissions.Select(p => p.Name))}");
         }
 
         void BuildAndroidApp(string appName, string buildType)
@@ -2854,9 +2939,11 @@ KeyAlias={keystoreInfo.KeyAlias}
         /// </summary>
         static string PermissionLine(string permission, string indent)
         {
-            if (permission == "android.permission.BLUETOOTH_SCAN")
-                return $"{indent}<uses-permission android:name=\"{permission}\" android:usesPermissionFlags=\"neverForLocation\"/>";
-            return $"{indent}<uses-permission android:name=\"{permission}\"/>";
+            var (name, maxSdk) = ParsePermission(permission);
+            string max = maxSdk > 0 ? $" android:maxSdkVersion=\"{maxSdk}\"" : "";
+            if (name == "android.permission.BLUETOOTH_SCAN")
+                return $"{indent}<uses-permission android:name=\"{name}\" android:usesPermissionFlags=\"neverForLocation\"{max}/>";
+            return $"{indent}<uses-permission android:name=\"{name}\"{max}/>";
         }
 
         List<string> GetAndroidPermissions(Dictionary<string, string> properties)
@@ -2881,6 +2968,10 @@ KeyAlias={keystoreInfo.KeyAlias}
                     "android.permission.INTERNET",
                 });
             }
+
+            int minSdk = int.TryParse(properties.GetValueOrDefault("AndroidMinSdkVersion", DefaultMinSdkVersion), out int m)
+                ? m : 31;
+            AddLegacyBlePermissions(permissions, minSdk);
 
             return permissions;
         }
