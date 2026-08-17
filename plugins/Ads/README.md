@@ -1,7 +1,8 @@
 # sokol_ads — AdMob interstitials (Android + iOS)
 
-Google Mobile Ads plugin for Sokol.NET apps: **Google Mobile Ads SDK 23 + UMP** on
-Android, **GoogleMobileAds.xcframework 13** on iOS. Interstitials only; the max ad
+Google Mobile Ads plugin for Sokol.NET apps: **Google Mobile Ads SDK 25 + UMP 4** on
+Android, **GoogleMobileAds 13 + UserMessagingPlatform 3** on iOS (the two are versioned
+independently — iOS has no UMP 4). Interstitials only; the max ad
 content rating is pinned to **G** in both shims, and `npaOnly` requests carry the
 non-personalized-ads flag on every request. Desktop and web have no ad SDK — the
 managed layer stubs every call deterministically (`AdsPlugin.Available` is `false`).
@@ -65,12 +66,20 @@ APK.
 **iOS SDK is fetched, not vendored** (Google's SDK; `vendor/` is gitignored):
 
 ```bash
-./plugins/Ads/scripts/fetch-googlemobileads-ios.sh   # downloads + extracts device slices
+./plugins/Ads/scripts/fetch-googlemobileads-ios.sh            # first run: downloads + extracts
+./plugins/Ads/scripts/fetch-googlemobileads-ios.sh --force    # UPDATE to Google's current SDK
 ```
 
 `vendor/ios/device/` then holds `GoogleMobileAds.framework` +
 `UserMessagingPlatform.framework` for the builder's framework embedding (one
-`IOSNativeLibrary_*Path` covers both — the builder globs `*.framework`).
+`IOSNativeLibrary_*Path` covers both — the builder globs `*.framework`). An app can
+instead point `IOSStaticFrameworks_*Path` at `vendor/ios` itself to link the
+`.xcframework`s into the app executable; that wiring does not use `device/`.
+
+⛔ **`--force` is the only way to update.** Google serves this zip from an unversioned
+url, so a plain re-run cannot tell a current SDK from a years-old one — it reports the
+installed version and stops. Without `--force` you stay on whatever was fetched first,
+however long ago.
 
 ## Layout
 
