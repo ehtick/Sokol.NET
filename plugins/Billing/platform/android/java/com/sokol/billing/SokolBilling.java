@@ -14,7 +14,6 @@ import com.android.billingclient.api.Purchase;
 import com.android.billingclient.api.QueryProductDetailsParams;
 import com.android.billingclient.api.QueryPurchasesParams;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -45,9 +44,8 @@ public final class SokolBilling {
     static final int EV_SYNC_DONE          = 7;
 
     static Activity activity;
-    static BillingClient client;
-    static boolean ready;
-    static final List<Pending> pending = new ArrayList<>();
+    /** Created on the UI thread by init(), read from the game thread. */
+    static volatile BillingClient client;
     static final Map<String, ProductDetails> products = new HashMap<>();
 
     private SokolBilling() {}
@@ -59,93 +57,71 @@ public final class SokolBilling {
             client = BillingClient.newBuilder(act)
                 .enablePendingPurchases(
                     PendingPurchasesParams.newBuilder().enableOneTimeProducts().build())
+                // ⛔ Load-bearing. Billing 8+ re-establishes a dropped connection itself,
+                // right before the API call that needs it, and if it cannot, that call's own
+                // callback still fires with SERVICE_DISCONNECTED. That library guarantee is
+                // what lets every entry point below call straight through with no readiness
+                // queue — and a queue is exactly what once stranded a restore forever when
+                // the connection failed offline (user-reported 2026-08-01, airplane mode).
+                // A caller must always get an answer; here the library owes it, not us.
+                .enableAutoServiceReconnection()
                 .setListener(SokolBilling::onPurchasesUpdated)
                 .build();
             connect();
         });
     }
 
+    /** Only the FIRST connection is ours to make; every later one is automatic. */
     static void connect() {
         client.startConnection(new BillingClientStateListener() {
             @Override public void onBillingSetupFinished(BillingResult r) {
-                if (r.getResponseCode() != BillingClient.BillingResponseCode.OK) {
-                    // ⛔ FAIL the queued work; do not just return. Leaving it in `pending`
-                    // strands it forever: offline, a queued restore never reaches
-                    // queryPurchasesAsync, so RESTORE_DONE is never emitted and the caller
-                    // waits on "contacting the store…" with no way out (user-reported
-                    // 2026-08-01, airplane mode). A caller must always get an answer.
-                    failPending(r.getResponseCode());
-                    return;
-                }
-                List<Pending> run;
-                synchronized (pending) {
-                    ready = true;
-                    run = new ArrayList<>(pending);
-                    pending.clear();
-                }
-                for (Pending x : run) x.onReady.run();
+                if (r.getResponseCode() != BillingClient.BillingResponseCode.OK) return;
                 /* Replay owned purchases so the app's entitlement cache heals
                    (refunds/family changes reconcile the same way on resume). */
                 queryOwned(false);
             }
             @Override public void onBillingServiceDisconnected() {
-                synchronized (pending) { ready = false; }
-                // Anything queued at this moment would wait for a reconnect that only a
-                // future call triggers. An explicit failure beats an indefinite hang.
-                failPending(BillingClient.BillingResponseCode.SERVICE_DISCONNECTED);
+                // No-op by design: Play's guidance for enableAutoServiceReconnection is to
+                // NOT call startConnection() here. Racing the library's own reconnect would
+                // put two connection attempts in flight.
             }
         });
     }
 
-    static void failPending(int code) {
-        List<Pending> fail;
-        synchronized (pending) { fail = new ArrayList<>(pending); pending.clear(); }
-        for (Pending p : fail) p.onFail.run(code);
-    }
-
-    /** A queued request: what to run once connected, and how to answer if we never connect. */
-    interface FailCallback { void run(int code); }
-    static final class Pending {
-        final Runnable onReady; final FailCallback onFail;
-        Pending(Runnable onReady, FailCallback onFail) { this.onReady = onReady; this.onFail = onFail; }
-    }
-
-    /** Run r once the client is connected; reconnect lazily if the service dropped.
-        onFail is invoked instead if the connection cannot be established. */
-    static void whenReady(Runnable r, FailCallback onFail) {
-        boolean now;
-        synchronized (pending) {
-            now = ready && client != null && client.isReady();
-            if (!now) pending.add(new Pending(r, onFail));
-        }
-        if (now) {
-            r.run();
-        } else if (client != null && activity != null) {
-            activity.runOnUiThread(() -> { if (!client.isReady()) connect(); });
-        } else {
-            // No client/activity at all — nothing will ever drain the queue.
-            failPending(BillingClient.BillingResponseCode.SERVICE_UNAVAILABLE);
-        }
+    /** True (having already answered the caller) if init() has not built the client yet.
+        A call that races app startup must still get an event — and must not NPE the
+        game thread, where an uncaught exception takes the whole app down. */
+    static boolean notInitialised(int failEvent, String sku) {
+        if (client != null) return false;
+        nativeOnEvent(failEvent, BillingClient.BillingResponseCode.SERVICE_UNAVAILABLE,
+                      sku, null, null, null);
+        return true;
     }
 
     public static void queryProduct(final String sku) {
-        whenReady(() -> queryDetails(sku, details -> {
+        if (notInitialised(EV_PRODUCT_FAILED, sku)) return;
+        queryDetails(sku, (details, code) -> {
             if (details != null) {
                 ProductDetails.OneTimePurchaseOfferDetails offer =
                     details.getOneTimePurchaseOfferDetails();
                 nativeOnEvent(EV_PRODUCT_INFO, 0, sku,
                     offer != null ? offer.getFormattedPrice() : "", null, null);
             } else {
-                nativeOnEvent(EV_PRODUCT_FAILED, 0, sku, null, null, null);
+                nativeOnEvent(EV_PRODUCT_FAILED, code, sku, null, null, null);
             }
-        }), code -> nativeOnEvent(EV_PRODUCT_FAILED, code, sku, null, null, null));
+        });
     }
 
     public static void purchase(final String sku) {
-        whenReady(() -> queryDetails(sku, details -> {
+        if (notInitialised(EV_PURCHASE_FAILED, sku)) return;
+        queryDetails(sku, (details, code) -> {
             if (details == null) {
+                // The store answering OK without the product means it really is unavailable;
+                // any other code is the transport failing, and the caller wants to see that.
                 nativeOnEvent(EV_PURCHASE_FAILED,
-                    BillingClient.BillingResponseCode.ITEM_UNAVAILABLE, sku, null, null, null);
+                    code == BillingClient.BillingResponseCode.OK
+                        ? BillingClient.BillingResponseCode.ITEM_UNAVAILABLE : code,
+                    sku, null, null, null);
                 return;
             }
             activity.runOnUiThread(() -> {
@@ -161,19 +137,19 @@ public final class SokolBilling {
                 }
                 /* OK -> the result arrives in onPurchasesUpdated. */
             });
-        }), code -> nativeOnEvent(EV_PURCHASE_FAILED, code, sku, null, null, null));
+        });
     }
 
     public static void restore() {
-        whenReady(() -> queryOwned(true),
-                  code -> nativeOnEvent(EV_RESTORE_DONE, code, null, null, null, null));
+        if (notInitialised(EV_RESTORE_DONE, null)) return;
+        queryOwned(true);
     }
 
     /** Background re-enumeration (app foregrounded). Same query as restore(), but it completes
         with SYNC_DONE so a consumer never mistakes it for the answer to a user's Restore tap. */
     public static void sync() {
-        whenReady(() -> queryOwned(false),
-                  code -> nativeOnEvent(EV_SYNC_DONE, code, null, null, null, null));
+        if (notInitialised(EV_SYNC_DONE, null)) return;
+        queryOwned(false);
     }
 
     /** TEST TOOL: consume the owned purchase of `sku`, so Play stops reporting it
@@ -183,34 +159,35 @@ public final class SokolBilling {
         purchase that Play will neither re-sell nor let the Console refund again.
         Always ends in a re-enumeration, so the caller gets a SYNC_DONE either way. */
     public static void consume(final String sku) {
-        whenReady(() -> {
-            QueryPurchasesParams params = QueryPurchasesParams.newBuilder()
-                .setProductType(BillingClient.ProductType.INAPP)
-                .build();
-            client.queryPurchasesAsync(params, (r, purchases) -> {
-                if (r.getResponseCode() != BillingClient.BillingResponseCode.OK) {
-                    nativeOnEvent(EV_SYNC_DONE, r.getResponseCode(), null, null, null, null);
-                    return;
-                }
-                Purchase target = null;
-                for (Purchase p : purchases)
-                    if (p.getProducts().contains(sku)) { target = p; break; }
-                if (target == null) { queryOwned(false); return; }
-                client.consumeAsync(
-                    ConsumeParams.newBuilder()
-                        .setPurchaseToken(target.getPurchaseToken())
-                        .build(),
-                    (cr, token) -> queryOwned(false));
-            });
-        }, code -> nativeOnEvent(EV_SYNC_DONE, code, null, null, null, null));
+        if (notInitialised(EV_SYNC_DONE, null)) return;
+        QueryPurchasesParams params = QueryPurchasesParams.newBuilder()
+            .setProductType(BillingClient.ProductType.INAPP)
+            .build();
+        client.queryPurchasesAsync(params, (r, purchases) -> {
+            if (r.getResponseCode() != BillingClient.BillingResponseCode.OK) {
+                nativeOnEvent(EV_SYNC_DONE, r.getResponseCode(), null, null, null, null);
+                return;
+            }
+            Purchase target = null;
+            for (Purchase p : purchases)
+                if (p.getProducts().contains(sku)) { target = p; break; }
+            if (target == null) { queryOwned(false); return; }
+            client.consumeAsync(
+                ConsumeParams.newBuilder()
+                    .setPurchaseToken(target.getPurchaseToken())
+                    .build(),
+                (cr, token) -> queryOwned(false));
+        });
     }
 
-    interface DetailsCallback { void run(ProductDetails details); }
+    /** `code` is the store's response code; it is OK when `details` is non-null, and when
+        the store answered OK but does not carry the product. */
+    interface DetailsCallback { void run(ProductDetails details, int code); }
 
     static void queryDetails(final String sku, final DetailsCallback cb) {
         ProductDetails cached;
         synchronized (products) { cached = products.get(sku); }
-        if (cached != null) { cb.run(cached); return; }
+        if (cached != null) { cb.run(cached, BillingClient.BillingResponseCode.OK); return; }
 
         QueryProductDetailsParams params = QueryProductDetailsParams.newBuilder()
             .setProductList(Collections.singletonList(
@@ -219,17 +196,19 @@ public final class SokolBilling {
                     .setProductType(BillingClient.ProductType.INAPP)
                     .build()))
             .build();
-        client.queryProductDetailsAsync(params, (r, list) -> {
+        // Billing 8+ hands back a QueryProductDetailsResult (which also carries the
+        // products it could NOT fetch) instead of a bare List<ProductDetails>.
+        client.queryProductDetailsAsync(params, (r, result) -> {
             ProductDetails found = null;
-            if (r.getResponseCode() == BillingClient.BillingResponseCode.OK && list != null) {
-                for (ProductDetails d : list) {
+            if (r.getResponseCode() == BillingClient.BillingResponseCode.OK && result != null) {
+                for (ProductDetails d : result.getProductDetailsList()) {
                     if (sku.equals(d.getProductId())) { found = d; break; }
                 }
             }
             if (found != null) {
                 synchronized (products) { products.put(sku, found); }
             }
-            cb.run(found);
+            cb.run(found, r.getResponseCode());
         });
     }
 
