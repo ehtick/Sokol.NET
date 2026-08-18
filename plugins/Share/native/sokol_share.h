@@ -22,6 +22,12 @@ extern "C" {
    text:       UTF-8 message string.                                              */
 void sokolshare_image_text(const char* image_path, const char* text);
 
+/* Put UTF-8 `text` on the system clipboard.
+   Android and iOS ONLY -- these are the two platforms sokol_app.h leaves as
+   "not implemented" in sapp_set_clipboard_string(); macOS/Windows/Linux/web
+   callers should keep using sokol's own clipboard rather than this. */
+void sokolshare_set_clipboard(const char* text);
+
 #ifdef __cplusplus
 }
 #endif

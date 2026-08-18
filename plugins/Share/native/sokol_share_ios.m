@@ -41,3 +41,14 @@ void sokolshare_image_text(const char* image_path, const char* text)
         [root presentViewController:vc animated:YES completion:nil];
     });
 }
+
+/* Clipboard. sapp_set_clipboard_string() is a no-op on iOS (sokol_app.h implements
+   it for macOS/Win32/X11/emscripten only), so it lives here. UIPasteboard is UIKit
+   state, so the write is dispatched to the main queue like the share sheet above. */
+void sokolshare_set_clipboard(const char* text)
+{
+    NSString* nsText = [NSString stringWithUTF8String:text ? text : ""];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [UIPasteboard generalPasteboard].string = nsText;
+    });
+}

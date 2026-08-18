@@ -142,3 +142,71 @@ void sokolshare_image_text(const char* image_path, const char* text)
     (*env)->DeleteLocalRef(env, actClass);
     /* Do NOT DetachCurrentThread — Sokol reuses this thread across frames. */
 }
+
+/* ── Clipboard ────────────────────────────────────────────────────────────────
+   sapp_set_clipboard_string() is a no-op on Android (sokol_app.h implements it
+   for macOS/Win32/X11/emscripten only), so the clipboard lives here.
+
+   THREADING: this runs on sokol's game thread, not the Java UI thread, and that
+   is safe on purpose. ClipboardManager builds its internal Handler from
+   ContextImpl.mMainThread.getHandler() -- the MAIN looper, never the calling
+   thread's -- so getSystemService() cannot throw the "Can't create handler
+   inside thread that has not called Looper.prepare()" that background
+   ClipboardManager use is often blamed for, and setPrimaryClip() is a plain
+   binder call. That is why this needs no com.sokol.* Java helper the way the
+   Ads/Billing plugins do; keeping the Share plugin pure JNI means no
+   AndroidJavaSource_* wiring in the consuming project.
+
+   Android 10+ only honours a clipboard write while the app holds input focus,
+   which is exactly when a player taps Copy. */
+void sokolshare_set_clipboard(const char* text)
+{
+    ANativeActivity* activity = (ANativeActivity*)sapp_android_get_native_activity();
+    if (!activity) return;
+
+    JavaVM* vm  = activity->vm;
+    JNIEnv* env = NULL;
+    (*vm)->AttachCurrentThread(vm, &env, NULL);
+    if (!env) return;
+
+    /* ── ClipboardManager cm = (ClipboardManager)getSystemService(CLIPBOARD_SERVICE) ── */
+    jclass   ctxClass = (*env)->FindClass(env, "android/content/Context");
+    jfieldID svcField = (*env)->GetStaticFieldID(env, ctxClass,
+                            "CLIPBOARD_SERVICE", "Ljava/lang/String;");
+    jstring  svcName  = (jstring)(*env)->GetStaticObjectField(env, ctxClass, svcField);
+    jmethodID getSvc  = (*env)->GetMethodID(env, ctxClass, "getSystemService",
+                            "(Ljava/lang/String;)Ljava/lang/Object;");
+    jobject  clipMgr  = (*env)->CallObjectMethod(env, activity->clazz, getSvc, svcName);
+
+    if (clipMgr)
+    {
+        /* ── ClipData clip = ClipData.newPlainText("text", text) ───────────── */
+        jclass    clipDataCls = (*env)->FindClass(env, "android/content/ClipData");
+        jmethodID newPlain    = (*env)->GetStaticMethodID(env, clipDataCls, "newPlainText",
+            "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)Landroid/content/ClipData;");
+        jstring   label = (*env)->NewStringUTF(env, "text");
+        jstring   jtext = (*env)->NewStringUTF(env, text ? text : "");
+        jobject   clip  = (*env)->CallStaticObjectMethod(env, clipDataCls, newPlain, label, jtext);
+
+        /* ── cm.setPrimaryClip(clip) ───────────────────────────────────────── */
+        jclass    cmClass    = (*env)->GetObjectClass(env, clipMgr);
+        jmethodID setPrimary = (*env)->GetMethodID(env, cmClass, "setPrimaryClip",
+                                   "(Landroid/content/ClipData;)V");
+        (*env)->CallVoidMethod(env, clipMgr, setPrimary, clip);
+
+        /* A denied write (no focus) throws rather than returning a status -- swallow it
+           so a background Copy can never take the app down. */
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+
+        (*env)->DeleteLocalRef(env, cmClass);
+        if (clip) (*env)->DeleteLocalRef(env, clip);
+        (*env)->DeleteLocalRef(env, jtext);
+        (*env)->DeleteLocalRef(env, label);
+        (*env)->DeleteLocalRef(env, clipDataCls);
+        (*env)->DeleteLocalRef(env, clipMgr);
+    }
+
+    (*env)->DeleteLocalRef(env, svcName);
+    (*env)->DeleteLocalRef(env, ctxClass);
+    /* Do NOT DetachCurrentThread -- Sokol reuses this thread across frames. */
+}

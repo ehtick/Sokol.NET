@@ -85,6 +85,20 @@ public static unsafe class SharePlugin
         ShareImageAndText(imagePath, text);
     }
 
+    // Put text on the system clipboard, on the two platforms sokol_app.h does NOT
+    // implement sapp_set_clipboard_string() for. Returns false everywhere else, so a
+    // caller can fall back to sokol's own clipboard rather than silently doing nothing.
+    public static bool SetClipboard(string text)
+    {
+#if __ANDROID__ || __IOS__
+        SokolShare.SetClipboard(text);
+        return true;
+#else
+        _ = text;
+        return false;   // macOS/Windows/Linux: sapp_set_clipboard_string() already works
+#endif
+    }
+
     // ── Platform dispatch ─────────────────────────────────────────────────────
 
     static void ShareImageAndText(string imagePath, string text)

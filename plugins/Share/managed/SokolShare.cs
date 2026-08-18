@@ -20,5 +20,15 @@ internal static class SokolShare
     internal static extern void ShareImageText(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string? imagePath,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string  text);
+
+#if __ANDROID__ || __IOS__
+    // Put text on the system clipboard. Android/iOS ONLY -- the two platforms
+    // sapp_set_clipboard_string() leaves unimplemented. macOS is deliberately
+    // excluded (sokol handles it), so the macOS dylib needs no such symbol.
+    [DllImport(Lib, EntryPoint = "sokolshare_set_clipboard",
+               CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void SetClipboard(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string text);
+#endif
 }
 #endif
