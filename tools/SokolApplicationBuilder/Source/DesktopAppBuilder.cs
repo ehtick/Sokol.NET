@@ -77,11 +77,24 @@ namespace SokolApplicationBuilder
                 string absoluteProjectFile = Path.GetFullPath(projectFile);
                 string absoluteOutputPath = Path.GetFullPath(outputPath);
 
+                // ⛔ -p:DefineConstants is a GLOBAL property, so it REPLACES whatever the project computed
+                // rather than adding to it — every <DefineConstants>$(DefineConstants);X</DefineConstants>
+                // line in the .csproj is silently discarded for this publish. That means the platform
+                // symbol the project would have defined (__MACOS__/__WINDOWS__/__LINUX__, see the app
+                // templates) has to be re-supplied HERE, or a published desktop binary loses every
+                // platform-gated P/Invoke — which is not a build error, just a method that compiles to
+                // nothing. It cost us the whole macOS share sheet: the app ran, captured its screenshot
+                // and called into a SharePlugin whose macOS branch had been compiled away.
+                string desktopConstants = "_DESKTOP_PUBLISHED_BINARY_";
+                string platformDefine = DesktopPlatformDefine(opts.RID);
+                if (platformDefine.Length > 0) desktopConstants += "%3B" + platformDefine;   // never an empty entry
+                if (opts.Type == "release-harness") desktopConstants += "%3BHARNESS";
+
                 // Build project with dotnet publish
                 string dotnetCommand = $"dotnet publish -f {targetFramework} \"{absoluteProjectFile}\" -r {opts.RID} -c {buildType} " +
                                      $"-p:PublishAot=true -p:TrimmerRemoveSymbols=false -p:TrimMode=partial " +
                                      $"-p:DisableUnsupportedError=true -p:PublishAotUsingRuntimePack=true " +
-                                     $"-p:StripSymbols=true -p:DefineConstants=\"_DESKTOP_PUBLISHED_BINARY_{(opts.Type == "release-harness" ? "%3BHARNESS" : "")}\" " +
+                                     $"-p:StripSymbols=true -p:DefineConstants=\"{desktopConstants}\" " +
                                      $"-o \"{absoluteOutputPath}\"";
 
                 Log.LogMessage(MessageImportance.High, "📦 Publishing .NET project...");
@@ -155,6 +168,16 @@ namespace SokolApplicationBuilder
 
             return $"{os}-{arch}";
         }
+
+        /// <summary>The platform symbol a desktop project would have defined for itself, keyed off the
+        /// publish RID. It has to be restated here because -p:DefineConstants REPLACES the project's own
+        /// value (see the publish command above), and a lost platform symbol fails SILENTLY: the
+        /// platform-gated code compiles to an empty method instead of erroring.</summary>
+        private static string DesktopPlatformDefine(string rid)
+            => rid.StartsWith("osx", StringComparison.OrdinalIgnoreCase)   ? "__MACOS__"
+             : rid.StartsWith("win", StringComparison.OrdinalIgnoreCase)   ? "__WINDOWS__"
+             : rid.StartsWith("linux", StringComparison.OrdinalIgnoreCase) ? "__LINUX__"
+             : "";
 
         private string GetProjectName(string projectPath)
         {
