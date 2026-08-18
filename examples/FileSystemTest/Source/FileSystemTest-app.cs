@@ -234,6 +234,14 @@ public static unsafe class FilesystemTestApp
         string datPath = _assetsDir + "test_data/numbers.dat";
         Add("Assets", "numbers.dat sfs_path_exists", sfs_path_exists(datPath), datPath);
 
+        // --- a path that is NOT there must not report as present ---
+        // Regression guard: Android falls back to AAssetManager_openDir() when stat() fails, and
+        // that call hands back a valid (empty) handle for a directory that does not exist. Until
+        // it was made to require at least one entry, these two answered TRUE for every path.
+        string ghostPath = _assetsDir + "test_data/no_such_entry_here";
+        Add("Assets", "missing path !sfs_path_exists",  !sfs_path_exists(ghostPath),  ghostPath);
+        Add("Assets", "missing path !sfs_is_directory", !sfs_is_directory(ghostPath), ghostPath);
+
         // --- binary.bin (all 256 byte values 0x00-0xFF) ---
         string binPath = _assetsDir + "test_data/binary.bin";
         Add("Assets", "binary.bin sfs_path_exists", sfs_path_exists(binPath), binPath);
