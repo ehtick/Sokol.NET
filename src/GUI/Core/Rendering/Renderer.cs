@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using static Sokol.NanoVG;
 
@@ -648,7 +649,29 @@ public sealed class Renderer
         // text, then apply ToVisual per line so character order is correct and
         // line order is preserved top-to-bottom.
         var metrics = MeasureTextMetrics();
-        var utf8 = System.Text.Encoding.UTF8.GetBytes(text);
+        float lineY = y;
+        foreach (var line in BreakLogicalLines(text, maxW))
+        {
+            if (line.Length > 0) nvgTextBox(_vg, x, lineY, maxW, BidiHelper.ToVisual(line), null);
+            lineY += metrics.lineHeight;
+        }
+    }
+
+    /// <summary>
+    /// Wraps <paramref name="text"/> at <paramref name="maxW"/> on the LOGICAL string, the way an RTL
+    /// paragraph is actually drawn — each line is shaped only afterwards, per line.
+    /// <para>⛔ Drawing and MEASURING must both go through this. They used to differ: draw broke the
+    /// logical text while <see cref="MeasureTextBounds"/> shaped the whole paragraph first and wrapped
+    /// that. Arabic shaping ligates and narrows a run, so the shaped paragraph fits in FEWER lines than
+    /// get drawn — the measured height came up short and, inside a ScrollView, the tail of the text
+    /// could never be scrolled to. Hebrew hid the bug for years because it has no cursive joining, so
+    /// reordering leaves every advance width untouched and the two line counts agree.</para>
+    /// </summary>
+    List<string> BreakLogicalLines(string text, float maxW)
+    {
+        var lines = new List<string>();
+        var utf8  = System.Text.Encoding.UTF8.GetBytes(text);
+        if (utf8.Length == 0) return lines;
         unsafe
         {
             fixed (byte* ptr = utf8)
@@ -657,25 +680,20 @@ public sealed class Renderer
                 Sokol.NanoVG.NVGtextRowRaw* rows = stackalloc Sokol.NanoVG.NVGtextRowRaw[MaxRows];
                 byte* cur = ptr;
                 byte* end = ptr + utf8.Length;
-                float lineY = y;
                 int count;
                 while ((count = nvgTextBreakLines(_vg, cur, end, maxW, rows, MaxRows)) > 0)
                 {
                     for (int i = 0; i < count; i++)
                     {
                         int len = (int)(rows[i].end - rows[i].start);
-                        if (len > 0)
-                        {
-                            string line = System.Text.Encoding.UTF8.GetString(rows[i].start, len);
-                            nvgTextBox(_vg, x, lineY, maxW, BidiHelper.ToVisual(line), null);
-                        }
-                        lineY += metrics.lineHeight;
+                        lines.Add(len > 0 ? System.Text.Encoding.UTF8.GetString(rows[i].start, len) : "");
                     }
                     cur = rows[count - 1].next;
                     if (cur >= end) break;
                 }
             }
         }
+        return lines;
     }
 
     public void DrawTextBox(float x, float y, float maxW, string text, UIColor c)
@@ -684,9 +702,21 @@ public sealed class Renderer
         DrawTextBox(x, y, maxW, text);
     }
 
-    /// <summary>Returns (width, height) of the wrapped text at current font/size settings. Applies BiDi reordering.</summary>
+    /// <summary>Returns (width, height) of the wrapped text at current font/size settings. Applies BiDi
+    /// reordering, and for an RTL paragraph measures exactly what <see cref="DrawTextBox"/> will draw —
+    /// see <see cref="BreakLogicalLines"/> for why measuring the shaped paragraph instead loses the tail
+    /// of Arabic text inside a ScrollView.</summary>
     public (float width, float height) MeasureTextBounds(float x, float y, float maxW, string text)
     {
+        if (BidiHelper.IsRTLParagraph(text))
+        {
+            var lines   = BreakLogicalLines(text, maxW);
+            var metrics = MeasureTextMetrics();
+            float widest = 0f;
+            foreach (var line in lines)
+                if (line.Length > 0) widest = MathF.Max(widest, MeasureText(BidiHelper.ToVisual(line)));
+            return (widest, lines.Count * metrics.lineHeight);
+        }
         var visual = BidiHelper.ToVisual(text);
         unsafe
         {
