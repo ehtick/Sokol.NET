@@ -98,6 +98,14 @@ public class TextBox : Widget
     public event Action<string>? TextChanged;
     public event Action?         Submitted;
 
+    /// <summary>Raised when the box loses keyboard focus — the commit-on-blur partner to
+    /// <see cref="Submitted"/> (Enter). A field that only commits on Enter silently drops an edit when
+    /// the user taps elsewhere, which on a phone is the usual way to leave a field.
+    /// <para>⚠ On desktop, Enter fires <see cref="Submitted"/> AND advances focus, so a box wired to
+    /// both gets two notifications for one edit — make the handler idempotent (no-op when the value is
+    /// unchanged) rather than expecting exactly one call.</para></summary>
+    public event Action?         FocusLost;
+
     // ─── Sizing ───────────────────────────────────────────────────────────────
     public override Vector2 PreferredSize(Renderer renderer)
     {
@@ -230,6 +238,10 @@ public class TextBox : Widget
         _selStart      = -1;
         _mouseDragging = false;
         _undoDirty     = false;
+        // After the internal state is consistent (a handler may read Text or rebuild the screen) and
+        // BEFORE the SkipKeyboardManagement early-out, so a box that manages its own keyboard still
+        // reports the blur.
+        FocusLost?.Invoke();
         if (SkipKeyboardManagement) return;
         // Don't hide keyboard when focus is moving to the mobile overlay proxy.
         if (Screen.Instance?.MobileOverlay.SuppressingKeyboard == true) return;
