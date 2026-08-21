@@ -106,6 +106,17 @@ public class TextBox : Widget
     /// unchanged) rather than expecting exactly one call.</para></summary>
     public event Action?         FocusLost;
 
+    /// <summary>Called by <see cref="MobileKeyboardOverlay"/> when the PROXY box above the virtual
+    /// keyboard is submitted / dismissed. On mobile the user never types into this box — a proxy takes
+    /// focus and mirrors its text back — so without these relays <see cref="Submitted"/> never fires at
+    /// all on a phone and <see cref="FocusLost"/> fires at the wrong moment (when the proxy TAKES focus,
+    /// before anything is typed). A field wired to either event would then work on desktop and silently
+    /// do nothing on mobile until the screen closed.</summary>
+    internal void NotifySubmitted() => Submitted?.Invoke();
+
+    /// <inheritdoc cref="NotifySubmitted"/>
+    internal void NotifyFocusLost() => FocusLost?.Invoke();
+
     // ─── Sizing ───────────────────────────────────────────────────────────────
     public override Vector2 PreferredSize(Renderer renderer)
     {

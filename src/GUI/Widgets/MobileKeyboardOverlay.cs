@@ -76,7 +76,11 @@ public sealed class MobileKeyboardOverlay : Widget
                 SkipKeyboardManagement = true,
             };
             p.TextChanged += t => { if (_original is TextBox o) o.Text = t; };
-            p.Submitted   += () => Hide();
+            // Relay the proxy's Enter to the ORIGINAL box before tearing the overlay down. Without this
+            // the original's Submitted never fires on mobile at all: the user types into the proxy, so
+            // only the proxy is ever submitted. Same handler, same order as desktop (Submitted, then the
+            // blur that Hide() raises).
+            p.Submitted   += () => { (_original as TextBox)?.NotifySubmitted(); Hide(); };
             proxy = p;
         }
         else if (focused is TextArea ta && ta.IsEditable)
@@ -117,9 +121,17 @@ public sealed class MobileKeyboardOverlay : Widget
 
         sapp_show_keyboard(false);
 
+        var original = _original;
         _original = null;
         ClearChildren();
         Visible = false;
+        // The edit session is over, so tell the ORIGINAL box it lost focus — commit-on-blur must behave
+        // the same on a phone as on desktop. Its own OnFocusLost already fired back when the proxy TOOK
+        // focus, i.e. before the user typed a character, so that one is useless to a consumer.
+        // ⚠ Raised AFTER the overlay is fully torn down: a handler may rebuild the screen, and it must
+        // not find a half-hidden overlay. Handlers wired to both events get one call here and one from
+        // Submitted for an Enter — the same double-notify desktop produces, so they must be idempotent.
+        (original as TextBox)?.NotifyFocusLost();
     }
 
     public void UpdateKeyboardHeight(float keyboardHeight)
