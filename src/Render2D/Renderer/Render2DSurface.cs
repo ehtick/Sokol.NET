@@ -112,6 +112,17 @@ public sealed unsafe class Render2DSurface : IDisposable
     /// <summary>A 1×1 white texture view — bind for non-textured (dynamic) particle batches.</summary>
     public sg_view WhiteView => _whiteView;
 
+    /// <summary>A TEXTURE view of this surface's rendered colour target, for binding it as the source of a
+    /// later draw — i.e. using one surface as an offscreen render-to-texture that another samples.
+    /// <para>The intended use is a bake: <see cref="Begin"/> → draw → <see cref="End"/> on a dedicated
+    /// surface, then pass this to <see cref="BeginParticleBatch"/> so the result is blitted as textured
+    /// quads (glyph/sprite atlases built from the same vector code that would otherwise redraw the shapes
+    /// every frame). ⛔ sokol_gfx forbids NESTED passes, so the bake must run BEFORE the consuming
+    /// surface's <see cref="Begin"/>, never between its Begin and End.</para>
+    /// <para>Zero until the surface has rendered at least once (the target is created on first
+    /// <see cref="Begin"/>); check <see cref="IsValid"/>.</para></summary>
+    public sg_view TextureView => _texView;
+
     public void Init()
     {
         if (_inited) return;
@@ -325,7 +336,11 @@ public sealed unsafe class Render2DSurface : IDisposable
         if (!IsValid) return;
         var action = default(sg_pass_action);
         action.colors[0].load_action  = sg_load_action.SG_LOADACTION_CLEAR;
-        action.colors[0].clear_value  = new sg_color { r = _clear.R, g = _clear.G, b = _clear.B, a = 1f };
+        // ⛔ The clear's ALPHA is honoured, not forced to 1. A surface used as a render-to-texture source
+        // (see TextureView) has to be able to clear TRANSPARENT — baking a glyph atlas onto a forced-opaque
+        // clear produces a solid box behind every glyph, which is exactly what it looked like. Every
+        // on-screen consumer passes an opaque colour, so this changes nothing for them.
+        action.colors[0].clear_value  = new sg_color { r = _clear.R, g = _clear.G, b = _clear.B, a = _clear.A };
         if (Msaa) action.colors[0].store_action = sg_store_action.SG_STOREACTION_DONTCARE;   // MSAA resolved, not stored
 
         var vp = new ViewportUB { W = _w, H = _h };
