@@ -287,6 +287,10 @@ public sealed class InputRouter
 
     private void DispatchTouch(sapp_event_type type, TouchEvent te)
     {
+        // Two-finger pinch over an IPinchZoomable ancestor claims the whole touch stream first —
+        // see PinchUpdate. Inert when nothing in the tree implements the interface.
+        if (PinchUpdate(type, te)) return;
+
         // Find primary (first changed) touch for synthetic mouse simulation.
         TouchPoint? primary = null;
         foreach (var pt in te.Touches)
@@ -452,6 +456,131 @@ public sealed class InputRouter
                 break;
             }
         }
+    }
+
+    // ─── Pinch-to-zoom (two-finger, over an IPinchZoomable ancestor) ──────────
+    // The touch-ownership model hands each finger to the deepest widget under it, so a zooming
+    // CONTAINER can never assemble a pinch from its child's touches. The router arbitrates instead,
+    // exactly like drag-to-scroll: arm when a second finger lands and both fingers share one
+    // IPinchZoomable ancestor; un-press whatever the first finger pressed (the scroll-pan idiom, so
+    // the gesture cannot double as a tap or a move); swallow the stream while the gesture lives AND
+    // until every finger lifts, so the release cannot become a click either.
+
+    private IPinchZoomable? _pinch;                  // live gesture target
+    private int   _pinchIdA = -1, _pinchIdB = -1;    // the two fingers driving the scale
+    private float _pinchDist;                        // finger distance at the last update
+    // Every touch the gesture has swallowed, including fingers that joined it and the two that drive
+    // it. ⛔ Ids, not a bool: the gesture's LAST fingers must keep being swallowed until they lift
+    // (their release must not land as a tap), but a bool cooldown then also ate the user's NEXT tap
+    // when both fingers lifted in one event and nothing followed to clear it. An id set cannot: a
+    // fresh touch is simply not in it.
+    private readonly HashSet<int> _pinchIds = new();
+
+    private static IPinchZoomable? FindPinchAncestor(Widget? w)
+    {
+        for (var c = w; c != null; c = c.Parent)
+            if (c is IPinchZoomable pz) return pz;
+        return null;
+    }
+
+    private static float Dist(Vector2 a, Vector2 b)
+        => MathF.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y));
+
+    /// <summary>Feed a touch phase straight into the dispatcher, exactly as a platform event would —
+    /// the ONE seam a test can use to drive a multi-finger gesture. ⛔ Test-only, and `internal` on
+    /// purpose: the real path is <see cref="Dispatch"/>, which builds this same
+    /// <see cref="TouchEvent"/> from the native <c>sapp_event</c>. Exists because no automated route
+    /// reaches a two-finger gesture on a real device — Android's <c>sendevent</c> is SELinux-blocked
+    /// to <c>adb shell</c> on every phone in the fleet, and iOS has no injection at all — so without
+    /// it the pinch could only ever be "tried by hand once".</summary>
+    internal void TestTouch(sapp_event_type type, TouchEvent te) => DispatchTouch(type, te);
+
+    /// <summary>Advance the pinch gesture. Returns true when the event belongs to it (the caller must
+    /// not dispatch it further).</summary>
+    private bool PinchUpdate(sapp_event_type type, TouchEvent te)
+    {
+        bool ending = type is sapp_event_type.SAPP_EVENTTYPE_TOUCHES_ENDED
+                           or sapp_event_type.SAPP_EVENTTYPE_TOUCHES_CANCELLED;
+
+        if (_pinch == null && _pinchIds.Count == 0)
+        {
+            // Arm on the event that brings the finger count to two, when both fingers stand over the
+            // SAME pinch-zoomable ancestor. Anything else is not ours — one finger never is, so a tap
+            // and a drag reach the board exactly as before.
+            if (type != sapp_event_type.SAPP_EVENTTYPE_TOUCHES_BEGAN || te.Touches.Length != 2) return false;
+            var a = te.Touches[0]; var b = te.Touches[1];
+            var pa = FindPinchAncestor(_screen.HitTestDeep(a.Position));
+            if (pa == null || !ReferenceEquals(pa, FindPinchAncestor(_screen.HitTestDeep(b.Position)))) return false;
+
+            _pinch = pa; _pinchIdA = a.Id; _pinchIdB = b.Id;
+            _pinchDist = Dist(a.Position, b.Position);
+            _pinchIds.Add(a.Id); _pinchIds.Add(b.Id);
+
+            // The first finger may already have pressed something (its BEGAN dispatched normally):
+            // un-press it the way drag-to-scroll does, and close any native touch state, so the pinch
+            // cannot also land as a tap, a drag or a stuck key.
+            _captured?.OnMouseLeave(new MouseEvent { Position = a.Position });
+            _captured  = null;
+            _scrolling = false; _scrollDrag = null;
+            foreach (var t in te.Touches)
+                if (_touchOwners.Remove(t.Id, out var owner))
+                    owner.OnTouchUp(new TouchEvent
+                    {
+                        Touches = new[] { new TouchPoint { Id = t.Id, Changed = true, Position = t.Position } }
+                    });
+            return true;
+        }
+
+        // Is this event the gesture's? Only when every touch it CHANGES belongs to it — so a fresh
+        // finger landing while the gesture's last one is still down dispatches normally.
+        bool mine = false, foreign = false;
+        foreach (var t in te.Touches)
+        {
+            if (!t.Changed) continue;
+            if (_pinchIds.Contains(t.Id)) mine = true; else foreign = true;
+        }
+        if (!mine || foreign)
+        {
+            // While the gesture is LIVE a new finger joins it rather than acting on its own (a third
+            // finger mid-pinch is not a tap); once it is over, a foreign touch is the user's next
+            // gesture and must pass through.
+            if (_pinch == null) return false;
+            foreach (var t in te.Touches) if (t.Changed) _pinchIds.Add(t.Id);
+        }
+
+        if (ending)
+            foreach (var t in te.Touches)
+                if (t.Changed) _pinchIds.Remove(t.Id);
+
+        if (_pinch == null) return true;                  // winding down: swallow our own fingers' tail
+
+        // Follow the two fingers that drive the scale. Either lifting ends the gesture — as does
+        // either being silently DROPPED (iOS does that over its touch limit, the same hazard the
+        // ghost-touch cleanup below exists for). Fingers still down stay in _pinchIds, so their
+        // release is swallowed rather than landing as a tap.
+        TouchPoint? ta = null, tb = null;
+        foreach (var t in te.Touches)
+        {
+            if (t.Id == _pinchIdA) ta = t;
+            else if (t.Id == _pinchIdB) tb = t;
+        }
+        if (ta == null || tb == null || !_pinchIds.Contains(_pinchIdA) || !_pinchIds.Contains(_pinchIdB))
+        {
+            _pinch = null; _pinchIdA = _pinchIdB = -1;
+            return true;
+        }
+        if (type == sapp_event_type.SAPP_EVENTTYPE_TOUCHES_MOVED)
+        {
+            float d = Dist(ta.Position, tb.Position);
+            if (d > 1f && _pinchDist > 1f)
+            {
+                var mid = new Vector2((ta.Position.X + tb.Position.X) * 0.5f,
+                                      (ta.Position.Y + tb.Position.Y) * 0.5f);
+                _pinch.OnPinchZoom(d / _pinchDist, mid);
+                _pinchDist = d;
+            }
+        }
+        return true;
     }
 
     // ─── Drag-to-scroll (finger-flick / drag-anywhere panning) ────────────────
