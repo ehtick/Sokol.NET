@@ -1037,6 +1037,34 @@ namespace SokolApplicationBuilder
         }
 
         /// <summary>
+        /// Launch fallback for a CABLED device that CoreDevice cannot reach at all — an iPhone on iOS 15
+        /// or older shows as "unavailable" in `devicectl list devices` and `devicectl device process launch`
+        /// fails with CoreDeviceError 1000 (device not found), while the install (ios-deploy) succeeded.
+        /// `idevicedebug --detach run <bundle-id>` (libimobiledevice) launches it through debugserver and
+        /// detaches, leaving it running. ⛔ NOT `ios-deploy -m -L -b <app>`: that route reported "success"
+        /// and the app died at dyld start with SIGTRAP inside lldb_image_notifier — the debugger's detach
+        /// left a trap behind — on an iPhone 7 / iOS 15.8.8 (3 crash reports, 2026-09-06); idevicedebug
+        /// launched the same build cleanly on the same device.
+        /// </summary>
+        private bool TryLaunchViaIdevicedebug(string targetDeviceId, string targetDeviceName, string bundleId)
+        {
+            try
+            {
+                var r = Cli.Wrap("idevicedebug")
+                    .WithArguments($"-u {targetDeviceId} --detach run {bundleId}")
+                    .WithValidation(CommandResultValidation.None)
+                    .ExecuteBufferedAsync().GetAwaiter().GetResult();
+                if (r.ExitCode == 0) return true;
+                Log.LogMessage(MessageImportance.Normal, $"idevicedebug launch on {targetDeviceName} failed (exit {r.ExitCode}): {r.StandardError.Trim()}");
+            }
+            catch (Exception ex)
+            {
+                Log.LogMessage(MessageImportance.Normal, $"idevicedebug launch on {targetDeviceName} unavailable (brew install libimobiledevice): {ex.Message}");
+            }
+            return false;
+        }
+
+        /// <summary>
         /// Install the app bundle on ONE device (xcrun devicectl first, ios-deploy fallback) and,
         /// when requested, launch it. Returns false only if every install method failed.
         /// <paramref name="via"/> is the transport the device was discovered on ("USB" / "WiFi").
@@ -1130,7 +1158,9 @@ namespace SokolApplicationBuilder
                         .WithValidation(CommandResultValidation.None)
                         .ExecuteBufferedAsync().GetAwaiter().GetResult();
 
-                    if (launchResult.ExitCode != 0)
+                    if (launchResult.ExitCode != 0 && !overWifi && TryLaunchViaIdevicedebug(targetDeviceId, targetDeviceName, bundleId))
+                        Log.LogMessage(MessageImportance.High, $"App launched successfully on device: {targetDeviceName} (via idevicedebug)!");
+                    else if (launchResult.ExitCode != 0)
                         Log.LogWarning($"App launch failed (exit {launchResult.ExitCode}) — the app IS installed, so just tap it on " +
                                        $"the device. devicectl cannot reach {targetDeviceName} (check `xcrun devicectl list devices`: " +
                                        $"it should read 'available (paired)', not 'connecting'). {launchResult.StandardError}");
