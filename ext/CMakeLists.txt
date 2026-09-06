@@ -158,6 +158,13 @@ if (WIN32)
 elseif (APPLE)
     if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
         target_compile_options(sokol PRIVATE -x objective-c)
+        # iOS builds with ARC. The sokol headers (sokol_app.h, sokol_gfx.h, sokol_audio.h) and this fork's ObjC helpers
+        # (sokol_capture.h, sokol_safearea.h, sokol_filesystem.h) are written for ARC; under manual reference counting the
+        # UIKit teardown over-released objects it never retained (+[CAMetalLayer layer] is autoreleased) and iOS 15 crashed in
+        # -[UIWindow dealloc] when the app was swiped away (2026-09-06). The unity source is a .c file compiled as Objective-C,
+        # so Xcode's CLANG_ENABLE_OBJC_ARC alone would not reach it: pass -fobjc-arc per source as well.
+        set_source_files_properties("sokol.c" ${FILEUTIL_SRCS} PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+        set_target_properties(sokol PROPERTIES XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC "YES")
         target_link_libraries(sokol
             "-framework UIKit"
             "-framework QuartzCore"

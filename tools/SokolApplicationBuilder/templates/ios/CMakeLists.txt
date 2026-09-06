@@ -50,6 +50,7 @@ set_target_properties(TEMPLATE_PROJECT_NAME-ios-app PROPERTIES
     # without it, Xcode defaults to the (current SDK) version and the bundle is
     # rejected on older devices ("DeviceOSVersionTooLow").
     XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "TEMPLATE_IOS_MIN_VERSION"
+    XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC "YES"   # iOS builds with ARC, like the sokol framework the app embeds (ext/CMakeLists.txt)
     MACOSX_BUNDLE_GUI_IDENTIFIER "TEMPLATE_BUNDLE_ID"
     MACOSX_BUNDLE_BUNDLE_NAME "TEMPLATE_BUNDLE_DISPLAY_NAME"
     MACOSX_BUNDLE_BUNDLE_VERSION "TEMPLATE_APP_VERSION"
