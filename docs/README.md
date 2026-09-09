@@ -48,6 +48,10 @@ This directory also hosts the **interactive WebAssembly examples showcase** for 
 - [Build System Documentation](./BUILD_SYSTEM.md) - Comprehensive guide to building sokol libraries for all platforms
 - [Quick Build Reference](./QUICK_BUILD.md) - Quick reference for local builds and common commands
 
+### Security / Obfuscation (experimental)
+- **[Code Obfuscation Guide](./OBFUSCATION.md)** 🔒 — ⚠️ experimental, not fully verified — how to obfuscate a project's managed code (method/string/type renaming) before NativeAOT/WASM, with examples
+- [Obfuscation Tool Design & Internals](./OBFUSCATION_TOOL_DESIGN.md) - design notes, safety model, and config schema
+
 ### General
 - [Multi-Device Install](./MULTI_DEVICE_INSTALL.md)
 - [Android Keyboard Implementation](./ANDROID_KEYBOARD_IMPLEMENTATION.md) - Android soft keyboard and clipboard support

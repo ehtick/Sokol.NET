@@ -403,6 +403,8 @@ namespace SokolApplicationBuilder
                     publishArgs += $" -p:LinkerFlags=\"{opts.LinkerFlags}\"";
                 }
 
+                publishArgs += ObfuscationInjection.BuildArgs(opts, opts.ProjectPath, configuration, Log);
+
                 var result = Cli.Wrap("dotnet")
                     .WithArguments(publishArgs)
                     .WithWorkingDirectory(projectDir)

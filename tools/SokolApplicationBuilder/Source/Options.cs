@@ -58,8 +58,11 @@ namespace SokolApplicationBuilder
         [Option( "debug", Required = false, HelpText = "install and debug binary")]
         public bool Debug { get; set; } = false;
 
-        [Option( "obfuscate", Required = false, HelpText = "obfuscate the source code")]
+        [Option( "obfuscate", Required = false, HelpText = "Obfuscate the app's managed code before AOT (requires obfuscate.xml in the project folder; release builds only). See docs/OBFUSCATION_TOOL_DESIGN.md")]
         public bool Obfuscate { get; set; } = false;
+
+        [Option( "obfuscation-config", Required = false, HelpText = "Override path to the obfuscation XML config (default: <project>/obfuscate.xml).")]
+        public string ObfuscationConfig { get; set; } = "";
 
         [Option("keystore", Required = false, HelpText = "Android key store path")]
         public string KeyStorePath { get; set; } = "";

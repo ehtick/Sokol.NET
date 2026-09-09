@@ -1,0 +1,58 @@
+<Project>
+
+  <!--
+    Injected into a project's build/publish via:
+        -p:CustomAfterMicrosoftCommonTargets=<abs path to this file>
+        -p:SokolObfuscate=true
+        -p:SokolObfuscatorTool=<abs path to SokolObfuscator.dll>
+        -p:SokolObfuscationConfig=<abs path to obfuscate.xml>   (optional)
+
+    It rewrites the freshly-compiled managed assembly (@(IntermediateAssembly), in obj/) in the
+    window AFTER CoreCompile emits it and BEFORE the trimmer / NativeAOT ILC / Mono-WASM AOT
+    consume it. Rewriting in place means every downstream step (trim, ILC, WASM AOT, bundling)
+    operates on the obfuscated IL. Uniform across Desktop/Android/iOS (ILC) and Web (mono-wasm).
+    See docs/OBFUSCATION_TOOL_DESIGN.md §4.2.
+  -->
+  <!--
+    Force a FRESH compile for every obfuscated build. The obfuscator rewrites @(IntermediateAssembly)
+    in place and stamps an idempotency marker (SokolObfuscator.__Obfuscated__). If CoreCompile is
+    incrementally skipped because the SOURCES are unchanged, the previous build's already-obfuscated
+    (marker-bearing) assembly is reused — so a changed obfuscate.xml / tool / seed would NOT take
+    effect and, worse, an earlier partial obfuscation (e.g. rename-only, before string encryption)
+    would ship silently. Deleting the intermediate assembly (+ its pdb and stale map) BEFORE
+    CoreCompile makes CoreCompile's up-to-date check fail, so it always recompiles clean and the
+    AfterTargets="Compile" step below always re-obfuscates from a fresh, unmarked assembly.
+    RID/project-agnostic via $(IntermediateOutputPath)/$(TargetName). Runs only when obfuscating,
+    so ordinary builds keep full incrementality. See docs/OBFUSCATION_TOOL_DESIGN.md §8.7.
+  -->
+  <Target Name="SokolObfuscateForceRecompile"
+          BeforeTargets="CoreCompile"
+          Condition="'$(SokolObfuscate)' == 'true'">
+    <ItemGroup>
+      <_SokolObfStale Include="$(IntermediateOutputPath)$(TargetName)$(TargetExt)" />
+      <_SokolObfStale Include="$(IntermediateOutputPath)$(TargetName).pdb" />
+      <_SokolObfStale Include="$(IntermediateOutputPath)obfuscation.map.json" />
+    </ItemGroup>
+    <Delete Files="@(_SokolObfStale)" ContinueOnError="true" />
+  </Target>
+
+  <Target Name="SokolObfuscateManagedAssembly"
+          AfterTargets="Compile"
+          BeforeTargets="ILLink;IlcCompile;_WasmAotCompileApp;PrepareForRun"
+          Condition="'$(SokolObfuscate)' == 'true' and '@(IntermediateAssembly)' != ''">
+
+    <Error Condition="'$(SokolObfuscatorTool)' == '' or !Exists('$(SokolObfuscatorTool)')"
+           Text="SokolObfuscate=true but SokolObfuscatorTool is not set to an existing SokolObfuscator.dll." />
+
+    <PropertyGroup>
+      <_SokolObfInput>@(IntermediateAssembly->'%(FullPath)')</_SokolObfInput>
+      <_SokolObfMap>$(IntermediateOutputPath)obfuscation.map.json</_SokolObfMap>
+      <_SokolObfArgs>--input "$(_SokolObfInput)" --map "$(_SokolObfMap)" --rid "$(RuntimeIdentifier)"</_SokolObfArgs>
+      <_SokolObfArgs Condition="'$(SokolObfuscationConfig)' != ''">$(_SokolObfArgs) --config "$(SokolObfuscationConfig)"</_SokolObfArgs>
+    </PropertyGroup>
+
+    <Message Importance="high" Text="🔒 SokolObfuscator: rewriting @(IntermediateAssembly->'%(Filename)%(Extension)') before AOT …" />
+    <Exec Command="dotnet &quot;$(SokolObfuscatorTool)&quot; $(_SokolObfArgs)" />
+  </Target>
+
+</Project>

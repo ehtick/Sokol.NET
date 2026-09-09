@@ -1381,7 +1381,7 @@ namespace SokolApplicationBuilder
                     string defineConstants = $"{arm32Extra}__ANDROID__{harnessDef}";
 
                     var result = Cli.Wrap("dotnet")
-                        .WithArguments($"publish \"{projectFile}\" -r {arch} -c {configuration} -p:BuildAsLibrary=true -p:DisableUnsupportedError=true -p:PublishAotUsingRuntimePack=true -p:RemoveSections=true {releaseHardeningArgs}-p:DefineConstants=\"{defineConstants}\" --verbosity quiet")
+                        .WithArguments($"publish \"{projectFile}\" -r {arch} -c {configuration} -p:BuildAsLibrary=true -p:DisableUnsupportedError=true -p:PublishAotUsingRuntimePack=true -p:RemoveSections=true {releaseHardeningArgs}-p:DefineConstants=\"{defineConstants}\" --verbosity quiet{ObfuscationInjection.BuildArgs(opts, opts.ProjectPath, configuration, Log)}")
                         .WithWorkingDirectory(opts.ProjectPath)
                         .WithEnvironmentVariables(env => 
                         {

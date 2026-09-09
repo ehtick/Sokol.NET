@@ -95,7 +95,8 @@ namespace SokolApplicationBuilder
                                      $"-p:PublishAot=true -p:TrimmerRemoveSymbols=false -p:TrimMode=partial " +
                                      $"-p:DisableUnsupportedError=true -p:PublishAotUsingRuntimePack=true " +
                                      $"-p:StripSymbols=true -p:DefineConstants=\"{desktopConstants}\" " +
-                                     $"-o \"{absoluteOutputPath}\"";
+                                     $"-o \"{absoluteOutputPath}\"" +
+                                     ObfuscationInjection.BuildArgs(opts, opts.ProjectPath, buildType, Log);
 
                 Log.LogMessage(MessageImportance.High, "📦 Publishing .NET project...");
                 (int exitCode, string output) = Utils.RunShellCommand(

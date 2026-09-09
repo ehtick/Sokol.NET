@@ -132,7 +132,8 @@ namespace SokolApplicationBuilder
             Utils.AppendReferencesAndPackageReferencesToProject(Path.Combine(opts.ProjectPath, projectName), references, packageReferences);
 
             string projectFile = Path.Combine(opts.ProjectPath, projectName);
-            string dotnet_build_command = $"dotnet build -f {targetFramework} \"{projectFile}\" -c {buildType} -p:DefineConstants=\"WEB\" -o {opts.OutputPath}";
+            string dotnet_build_command = $"dotnet build -f {targetFramework} \"{projectFile}\" -c {buildType} -p:DefineConstants=\"WEB\" -o {opts.OutputPath}"
+                + ObfuscationInjection.BuildArgs(opts, opts.ProjectPath, buildType, Log);
 
             (int exitCode, string output) = Utils.RunShellCommand(Log,
                 dotnet_build_command,

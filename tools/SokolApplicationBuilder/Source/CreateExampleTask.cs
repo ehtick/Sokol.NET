@@ -418,6 +418,20 @@ $@"		{{{projectGuid}}}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 			""command"": ""dotnet"",
 			""args"": [""run"", ""--project"", ""${{workspaceFolder}}/tools/SokolApplicationBuilder"", ""--"", ""--task"", ""prepare"", ""--architecture"", ""web"", ""--path"", ""${{workspaceFolder}}/examples/{exampleName}""],
 			""problemMatcher"": ""$msCompile""
+		}},
+		{{
+			""label"": ""obfuscate-{exampleName}"",
+			""type"": ""shell"",
+			""command"": ""dotnet"",
+			""args"": [""run"", ""--project"", ""${{workspaceFolder}}/tools/SokolApplicationBuilder"", ""--"", ""--task"", ""build"", ""--architecture"", ""desktop"", ""--type"", ""release"", ""--path"", ""${{workspaceFolder}}/examples/{exampleName}"", ""--obfuscate""],
+			""problemMatcher"": ""$msCompile""
+		}},
+		{{
+			""label"": ""obfuscate-{exampleName}-web"",
+			""type"": ""shell"",
+			""command"": ""dotnet"",
+			""args"": [""run"", ""--project"", ""${{workspaceFolder}}/tools/SokolApplicationBuilder"", ""--"", ""--task"", ""build"", ""--architecture"", ""web"", ""--path"", ""${{workspaceFolder}}/examples/{exampleName}"", ""--obfuscate""],
+			""problemMatcher"": ""$msCompile""
 		}},";
                     
                     content = content.Insert(insertPosition, tasks);
