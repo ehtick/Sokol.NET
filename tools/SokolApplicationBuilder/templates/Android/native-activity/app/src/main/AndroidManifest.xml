@@ -27,7 +27,7 @@
               android:label="@string/app_name"
               android:configChanges="orientation|keyboardHidden|screenSize|screenLayout"
               android:screenOrientation="ANDROID_ORIENTATION_PLACEHOLDER"
-              android:windowSoftInputMode="adjustResize"
+              android:windowSoftInputMode="adjustResize|stateAlwaysHidden"
               android:keepScreenOn="true"
         android:exported="true">
       <!-- Tell NativeActivity the name of our .so -->

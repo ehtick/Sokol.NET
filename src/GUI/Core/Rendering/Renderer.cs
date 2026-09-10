@@ -51,6 +51,7 @@ public sealed class Renderer
     /// </summary>
     public void BeginFrame(float logicalW, float logicalH, float dpiScale)
     {
+        _clipStack.Clear(); _clipKnown = false;   // never let a stray Save/Restore imbalance leak a frame
         _dpiScale = dpiScale;
         nvgBeginFrame(_vg, logicalW, logicalH, dpiScale);
     }
@@ -62,27 +63,73 @@ public sealed class Renderer
     // State save / restore
     // -------------------------------------------------------------------------
 
-    public void Save()    => nvgSave(_vg);
-    public void Restore() => nvgRestore(_vg);
+    // ── Cull clip: a CPU mirror of the scissor, in the CURRENT LOCAL space ────────────────────────
+    // NanoVG owns the real scissor; it cannot be read back, and a container needs it to skip children
+    // that cannot possibly be visible (Widget.Draw). Mirroring it here is what turns a clipped
+    // ScrollView from "draws every child and throws most away" into "draws what is on screen".
+    // ⛔ Valid ONLY under pure translation: Scale/Rotate change what a local unit means, so they mark
+    // the mirror UNKNOWN and culling switches itself off until the enclosing Restore. Unknown is also
+    // the start state, so nothing is ever culled outside a container that actually clips.
+    Rect _clip;
+    bool _clipKnown;
+    readonly Stack<(Rect Clip, bool Known)> _clipStack = new();
+
+    /// <summary>True when <see cref="CullClip"/> can be trusted for the current transform.</summary>
+    public bool CanCull => _clipKnown;
+
+    /// <summary>The clip rectangle in the current local coordinate space — the same space a widget's
+    /// child <c>Bounds</c> are in, so the two are directly comparable.</summary>
+    public Rect CullClip => _clip;
+
+    public void Save()
+    {
+        _clipStack.Push((_clip, _clipKnown));
+        nvgSave(_vg);
+    }
+
+    public void Restore()
+    {
+        if (_clipStack.Count > 0) { var st = _clipStack.Pop(); _clip = st.Clip; _clipKnown = st.Known; }
+        nvgRestore(_vg);
+    }
 
     // -------------------------------------------------------------------------
     // Transform
     // -------------------------------------------------------------------------
 
-    public void ResetTransform()              => nvgResetTransform(_vg);
-    public void Translate(Vector2 offset)     => nvgTranslate(_vg, offset.X, offset.Y);
-    public void Translate(float x, float y)  => nvgTranslate(_vg, x, y);
-    public void Scale(Vector2 scale)          => nvgScale(_vg, scale.X, scale.Y);
-    public void Scale(float s)                => nvgScale(_vg, s, s);
-    public void Rotate(float radians)         => nvgRotate(_vg, radians);
+    public void ResetTransform()              { _clipKnown = false; nvgResetTransform(_vg); }
+    public void Translate(Vector2 offset)     => Translate(offset.X, offset.Y);
+    public void Translate(float x, float y)
+    {
+        // The origin moves by (x,y), so a rect expressed in the old space is (-x,-y) in the new one.
+        if (_clipKnown) _clip = _clip.Offset(-x, -y);
+        nvgTranslate(_vg, x, y);
+    }
+    public void Scale(Vector2 scale)          { _clipKnown = false; nvgScale(_vg, scale.X, scale.Y); }
+    public void Scale(float s)                { _clipKnown = false; nvgScale(_vg, s, s); }
+    public void Rotate(float radians)         { _clipKnown = false; nvgRotate(_vg, radians); }
 
     // -------------------------------------------------------------------------
     // Clip / scissor
     // -------------------------------------------------------------------------
 
-    public void ClipRect(Rect r)          => nvgScissor(_vg, r.X, r.Y, r.Width, r.Height);
-    public void IntersectClip(Rect r)     => nvgIntersectScissor(_vg, r.X, r.Y, r.Width, r.Height);
-    public void ResetClip()               => nvgResetScissor(_vg);
+    public void ClipRect(Rect r)
+    {
+        _clip = r; _clipKnown = true;
+        nvgScissor(_vg, r.X, r.Y, r.Width, r.Height);
+    }
+
+    public void IntersectClip(Rect r)
+    {
+        _clip = _clipKnown ? _clip.Intersection(r) : r; _clipKnown = true;
+        nvgIntersectScissor(_vg, r.X, r.Y, r.Width, r.Height);
+    }
+
+    public void ResetClip()
+    {
+        _clipKnown = false;                 // no scissor ⇒ everything is potentially visible
+        nvgResetScissor(_vg);
+    }
 
     // -------------------------------------------------------------------------
     // Color / style

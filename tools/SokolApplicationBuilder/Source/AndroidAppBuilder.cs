@@ -2897,6 +2897,12 @@ KeyAlias={keystoreInfo.KeyAlias}
             manifest.AppendLine($"    <activity android:name=\"{activityName}\"");
             manifest.AppendLine($"              android:label=\"{appName}\"");
             manifest.AppendLine("              android:configChanges=\"orientation|keyboardHidden|screenSize|screenLayout\"");
+            // stateAlwaysHidden: the app opens the IME ONLY through SokolNativeActivity.showKeyboard(true).
+            // The hidden capture EditText is the sole focusable view in the hierarchy, and a device whose
+            // IME policy opens the keyboard for the focused input at window attach (EMUI/Huawei, API 26)
+            // therefore popped the keyboard over the game at launch. adjustResize is kept so a text field
+            // is not covered while the keyboard IS up.
+            manifest.AppendLine("              android:windowSoftInputMode=\"adjustResize|stateAlwaysHidden\"");
             manifest.AppendLine($"              android:screenOrientation=\"{androidOrientation}\"");
             manifest.AppendLine($"              android:keepScreenOn=\"{keepScreenOn.ToString().ToLower()}\"");
             manifest.AppendLine("        android:exported=\"true\">");

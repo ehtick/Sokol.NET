@@ -59,6 +59,14 @@ public class SokolNativeActivity extends NativeActivity {
         hiddenEditText.setLayoutParams(new ViewGroup.LayoutParams(1, 1));
         hiddenEditText.setAlpha(0.0f);
         hiddenEditText.setImeOptions(EditorInfo.IME_FLAG_NO_FULLSCREEN | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+        // NOT focusable until showKeyboard(true) asks for it. An EditText is focusable by default and
+        // this is the only focusable view in the hierarchy, so on devices whose IME policy opens the
+        // keyboard for the focused input at window attach (EMUI/Huawei, API 26) it took focus and the
+        // keyboard appeared over the game at launch. Stricter devices never focused it, which is why
+        // the symptom looked device-specific. Focus is granted in showKeyboard(true) and dropped again
+        // in showKeyboard(false), so the capture path is unchanged.
+        hiddenEditText.setFocusable(false);
+        hiddenEditText.setFocusableInTouchMode(false);
         
         // Create text watcher as member variable so we can remove/add it
         textWatcher = new TextWatcher() {
@@ -161,12 +169,26 @@ public class SokolNativeActivity extends NativeActivity {
                         // Seed padding so backspace can delete text the on-screen GUI field already
                         // contained (it is opened pre-filled, e.g. with the current name).
                         resetKeyboardBuffer();
+                        hiddenEditText.setFocusable(true);
+                        hiddenEditText.setFocusableInTouchMode(true);
                         hiddenEditText.requestFocus();
                         inputMethodManager.showSoftInput(hiddenEditText, InputMethodManager.SHOW_IMPLICIT);
                     } else {
                         // Hide keyboard and clear focus
                         inputMethodManager.hideSoftInputFromWindow(hiddenEditText.getWindowToken(), 0);
                         hiddenEditText.clearFocus();
+                        hiddenEditText.setFocusable(false);
+                        hiddenEditText.setFocusableInTouchMode(false);
+                        // ⛔ Re-arm immersive mode. Showing the IME clears the system-UI flags, and the
+                        // only hooks that restore them are onCreate and onWindowFocusChanged — neither of
+                        // which fires when the keyboard merely hides, because WINDOW focus never changed.
+                        // Without this the navigation bar stays on screen for the rest of the session and
+                        // permanently steals the bottom strip of the game (with adjustResize the content
+                        // is shrunk to sit above it). Posted so it runs after the insets have settled.
+                        final View decor = getWindow().getDecorView();
+                        decor.post(new Runnable() {
+                            @Override public void run() { enableImmersiveMode(); }
+                        });
                     }
                 }
             }

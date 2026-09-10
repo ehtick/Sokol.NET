@@ -164,14 +164,35 @@ public abstract class Widget
     /// so it can draw at local (0,0) coordinates.
     /// Override to draw self before calling base for children, e.g. Panel.Draw.
     /// </summary>
+    /// <summary>Children outside the clip are skipped, not just clipped away. A ScrollView shows a
+    /// handful of rows out of a long list, and without this every off-screen child is still fully
+    /// submitted every frame: measured on a Huawei AGS-L09, a scrolling card grid spent 72 ms/frame
+    /// (13 fps) drawing ~91 tiles to show ~6, and the SAME screen filtered down to a few tiles ran at
+    /// 60 fps (12.5 ms). The cost was never fill rate — MSAA 4→1 and the whole animated backdrop
+    /// changed nothing — it was per-widget CPU work proportional to the child count. With culling the
+    /// gap between the full grid and the filtered one is ~0 ms on both Android and iOS.
+    /// <para>Deliberately conservative — it can only ever skip work that was invisible anyway:
+    /// culling is OFF unless an ancestor actually clipped (<see cref="Renderer.CanCull"/>, false at
+    /// frame start and under Scale/Rotate), a child with a degenerate rect is always drawn because its
+    /// bounds cannot be judged, and the clip is inflated by <see cref="CullMargin"/> so a widget that
+    /// paints slightly outside its own Bounds — a drop shadow, a focus ring, a glow — still gets its
+    /// bleed onto the screen.</para>
+    /// <para>⛔ It does mean Draw is no longer called every frame for an off-screen child. Anything
+    /// that must advance on a timer belongs on the AnimationManager, not in a Draw side effect.</para></summary>
+    const float CullMargin = 48f;
+
     public virtual void Draw(Renderer renderer)
     {
         if (!Visible) return;
+
+        bool cull = renderer.CanCull;
+        Rect clip = cull ? renderer.CullClip.Inflate(new Thickness(CullMargin)) : default;
 
         // Translate to each child's Bounds and draw.  Save/Restore isolates transforms.
         foreach (var child in _children)
         {
             if (!child.Visible) continue;
+            if (cull && !child.Bounds.IsEmpty && !clip.Intersects(child.Bounds)) continue;
             renderer.Save();
             renderer.Translate(child.Bounds.X, child.Bounds.Y);
             child.Draw(renderer);
