@@ -53,7 +53,6 @@ public class Slider : Widget
         if (Orientation == SliderOrientation.Horizontal)
         {
             bool rtl = ResolvedFlowDirection == FlowDirection.RightToLeft;
-            float tDraw = rtl ? (1f - t) : t;  // mirror progress fraction visually
 
             float cy = h * 0.5f;
             var trackR = new Rect(thumb, cy - track * 0.5f, w - thumb * 2f, track);
@@ -67,8 +66,8 @@ public class Slider : Widget
             renderer.FillRoundedRectWithPaint(trackR, track * 0.5f, trackInset);
             renderer.StrokeRoundedRect(trackR, track * 0.5f, 1f, UIColor.Black.WithAlpha(0.25f));
 
-            // Fill: accent gradient (always drawn from the "start" side)
-            float fillW = trackR.Width * tDraw;
+            // Fill: accent gradient (always drawn from the "start" side — the right edge in RTL)
+            float fillW = trackR.Width * t;
             if (fillW > 0)
             {
                 float fillX = rtl ? (trackR.Right - fillW) : trackR.X;
