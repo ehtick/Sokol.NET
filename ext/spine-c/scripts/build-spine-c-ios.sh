@@ -34,10 +34,10 @@ cd "$BUILD_DIR"
 # Determine SDK and deployment target based on architecture
 if [ "$ARCH" = "arm64" ]; then
     SDK="iphoneos"
-    DEPLOYMENT_TARGET="13.0"
+    DEPLOYMENT_TARGET="15.0"
 else
     SDK="iphonesimulator"
-    DEPLOYMENT_TARGET="13.0"
+    DEPLOYMENT_TARGET="15.0"
 fi
 
 # Configure with CMake for iOS

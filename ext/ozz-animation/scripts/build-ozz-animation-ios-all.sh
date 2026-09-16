@@ -9,7 +9,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOKOL_CHARP_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 BUILD_TYPE="${1:-Release}"
-DEPLOYMENT_TARGET="${2:-12.0}"
+DEPLOYMENT_TARGET="${2:-15.0}"
 
 echo "=========================================="
 echo "Building ozz-animation for all iOS architectures"

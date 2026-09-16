@@ -27,8 +27,11 @@ Set-Location $BuildDir
 
 # Configure with CMake
 Write-Host "Configuring CMake..." -ForegroundColor Yellow
+# Don't hardcode the VS generator: the CI runner image's Visual Studio version moves over
+# time (windows-latest was VS2022, the windows-2025 image now ships VS2026), and a stale
+# "-G Visual Studio 17 2022" makes CMake fail with "could not find any instance of Visual
+# Studio". Let CMake auto-select the installed Visual Studio; -A still picks the platform.
 cmake .. `
-    -G "Visual Studio 17 2022" `
     -A $Architecture `
     -DCMAKE_BUILD_TYPE="$BuildType" `
     -DBUILD_SHARED_LIBS=ON `

@@ -13,7 +13,7 @@ OZZ_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Parse arguments
 ARCH="${1:-arm64}"
 BUILD_TYPE="${2:-Release}"
-DEPLOYMENT_TARGET="${3:-12.0}"
+DEPLOYMENT_TARGET="${3:-15.0}"
 
 echo "=========================================="
 echo "Building ozz-animation for iOS"
