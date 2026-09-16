@@ -229,6 +229,13 @@ static void _ssafe_get(float* o) {
     if (NULL == env) {
         return;
     }
+    /* sokol's app thread never returns to Java, so a local reference is only freed
+       when this frame is popped -- without it every query pins ~11 references (and
+       the Java objects behind them) until the table overflows and ART aborts. */
+    if ((*env)->PushLocalFrame(env, 16) != 0) {
+        (*env)->ExceptionClear(env);
+        return;
+    }
 
     jobject activity = act->clazz;
     jclass  cls_act  = (*env)->GetObjectClass(env, activity);
@@ -293,6 +300,7 @@ cleanup:
     if ((*env)->ExceptionCheck(env)) {
         (*env)->ExceptionClear(env);
     }
+    (*env)->PopLocalFrame(env, NULL);
 }
 
 static void _ssafe_defer(bool enable) {
