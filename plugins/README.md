@@ -8,6 +8,7 @@ Optional, self-contained add-ons that extend Sokol.NET applications.
 |--------|-----------|-------------|
 | [Share](Share/README.md) | Android, iOS, macOS, Windows, Linux | Share score + generated image via native share sheet |
 | [Ads](Ads/README.md) | Android, iOS | AdMob interstitials + UMP consent (Google Mobile Ads SDK 23 / xcframework 13) |
+| [Speech](Speech/README.md) | Android, iOS, macOS, Windows, Linux, Web | Platform text-to-speech (`Speech.Say(text, lang)`), offline-voice detection, runtime-only so no voice licence attaches |
 | [Billing](Billing/README.md) | Android, iOS | One-time in-app purchases (Play Billing 7 / StoreKit 2), with the store's signed proof handed to the app for its own verification |
 
 `Ads` and `Billing` have no desktop or web backend. Rather than requiring `#if` at every call site,
@@ -30,7 +31,7 @@ plugins/<PluginName>/
 ├── platform/            ← Platform glue the builder consumes at build time (see step 4)
 │   └── android/
 │       ├── java/        ← JNI helper classes compiled into the APK
-│       ├── manifest/    ← Providers.xml, injected before </application>
+│       ├── manifest/    ← Providers.xml, injected before </application>; Queries.xml, injected before <application> (a <queries> block, Android 11+ package visibility)
 │       ├── res/         ← Resources (e.g. FileProvider paths)
 │       └── gradle-deps.txt   ← Gradle coordinates added to app/build.gradle
 ├── vendor/              ← Optional: third-party SDKs fetched by a script (Ads only)

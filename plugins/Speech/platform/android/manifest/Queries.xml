@@ -1,0 +1,8 @@
+  <!-- sokol_speech: Android 11+ package visibility. Without this the app cannot bind the
+       device's text-to-speech engine (TextToSpeech init fails with ERROR).
+       https://developer.android.com/training/package-visibility/use-cases#text-to-speech -->
+  <queries>
+    <intent>
+      <action android:name="android.intent.action.TTS_SERVICE" />
+    </intent>
+  </queries>

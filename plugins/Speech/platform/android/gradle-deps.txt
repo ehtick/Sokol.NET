@@ -1,0 +1,1 @@
+# sokol_speech: android.speech.tts is part of the platform -- no Gradle dependency.

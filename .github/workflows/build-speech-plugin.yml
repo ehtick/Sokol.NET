@@ -1,0 +1,201 @@
+name: Build Speech Plugin
+
+# Builds plugins/Speech (sokol_speech) for every backend on every change to the plugin, and
+# commits the prebuilt outputs back to plugins/Speech/libs/ on main. The Windows (C++/WinRT)
+# and Web (Emscripten) backends are compiled only here — a native change is not done until
+# every job of the run is green.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'plugins/Speech/**'
+      - '!plugins/Speech/libs/**'
+      - '.github/workflows/build-speech-plugin.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'plugins/Speech/**'
+      - '!plugins/Speech/libs/**'
+      - '.github/workflows/build-speech-plugin.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows (x64)
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup CMake
+      uses: lukka/get-cmake@latest
+    - name: Build Release
+      shell: pwsh
+      run: .\plugins\Speech\scripts\build-windows.ps1 -BuildType Release -Architecture x64
+    - uses: actions/upload-artifact@v4
+      with:
+        name: speech-windows-x64
+        path: plugins/Speech/libs/windows/**/*
+        retention-days: 30
+
+  build-macos:
+    name: Build macOS (arm64 + X64)
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup CMake
+      uses: lukka/get-cmake@latest
+    - name: Build
+      run: ./plugins/Speech/scripts/build-macos.sh
+    - uses: actions/upload-artifact@v4
+      with:
+        name: speech-macos
+        path: plugins/Speech/libs/macos/**/*
+        retention-days: 30
+
+  build-ios:
+    name: Build iOS (${{ matrix.target }})
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        target: [device, simulator-arm64, simulator-x64]
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup CMake
+      uses: lukka/get-cmake@latest
+    - name: Build
+      run: ./plugins/Speech/scripts/build-ios.sh ${{ matrix.target }}
+    - name: Determine upload path
+      id: upload_path
+      run: |
+        case "${{ matrix.target }}" in
+          device)          echo "path=plugins/Speech/libs/ios/arm64" >> $GITHUB_OUTPUT ;;
+          simulator-arm64) echo "path=plugins/Speech/libs/ios/simulator-arm64" >> $GITHUB_OUTPUT ;;
+          simulator-x64)   echo "path=plugins/Speech/libs/ios/simulator-x64" >> $GITHUB_OUTPUT ;;
+        esac
+    - uses: actions/upload-artifact@v4
+      with:
+        name: speech-ios-${{ matrix.target }}
+        path: ${{ steps.upload_path.outputs.path }}/**/*
+        retention-days: 30
+
+  build-android:
+    name: Build Android (arm64-v8a, armeabi-v7a, x86_64)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+      with:
+        packages: ''
+    - name: Install Android NDK
+      run: |
+        sdkmanager --install "ndk;27.2.12479018"
+        echo "ANDROID_NDK=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> $GITHUB_ENV
+    - name: Check the Java helper compiles against the platform
+      run: |
+        ANDROID_JAR="$ANDROID_SDK_ROOT/platforms/android-34/android.jar"
+        if [ ! -f "$ANDROID_JAR" ]; then sdkmanager --install "platforms;android-34"; fi
+        mkdir -p /tmp/speech-java
+        javac -source 17 -target 17 -classpath "$ANDROID_JAR" -d /tmp/speech-java \
+          plugins/Speech/platform/android/java/com/sokol/speech/SokolSpeech.java
+    - name: Build
+      run: ./plugins/Speech/scripts/build-android.sh
+    - uses: actions/upload-artifact@v4
+      with:
+        name: speech-android
+        path: plugins/Speech/libs/android/**/*
+        retention-days: 30
+
+  build-web:
+    name: Build Web (Emscripten)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Emscripten
+      uses: mymindstorm/setup-emsdk@v14
+      with:
+        version: '3.1.56'
+    - name: Build
+      run: ./plugins/Speech/scripts/build-web.sh Release
+    - uses: actions/upload-artifact@v4
+      with:
+        name: speech-emscripten
+        path: plugins/Speech/libs/emscripten/**/*
+        retention-days: 30
+
+  build-linux:
+    name: Linux (managed backend — no native library)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+    - name: Compile the managed layer for every platform symbol set
+      run: |
+        set -e
+        mkdir -p /tmp/speech-managed && cd /tmp/speech-managed
+        cat > speech.csproj <<'PROJ'
+        <Project Sdk="Microsoft.NET.Sdk">
+          <PropertyGroup>
+            <TargetFramework>net10.0</TargetFramework>
+            <Nullable>enable</Nullable>
+            <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+            <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+            <DefineConstants>$(DefineConstants);$(SpeechSymbols)</DefineConstants>
+          </PropertyGroup>
+          <ItemGroup>
+            <Compile Include="$(GITHUB_WORKSPACE)/plugins/Speech/managed/*.cs" />
+          </ItemGroup>
+        </Project>
+        PROJ
+        for SYMS in "" "__LINUX__" "__WINDOWS__" "__MACOS__" "__ANDROID__" "__IOS__" "WEB"; do
+          echo "=== DefineConstants: '${SYMS:-<none>}'"
+          dotnet build -c Release -p:SpeechSymbols="$SYMS" --nologo -v q
+        done
+    - name: Script
+      run: ./plugins/Speech/scripts/build-linux.sh
+
+  commit-windows-lib:
+    name: Commit the Windows library
+    needs: [build-windows, build-macos, build-ios, build-android, build-web, build-linux]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    steps:
+    - name: Download the Windows artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: speech-windows-x64
+        path: artifacts/windows
+    # Only the Windows dll is committed from CI: it is the one backend with no local toolchain on
+    # the development Mac. The other outputs are built and committed locally by the plugin's
+    # scripts, and their CI jobs are compile checks — committing CI rebuilds of them would churn
+    # binary files on every run and race the main library workflow's own commit-back.
+    - name: Commit sokol_speech.dll
+      run: |
+        git clone https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git repo
+        cd repo
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        mkdir -p plugins/Speech/libs/windows
+        cp -r ../artifacts/windows/* plugins/Speech/libs/windows/
+        if git diff --quiet plugins/Speech/libs/windows/ && [ -z "$(git status --porcelain plugins/Speech/libs/windows/)" ]; then
+          echo "No sokol_speech.dll change to commit"
+          exit 0
+        fi
+        git add plugins/Speech/libs/windows/
+        git commit -m "Auto-update built sokol_speech Windows library [skip ci]" \
+                   -m "Generated from commit: ${{ github.sha }}" \
+                   -m "Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        git pull --rebase origin main
+        git push origin main
+        echo "✓ Committed sokol_speech.dll"

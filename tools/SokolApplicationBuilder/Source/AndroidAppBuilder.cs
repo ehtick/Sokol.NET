@@ -2805,6 +2805,22 @@ KeyAlias={keystoreInfo.KeyAlias}
                 manifest.AppendLine($"  <uses-feature android:name=\"{featureName}\" android:required=\"{required.ToString().ToLower()}\"/>");
             }
 
+            // <queries> fragments (Android 11+ package visibility) are children of <manifest>, so they
+            // go BEFORE <application>: the project's own platform/android/manifest/Queries.xml first,
+            // then EVERY active plugin's (Speech declares the android.intent.action.TTS_SERVICE intent
+            // this way — without it TextToSpeech cannot bind the engine). Same token substitution as
+            // the Providers.xml fragments below.
+            var queryFragments = new List<string>();
+            string projectQueries = Path.Combine(opts.ProjectPath, "platform/android/manifest/Queries.xml");
+            if (File.Exists(projectQueries)) queryFragments.Add(projectQueries);
+            foreach (string pluginAndroid in activePluginAndroidPaths)
+            {
+                string pluginQueries = Path.Combine(pluginAndroid, "manifest", "Queries.xml");
+                if (File.Exists(pluginQueries)) queryFragments.Add(pluginQueries);
+            }
+            foreach (string fragmentPath in queryFragments)
+                manifest.AppendLine(SubstituteManifestTokens(File.ReadAllText(fragmentPath), androidProperties));
+
             manifest.AppendLine("  <!--");
             manifest.AppendLine("  This .apk has no Java/Kotlin code, so set hasCode to false.");
             manifest.AppendLine();
