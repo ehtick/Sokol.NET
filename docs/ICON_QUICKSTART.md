@@ -43,7 +43,7 @@ Open `Directory.Build.props` and add icon properties:
 
   <!-- iOS Configuration -->
   <PropertyGroup>
-    <IOSMinVersion>14.0</IOSMinVersion>
+    <IOSMinVersion>15.0</IOSMinVersion>
     
     <!-- 📱 Add this line -->
     <IOSIcon>myicon.png</IOSIcon>
@@ -273,7 +273,7 @@ Here's a complete minimal Directory.Build.props with icons:
 
   <!-- iOS Configuration -->
   <PropertyGroup>
-    <IOSMinVersion>14.0</IOSMinVersion>
+    <IOSMinVersion>15.0</IOSMinVersion>
     <IOSScreenOrientation>landscape</IOSScreenOrientation>
     <IOSStatusBarHidden>true</IOSStatusBarHidden>
     <IOSIcon>myicon.png</IOSIcon>

@@ -14,7 +14,7 @@ Organize iOS properties in a dedicated PropertyGroup section in your `Directory.
 <Project>
    <!-- iOS Configuration -->
    <PropertyGroup>
-      <IOSMinVersion>14.0</IOSMinVersion>
+      <IOSMinVersion>15.0</IOSMinVersion>
       <IOSScreenOrientation>landscape</IOSScreenOrientation>
       <IOSRequiresFullScreen>false</IOSRequiresFullScreen>
       <IOSStatusBarHidden>true</IOSStatusBarHidden>
@@ -27,8 +27,8 @@ Organize iOS properties in a dedicated PropertyGroup section in your `Directory.
 
 ### IOSMinVersion
 **Type:** String  
-**Default:** `14.0`  
-**Description:** Minimum iOS version required to run the application.
+**Default:** `15.0`  
+**Description:** Minimum iOS version required to run the application. Xcode 27 rejects anything below 15.0.
 
 **Example:**
 ```xml
@@ -36,8 +36,7 @@ Organize iOS properties in a dedicated PropertyGroup section in your `Directory.
 ```
 
 **Common values:**
-- `14.0` - iOS 14 (default)
-- `15.0` - iOS 15
+- `15.0` - iOS 15 (default; the lowest Xcode 27 accepts)
 - `16.0` - iOS 16
 - `17.0` - iOS 17
 
@@ -140,7 +139,7 @@ Here's a complete example with iOS configuration alongside Android configuration
 
    <!-- iOS Configuration -->
    <PropertyGroup>
-      <IOSMinVersion>14.0</IOSMinVersion>
+      <IOSMinVersion>15.0</IOSMinVersion>
       <IOSScreenOrientation>landscape</IOSScreenOrientation>
       <IOSRequiresFullScreen>false</IOSRequiresFullScreen>
       <IOSStatusBarHidden>true</IOSStatusBarHidden>
@@ -191,7 +190,7 @@ dotnet run --project tools/SokolApplicationBuilder -- \
 **Example output:**
 ```
 📋 Read 5 iOS properties from Directory.Build.props
-   - IOSMinVersion: 14.0
+   - IOSMinVersion: 15.0
    - IOSScreenOrientation: landscape
    - IOSRequiresFullScreen: false
    - IOSStatusBarHidden: true

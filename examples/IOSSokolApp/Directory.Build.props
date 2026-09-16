@@ -69,7 +69,7 @@
       <IOSBundlePrefix>com.sokol</IOSBundlePrefix>
       
       <!-- Minimum iOS version -->
-      <IOSMinVersion>13.0</IOSMinVersion>
+      <IOSMinVersion>15.0</IOSMinVersion>
       
       <!-- Screen orientation: portrait, landscape, or both -->
       <IOSScreenOrientation>landscape</IOSScreenOrientation>

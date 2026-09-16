@@ -64,7 +64,7 @@ Here's a complete `Directory.Build.props` with version configuration:
    <!-- iOS Configuration -->
    <PropertyGroup>
       <IOSBundlePrefix>com.mycompany</IOSBundlePrefix>
-      <IOSMinVersion>14.0</IOSMinVersion>
+      <IOSMinVersion>15.0</IOSMinVersion>
    </PropertyGroup>
 </Project>
 ```

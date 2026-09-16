@@ -79,7 +79,11 @@ namespace SokolApplicationBuilder
         /// <summary>The Home-screen label: explicit override, else the bundle name, else empty.</summary>
         private string EffectiveDisplayName =>
             !string.IsNullOrEmpty(iOSDisplayName) ? iOSDisplayName : iOSBundleName;
-        private string iOSMinVersion = "14.0";
+        // 15.0 is the floor Xcode 27 accepts: it rejects IPHONEOS_DEPLOYMENT_TARGET below 15.0
+        // ("the range of supported deployment target versions is 15.0 to 27.0.x"), so a 14.0
+        // default makes every iOS build fail at CMake's compiler check. Override per project
+        // with <IOSMinVersion>.
+        private string iOSMinVersion = "15.0";
         private string iOSScreenOrientation = "both";
         private bool iOSRequiresFullScreen = false;
         private bool iOSStatusBarHidden = false;

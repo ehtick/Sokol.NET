@@ -70,7 +70,7 @@ Here's a complete example of a `Directory.Build.props` file with custom package 
       <IOSBundlePrefix>com.mycompany</IOSBundlePrefix>
       
       <!-- Minimum iOS version -->
-      <IOSMinVersion>14.0</IOSMinVersion>
+      <IOSMinVersion>15.0</IOSMinVersion>
       
       <!-- ... other iOS properties ... -->
    </PropertyGroup>

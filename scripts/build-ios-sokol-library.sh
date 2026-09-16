@@ -30,7 +30,7 @@ build_for_target() {
     echo "Configuring CMake for iOS $TARGET..."
     cmake -G Xcode \
         -DCMAKE_SYSTEM_NAME=iOS \
-        -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+        -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
         -DCMAKE_OSX_ARCHITECTURES="$ARCH" \
         -DCMAKE_OSX_SYSROOT="$SDK" \
         ../ext

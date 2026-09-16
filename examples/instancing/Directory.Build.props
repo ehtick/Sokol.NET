@@ -79,7 +79,7 @@
       <!-- iOS Configuration -->
    <PropertyGroup>
       <!-- Minimum iOS version -->
-      <IOSMinVersion>14.0</IOSMinVersion>
+      <IOSMinVersion>15.0</IOSMinVersion>
       
       <!-- Screen orientation: portrait, landscape, or both -->
       <IOSScreenOrientation>landscape</IOSScreenOrientation>

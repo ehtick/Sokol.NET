@@ -211,7 +211,7 @@ Here's a complete example showing both Android and iOS icon configuration:
 
    <!-- iOS Configuration -->
    <PropertyGroup>
-      <IOSMinVersion>14.0</IOSMinVersion>
+      <IOSMinVersion>15.0</IOSMinVersion>
       <IOSScreenOrientation>landscape</IOSScreenOrientation>
       <IOSStatusBarHidden>true</IOSStatusBarHidden>
       
