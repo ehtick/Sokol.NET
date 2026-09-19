@@ -110,8 +110,8 @@ platform/android/
            gradle-deps.txt           (none — the TTS API is part of the platform)
 scripts/   build-android.sh  build-ios.sh  build-macos.sh  build-windows.ps1  build-web.sh  build-linux.sh
 libs/      prebuilt outputs (committed): android/<abi>/release/libsokol_speech.so,
-           ios/<target>/{debug,release}/sokol_speech.framework, macos/<arch>/release/libsokol_speech.dylib,
-           windows/<arch>/release/sokol_speech.dll (built by CI), emscripten/x86/release/sokol_speech.a
+           ios/<target>/{debug,release}/sokol_speech.framework (built by CI), macos/<arch>/release/libsokol_speech.dylib
+           (built by CI), windows/<arch>/release/sokol_speech.dll (built by CI), emscripten/x86/release/sokol_speech.a
 ```
 
 Rebuild native libs after changing `native/`:
@@ -126,7 +126,7 @@ export ANDROID_NDK=...            # for Android
 ```
 
 CI: `.github/workflows/build-speech-plugin.yml` builds every backend on every push that
-touches `plugins/Speech/` and commits the **Windows** dll back to `plugins/Speech/libs/` on
-`main` (the one backend with no local toolchain on a Mac; the other jobs are compile checks
-for the locally built, committed outputs). A change to any file under `native/` is not done
+touches `plugins/Speech/` and commits the **Windows, macOS and iOS** libraries back to
+`plugins/Speech/libs/` on `main` — never commit a local build of those (Android and Web are still
+compile checks for their locally built, committed outputs). A change to any file under `native/` is not done
 until every job of that run is green — the Windows backend is compiled only there.

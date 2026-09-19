@@ -165,37 +165,43 @@ jobs:
     - name: Script
       run: ./plugins/Speech/scripts/build-linux.sh
 
-  commit-windows-lib:
-    name: Commit the Windows library
+  commit-libs:
+    name: Commit the Windows, macOS and iOS libraries
     needs: [build-windows, build-macos, build-ios, build-android, build-web, build-linux]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     steps:
-    - name: Download the Windows artifact
+    - name: Download the artifacts
       uses: actions/download-artifact@v4
       with:
-        name: speech-windows-x64
-        path: artifacts/windows
-    # Only the Windows dll is committed from CI: it is the one backend with no local toolchain on
-    # the development Mac. The other outputs are built and committed locally by the plugin's
-    # scripts, and their CI jobs are compile checks — committing CI rebuilds of them would churn
-    # binary files on every run and race the main library workflow's own commit-back.
-    - name: Commit sokol_speech.dll
+        path: artifacts
+    # Windows has no local toolchain on the development Mac. macOS and iOS were committed from local
+    # builds until 2026-09-19; they come from CI now (owner rule: a shipped library is a CI build, never
+    # a local one — the Apple backend's isSpeaking watchdog was the first change to need it). Android and
+    # Web are still compile checks here: their committed builds are unchanged by an Apple-only fix, and
+    # re-committing them on every run would churn binaries. Only a real byte change is committed.
+    - name: Commit the libraries
       run: |
         git clone https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git repo
         cd repo
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        mkdir -p plugins/Speech/libs/windows
-        cp -r ../artifacts/windows/* plugins/Speech/libs/windows/
-        if git diff --quiet plugins/Speech/libs/windows/ && [ -z "$(git status --porcelain plugins/Speech/libs/windows/)" ]; then
-          echo "No sokol_speech.dll change to commit"
+        mkdir -p plugins/Speech/libs/windows plugins/Speech/libs/macos \
+                 plugins/Speech/libs/ios/arm64 plugins/Speech/libs/ios/simulator-arm64 plugins/Speech/libs/ios/simulator-x64
+        cp -r ../artifacts/speech-windows-x64/*          plugins/Speech/libs/windows/
+        cp -r ../artifacts/speech-macos/*                plugins/Speech/libs/macos/
+        cp -r ../artifacts/speech-ios-device/*           plugins/Speech/libs/ios/arm64/
+        cp -r ../artifacts/speech-ios-simulator-arm64/*  plugins/Speech/libs/ios/simulator-arm64/
+        cp -r ../artifacts/speech-ios-simulator-x64/*    plugins/Speech/libs/ios/simulator-x64/
+        LIBS="plugins/Speech/libs/windows plugins/Speech/libs/macos plugins/Speech/libs/ios"
+        if [ -z "$(git status --porcelain $LIBS)" ]; then
+          echo "No sokol_speech library change to commit"
           exit 0
         fi
-        git add plugins/Speech/libs/windows/
-        git commit -m "Auto-update built sokol_speech Windows library [skip ci]" \
+        git add $LIBS
+        git commit -m "Auto-update built sokol_speech libraries (Windows, macOS, iOS) [skip ci]" \
                    -m "Generated from commit: ${{ github.sha }}" \
                    -m "Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
         git pull --rebase origin main
         git push origin main
-        echo "✓ Committed sokol_speech.dll"
+        echo "✓ Committed sokol_speech libraries"

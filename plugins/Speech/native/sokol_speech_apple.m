@@ -33,15 +33,52 @@ static AVSpeechSynthesizer* _syn;
 static SokolSpeechDelegate* _delegate;
 static int                  _nextId = 1;
 
+/* DONE is emitted exactly ONCE per utterance, from whichever path sees the end first: the delegate,
+   the isSpeaking watchdog below, or the next say()/stop() replacing it. A "done" mark on the
+   utterance drops the later duplicates. */
+static char _ss_done_key;
+static void _ss_done(AVSpeechUtterance* u, int code) {
+    int id = _ss_id_of(u);
+    if (!id || objc_getAssociatedObject(u, &_ss_done_key)) return;
+    objc_setAssociatedObject(u, &_ss_done_key, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    sokolspeech__emit(SOKOLSPEECH_EVENT_DONE, id, code);
+}
+
+/* ⛔ The delegate's didFinish is NOT reliable in an app (measured on macOS 26, 2026-09-19): the last
+   utterance before a quiet stretch never reported it in 4 of 10 runs, so Speech.Speaking stayed set
+   for good, while isSpeaking dropped on time. So while an utterance is current, a main-thread timer
+   polls isSpeaking and ends it when the engine has stopped. Only between a say() and its end — the
+   timer is gone the rest of the time. */
+static AVSpeechUtterance* _current;   /* the utterance awaiting its DONE, nil when none */
+static NSTimer*           _watch;
+static BOOL               _heard;      /* isSpeaking was seen true for _current */
+static void _ss_watch_stop(void) { [_watch invalidate]; _watch = nil; }
+static void _ss_watch_start(void) {
+    _ss_watch_stop();
+    _heard = NO;
+    _watch = [NSTimer timerWithTimeInterval:0.1 repeats:YES block:^(NSTimer* t) {
+        if (!_current || !_syn) { _ss_watch_stop(); return; }
+        if (_syn.isSpeaking) { _heard = YES; return; }
+        if (!_heard) return;                               /* not started yet — wait for it */
+        _ss_done(_current, 0);
+        _current = nil;
+        _ss_watch_stop();
+    }];
+    [[NSRunLoop mainRunLoop] addTimer:_watch forMode:NSRunLoopCommonModes];
+}
+
 @implementation SokolSpeechDelegate
 - (void)speechSynthesizer:(AVSpeechSynthesizer*)s didStartSpeechUtterance:(AVSpeechUtterance*)u {
     int id = _ss_id_of(u); if (id) sokolspeech__emit(SOKOLSPEECH_EVENT_STARTED, id, 0);
+    if (u == _current) _heard = YES;
 }
 - (void)speechSynthesizer:(AVSpeechSynthesizer*)s didFinishSpeechUtterance:(AVSpeechUtterance*)u {
-    int id = _ss_id_of(u); if (id) sokolspeech__emit(SOKOLSPEECH_EVENT_DONE, id, 0);
+    _ss_done(u, 0);
+    if (u == _current) { _current = nil; _ss_watch_stop(); }
 }
 - (void)speechSynthesizer:(AVSpeechSynthesizer*)s didCancelSpeechUtterance:(AVSpeechUtterance*)u {
-    int id = _ss_id_of(u); if (id) sokolspeech__emit(SOKOLSPEECH_EVENT_DONE, id, 1);
+    _ss_done(u, 1);
+    if (u == _current) { _current = nil; _ss_watch_stop(); }
 }
 @end
 
@@ -94,9 +131,12 @@ int sokolspeech_say(const char* text, const char* lang)
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!_syn) { sokolspeech__emit(SOKOLSPEECH_EVENT_ERROR, id, -1); return; }
         if (_syn.isSpeaking) [_syn stopSpeakingAtBoundary:AVSpeechBoundaryImmediate];
+        if (_current) _ss_done(_current, 1);               /* interrupted — its own callback may never come */
         AVSpeechUtterance* u = [AVSpeechUtterance speechUtteranceWithString:nsText ?: @""];
         u.voice = voice;
         objc_setAssociatedObject(u, &_ss_id_key, @(id), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        _current = u;
+        _ss_watch_start();
         [_syn speakUtterance:u];
     });
     return id;
@@ -106,6 +146,8 @@ void sokolspeech_stop(void)
 {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (_syn && _syn.isSpeaking) [_syn stopSpeakingAtBoundary:AVSpeechBoundaryImmediate];
+        if (_current) { _ss_done(_current, 1); _current = nil; }
+        _ss_watch_stop();
     });
 }
 
@@ -127,6 +169,8 @@ void sokolspeech_shutdown(void)
 {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (_syn && _syn.isSpeaking) [_syn stopSpeakingAtBoundary:AVSpeechBoundaryImmediate];
+        _ss_watch_stop();
+        _current = nil;
         _syn = nil;
         _delegate = nil;
     });
