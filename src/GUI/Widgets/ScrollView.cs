@@ -52,14 +52,20 @@ public class ScrollView : Panel
             MathF.Max(cr - 0.5f, 0f), 1f,
             IsFocused ? theme.AccentColor : UIColor.Black.WithAlpha(0.188f));
 
+        // ⛔ Performance: the content's preferred size is a full measure of everything in it, on screen or
+        // not — take it ONCE before the layout below (it was evaluated up to six times here), and once more
+        // after it for the scrollbars, which have always shown the post-layout size.
+        var   pre      = ContentSize;
+        float contentH = pre.Y, contentW = pre.X;
+
         // Clip to viewport (shrunk for scrollbars if visible)
-        bool showV = CanScrollVertical   && ContentHeight > Bounds.Height;
-        bool showH = CanScrollHorizontal && ContentWidth  > Bounds.Width;
+        bool showV = CanScrollVertical   && contentH > Bounds.Height;
+        bool showH = CanScrollHorizontal && contentW > Bounds.Width;
         bool rtl   = ResolvedFlowDirection == FlowDirection.RightToLeft;
 
         // Clamp scroll offset so content doesn't stay shifted when viewport grows
-        float maxScrollY = MathF.Max(0, ContentHeight - Bounds.Height + (showH ? sb : 0));
-        float maxScrollX = MathF.Max(0, ContentWidth  - Bounds.Width  + (showV ? sb : 0));
+        float maxScrollY = MathF.Max(0, contentH - Bounds.Height + (showH ? sb : 0));
+        float maxScrollX = MathF.Max(0, contentW - Bounds.Width  + (showV ? sb : 0));
         _scrollY = MathF.Min(_scrollY, maxScrollY);
         _scrollX = MathF.Min(_scrollX, maxScrollX);
 
@@ -79,9 +85,9 @@ public class ScrollView : Panel
             // When horizontal scroll is disabled, content must be exactly viewport width so
             // Expand children distribute the actual available space, not their preferred size.
             float cw = CanScrollHorizontal
-                ? MathF.Max(ContentWidth, viewport.Width)
+                ? MathF.Max(contentW, viewport.Width)
                 : viewport.Width;
-            Content.Bounds = new Rect(0, 0, cw, ContentHeight);
+            Content.Bounds = new Rect(0, 0, cw, contentH);
             Content.PerformLayout(renderer, force: true);
             renderer.Save();
             Content.Draw(renderer);
@@ -90,10 +96,12 @@ public class ScrollView : Panel
 
         renderer.Restore();
 
+        var post = showV || showH ? ContentSize : default;
+
         // Vertical scrollbar
         if (showV)
         {
-            float cH = MathF.Max(ContentHeight, 1f);
+            float cH = MathF.Max(post.Y, 1f);
             float sbX = rtl ? 0 : viewport.Right;
             ScrollbarRenderer.DrawVertical(renderer, sbX, 0, sb, viewport.Height,
                 _scrollY, cH, viewport.Height, _sbHoveredV);
@@ -102,7 +110,7 @@ public class ScrollView : Panel
         // Horizontal scrollbar
         if (showH)
         {
-            float cW = MathF.Max(ContentWidth, 1f);
+            float cW = MathF.Max(post.X, 1f);
             ScrollbarRenderer.DrawHorizontal(renderer, sbLeft, viewport.Height, viewport.Width, sb,
                 _scrollX, cW, viewport.Width, _sbHoveredH);
         }
@@ -111,6 +119,7 @@ public class ScrollView : Panel
     // ─── Content size ────────────────────────────────────────────────────────
     private float ContentHeight => Content?.PreferredSize(Screen.Instance.Renderer).Y ?? Bounds.Height;
     private float ContentWidth  => Content?.PreferredSize(Screen.Instance.Renderer).X ?? Bounds.Width;
+    private Vector2 ContentSize => Content?.PreferredSize(Screen.Instance.Renderer) ?? new Vector2(Bounds.Width, Bounds.Height);
 
     /// <summary>True when there is overflow to pan in that axis (used by drag-to-scroll).</summary>
     public bool CanDragScrollV => CanScrollVertical   && ContentHeight > Bounds.Height;

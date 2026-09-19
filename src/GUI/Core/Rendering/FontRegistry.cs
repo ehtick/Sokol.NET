@@ -19,6 +19,10 @@ public sealed class FontRegistry
 
     private FontRegistry() { }
 
+    /// <summary>Goes up whenever a font is registered, a fallback is wired or the registry is cleared —
+    /// i.e. whenever the same text may now measure differently. Text-measurement caches key on it.</summary>
+    public int Version { get; private set; }
+
     // -------------------------------------------------------------------------
     // Registration
     // -------------------------------------------------------------------------
@@ -32,6 +36,7 @@ public sealed class FontRegistry
         var font = new Font(name, fontId);
         _fonts[name] = font;
         _default ??= font;
+        Version++;
         return font;
     }
 
@@ -211,6 +216,7 @@ public sealed class FontRegistry
         _wiredFallbacks.Clear();
         _fonts.Clear();
         _default = null;
+        Version++;
     }
 
     // -------------------------------------------------------------------------
@@ -237,6 +243,7 @@ public sealed class FontRegistry
         // Re-add all fallbacks in registration order so priority is deterministic.
         foreach (var fid in list)
             _ = nvgAddFallbackFontId(vg, baseFontId, fid);
+        Version++;
 
         SLog.Info($"GUI: Wired '{fallbackName}' (id={fallbackId}) as fallback for '{baseName}' (id={baseFontId}), total fallbacks={list.Count}", "Sokol.GUI");
     }

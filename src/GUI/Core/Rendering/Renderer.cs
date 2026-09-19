@@ -52,6 +52,7 @@ public sealed class Renderer
     public void BeginFrame(float logicalW, float logicalH, float dpiScale)
     {
         _clipStack.Clear(); _clipKnown = false;   // never let a stray Save/Restore imbalance leak a frame
+        _letterSpacing = 0f; _lineHeight = 1f;    // nvgBeginFrame resets the text state to these
         _dpiScale = dpiScale;
         nvgBeginFrame(_vg, logicalW, logicalH, dpiScale);
     }
@@ -72,7 +73,8 @@ public sealed class Renderer
     // the start state, so nothing is ever culled outside a container that actually clips.
     Rect _clip;
     bool _clipKnown;
-    readonly Stack<(Rect Clip, bool Known)> _clipStack = new();
+    // The text-state mirror (letter spacing, line height) rides the same stack: nvgRestore restores them too.
+    readonly Stack<(Rect Clip, bool Known, float LetterSpacing, float LineHeight)> _clipStack = new();
 
     /// <summary>True when <see cref="CullClip"/> can be trusted for the current transform.</summary>
     public bool CanCull => _clipKnown;
@@ -83,13 +85,17 @@ public sealed class Renderer
 
     public void Save()
     {
-        _clipStack.Push((_clip, _clipKnown));
+        _clipStack.Push((_clip, _clipKnown, _letterSpacing, _lineHeight));
         nvgSave(_vg);
     }
 
     public void Restore()
     {
-        if (_clipStack.Count > 0) { var st = _clipStack.Pop(); _clip = st.Clip; _clipKnown = st.Known; }
+        if (_clipStack.Count > 0)
+        {
+            var st = _clipStack.Pop();
+            _clip = st.Clip; _clipKnown = st.Known; _letterSpacing = st.LetterSpacing; _lineHeight = st.LineHeight;
+        }
         nvgRestore(_vg);
     }
 
@@ -441,8 +447,39 @@ public sealed class Renderer
     public void SetFont(string name)    => nvgFontFace(_vg, name);
     public void SetFontSize(float size) => nvgFontSize(_vg, size);
     public void SetTextAlign(NVGalign align) => nvgTextAlign(_vg, (int)align);
-    public void SetLetterSpacing(float sp)   => nvgTextLetterSpacing(_vg, sp);
-    public void SetLineHeight(float lh)      => nvgTextLineHeight(_vg, lh);
+    public void SetLetterSpacing(float sp)   { _letterSpacing = sp; nvgTextLetterSpacing(_vg, sp); }
+    public void SetLineHeight(float lh)      { _lineHeight = lh;    nvgTextLineHeight(_vg, lh); }
+
+    // CPU mirror of the NanoVG text state that NanoVG cannot report back. Text measurements depend on it,
+    // so anything that caches a measurement keys it on these (Label does).
+    float _letterSpacing, _lineHeight = 1f;
+
+    /// <summary>The letter spacing last set through <see cref="SetLetterSpacing"/> (NanoVG's own value).</summary>
+    public float LetterSpacing => _letterSpacing;
+
+    /// <summary>The line-height factor last set through <see cref="SetLineHeight"/>; wrapped rows step by
+    /// the font's line height times this.</summary>
+    public float LineHeight => _lineHeight;
+
+    /// <summary>The scale NanoVG lays glyphs out at: the current transform's quantized average scale times
+    /// the device pixel ratio (nanovg.c <c>nvg__getFontScale</c>). Text measured under a different value can
+    /// break into different rows, so a cached measurement must be keyed on it.</summary>
+    public float TextPixelScale
+    {
+        get
+        {
+            unsafe
+            {
+                float* t = stackalloc float[6];
+                nvgCurrentTransform(_vg, ref t[0]);
+                float avg = (MathF.Sqrt(t[0] * t[0] + t[2] * t[2]) + MathF.Sqrt(t[1] * t[1] + t[3] * t[3])) * 0.5f;
+                return MathF.Min((int)(avg / 0.01f + 0.5f) * 0.01f, 4f) * _dpiScale;
+            }
+        }
+    }
+
+    /// <summary>Draw the UTF-8 byte range [start, end) — already in visual order — with no BiDi pass.</summary>
+    public unsafe float DrawTextRaw(float x, float y, byte* start, byte* end) => nvgText(_vg, x, y, start, end);
 
     /// <summary>Record a single-line string's on-screen bounds. Only called while recording; the
     /// bounds respect the current font/size/align state, positioned at the draw origin.</summary>
@@ -714,7 +751,7 @@ public sealed class Renderer
     /// could never be scrolled to. Hebrew hid the bug for years because it has no cursive joining, so
     /// reordering leaves every advance width untouched and the two line counts agree.</para>
     /// </summary>
-    List<string> BreakLogicalLines(string text, float maxW)
+    internal List<string> BreakLogicalLines(string text, float maxW)
     {
         var lines = new List<string>();
         var utf8  = System.Text.Encoding.UTF8.GetBytes(text);
