@@ -61,6 +61,9 @@ namespace SokolApplicationBuilder
         [Option( "obfuscate", Required = false, HelpText = "Obfuscate the app's managed code before AOT (requires obfuscate.xml in the project folder; release builds only). See docs/OBFUSCATION_TOOL_DESIGN.md")]
         public bool Obfuscate { get; set; } = false;
 
+        [Option( "no-obfuscate", Required = false, HelpText = "Force obfuscation OFF for this build, overriding <Obfuscation>true</Obfuscation> in the project's Directory.Build.props. Use when you need readable stack traces or un-perturbed performance numbers.")]
+        public bool NoObfuscate { get; set; } = false;
+
         [Option( "obfuscation-config", Required = false, HelpText = "Override path to the obfuscation XML config (default: <project>/obfuscate.xml).")]
         public string ObfuscationConfig { get; set; } = "";
 

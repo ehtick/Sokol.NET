@@ -20,6 +20,18 @@ namespace SokolApplicationBuilder
         // Appended verbatim to the dotnet publish/build command (shell or CliWrap). Leading space included.
         public static string BuildArgs(Options opts, string projectPath, string buildType, TaskLoggingHelper log)
         {
+            // An explicit --no-obfuscate wins over everything, including a committed
+            // <Obfuscation>true</Obfuscation>. Without this there is no way to get an
+            // un-obfuscated build out of a project that has opted in, short of editing its
+            // Directory.Build.props — which is exactly what you do NOT want to be doing when you
+            // are chasing a crash and need the real method names in the stack trace.
+            if (opts.NoObfuscate)
+            {
+                log.LogMessage(MessageImportance.High, "\U0001F513 Obfuscation OFF for this build (--no-obfuscate).");
+                PurgeObfuscatedIntermediates(projectPath, log);
+                return "";
+            }
+
             bool viaProps = ProjectDeclaresObfuscation(projectPath);
             if (!opts.Obfuscate && !viaProps) return "";
 
@@ -70,6 +82,96 @@ namespace SokolApplicationBuilder
         // rather than something every build command must remember to pass. Namespace-agnostic (the
         // examples' Directory.Build.props has no xmlns); mirrors DesktopAppBuilder's props reading.
         // obfuscate.xml is still required for the config (§8.4).
+        /// <summary>
+        /// Delete intermediate assemblies left behind by a PREVIOUS obfuscated build.
+        ///
+        /// ⛔ Without this, --no-obfuscate is a silent no-op. The obfuscation seam stamps the
+        /// intermediate assembly (SokolObfuscator.__Obfuscated__), and the force-recompile target
+        /// that clears it lives in Sokol.Obfuscation.targets — which is only injected when we ARE
+        /// obfuscating. So a --no-obfuscate build straight after an obfuscated one finds the
+        /// intermediate "up to date", reuses the stamped assembly, and ships obfuscated code while
+        /// the log cheerfully reports that obfuscation is off. Device-observed 2026-09-20.
+        ///
+        /// The obfuscator writes obfuscation.map.json beside each assembly it rewrites, so that file
+        /// is a precise marker: drop the assemblies next to it and MSBuild recompiles those, and only
+        /// those, from source.
+        /// </summary>
+        static void PurgeObfuscatedIntermediates(string projectPath, TaskLoggingHelper log)
+        {
+            // The app's own obj, plus the obj of every project it <ProjectReference>s — a referenced
+            // project's intermediate lives OUTSIDE the app folder (e.g. a vendored engine under ext/),
+            // and if it stays stamped its obfuscated types link straight into the "clean" binary.
+            var objRoots = new List<string> { Path.Combine(projectPath, "obj") };
+            foreach (string referenced in EnumerateProjectReferenceDirs(projectPath))
+                objRoots.Add(Path.Combine(referenced, "obj"));
+
+            int cleaned = 0;
+            foreach (string objRoot in objRoots.Distinct())
+            {
+            if (!Directory.Exists(objRoot)) continue;
+            foreach (string map in Directory.EnumerateFiles(objRoot, "obfuscation.map.json", SearchOption.AllDirectories))
+            {
+                string dir = Path.GetDirectoryName(map) ?? "";
+                try
+                {
+                    foreach (string stale in Directory.EnumerateFiles(dir, "*.dll")
+                                                      .Concat(Directory.EnumerateFiles(dir, "*.pdb")))
+                        File.Delete(stale);
+                    File.Delete(map);
+                    cleaned++;
+                }
+                catch (Exception ex)
+                {
+                    log.LogWarning($"Could not clear a previously obfuscated intermediate in {dir}: {ex.Message}");
+                }
+            }
+            }
+
+            if (cleaned > 0)
+                log.LogMessage(MessageImportance.High,
+                    $"   cleared {cleaned} intermediate(s) stamped by an earlier obfuscated build, so this one recompiles clean");
+        }
+
+        /// <summary>Directories of the projects this project &lt;ProjectReference&gt;s, resolved through
+        /// $(SokolNetHome) where the reference uses it. Best-effort: anything unreadable is skipped.</summary>
+        static IEnumerable<string> EnumerateProjectReferenceDirs(string projectPath)
+        {
+            string home = "";
+            try
+            {
+                string cfg = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    ".sokolnet_config", "sokolnet_home");
+                if (File.Exists(cfg)) home = File.ReadAllText(cfg).Trim();
+            }
+            catch { }
+
+            foreach (string csproj in SafeEnumerate(projectPath, "*.csproj"))
+            {
+                XDocument doc;
+                try { doc = XDocument.Load(csproj); } catch { continue; }
+
+                foreach (var pr in doc.Descendants("ProjectReference"))
+                {
+                    string include = pr.Attribute("Include")?.Value;
+                    if (string.IsNullOrWhiteSpace(include)) continue;
+
+                    include = include.Replace("$(SokolNetHome)", home).Replace('\\', Path.DirectorySeparatorChar);
+                    string full;
+                    try { full = Path.GetFullPath(Path.Combine(projectPath, include)); } catch { continue; }
+
+                    string dir = Path.GetDirectoryName(full) ?? "";
+                    if (dir.Length > 0 && Directory.Exists(dir)) yield return dir;
+                }
+            }
+        }
+
+        static IEnumerable<string> SafeEnumerate(string dir, string pattern)
+        {
+            try { return Directory.EnumerateFiles(dir, pattern, SearchOption.TopDirectoryOnly); }
+            catch { return Array.Empty<string>(); }
+        }
+
         static bool ProjectDeclaresObfuscation(string projectPath)
         {
             string props = Path.Combine(projectPath, "Directory.Build.props");
