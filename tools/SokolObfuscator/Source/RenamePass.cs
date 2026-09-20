@@ -10,7 +10,11 @@ namespace SokolObfuscator
     // accessors) to random identifiers.
     //
     // Like method renaming this is TOKEN-safe — IL references types/fields/methods by metadata token,
-    // so every in-module reference updates automatically when a *Def's .Name changes. The only hazards
+    // so every in-module reference updates automatically when a *Def's .Name changes. ⛔ EXCEPT for a
+    // member of a GENERIC type, which IL reaches through a MemberRef that carries the member's NAME as
+    // a string: renaming the *Def leaves that MemberRef pointing at the old name and the member becomes
+    // unresolvable at runtime (see the note above Obfuscator.ExclusionReason). Fields and properties of
+    // generic types are therefore skipped below. The only other hazards
     // are therefore (a) names bound to an EXTERNAL contract — handled by the same safety exclusions the
     // method pass uses (entry points, P/Invoke, [UnmanagedCallersOnly]/JS interop, external
     // vtable/interface slots) — and (b) reflection / serialization BY NAME (Type.GetType("Ns.T"),
@@ -124,6 +128,7 @@ namespace SokolObfuscator
         bool CanRenameField(FieldDef f)
         {
             if (f.DeclaringType.IsEnum) return false;            // enum members + value__ (Enum.Parse/ToString)
+            if (f.DeclaringType.HasGenericParameters) return false;  // MemberRef is by NAME — see the class note
             if (IsObfuscationExcluded(f)) return false;
             if (HasAttr(f, AttrDynamicDependency)) return false;
             return true;
@@ -132,6 +137,7 @@ namespace SokolObfuscator
         bool CanRenameProperty(PropertyDef p)
         {
             if (IsObfuscationExcluded(p)) return false;
+            if (p.DeclaringType.HasGenericParameters) return false;  // MemberRef is by NAME — see the class note
             var accessors = new[] { p.GetMethod, p.SetMethod };
             if (accessors.All(a => a == null)) return false;
             foreach (var a in accessors)

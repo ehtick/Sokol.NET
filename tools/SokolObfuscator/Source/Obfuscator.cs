@@ -18,6 +18,12 @@ namespace SokolObfuscator
     // are (a) names that must match an EXTERNAL ABI (entry points, P/Invoke EntryPoint,
     // [UnmanagedCallersOnly] exports, overrides of external virtuals/interfaces) and
     // (b) reflection-by-name — (a) is the safety set below, (b) is handled by scope config.
+    //
+    // ⛔ THE TOKEN ARGUMENT HAS ONE EXCEPTION: a member of a GENERIC type is referenced from IL through
+    // a MemberRef, which carries the member's NAME as a string. Renaming the MethodDef does not rewrite
+    // those MemberRefs, so the call site keeps asking for the old name and nothing resolves it — ILC
+    // reports "will always throw because: Missing method ..." and the shared-generic instantiation dies
+    // with MissingMethodException at runtime. Methods on generic types are therefore excluded below.
     public sealed class Obfuscator
     {
         // Non-overridable startup ABI. The native launchers resolve these by name/exported
@@ -187,9 +193,22 @@ namespace SokolObfuscator
             if (HasAttr(md, AttrJSImport)) return "[JSImport]";
             if (HasAttr(md, AttrDynamicDependency)) return "[DynamicDependency]";
             if (IsObfuscationExcluded(md)) return "[Obfuscation(Exclude)]";
+            if (DeclaredOnGenericType(md)) return "member of a generic type (MemberRef is by name)";
 
             return null;
         }
+
+        // A method declared on a GENERIC type — including a compiler-generated closure or state machine
+        // of a generic method (`<>c__NN`1`, `<>c__DisplayClassN_N`1`). Call sites reach it through a
+        // MemberRef whose Name is a string we do not rewrite, so renaming it strands every caller.
+        // ⛔ Device-proven 2026-09-20 on a real app: renaming the lambda of a generic method and the
+        // local function of a generic method took out two whole features on BOTH desktop and Android
+        // with MissingMethodException at runtime. The tell: after renaming, the ORIGINAL names are
+        // still in the rewritten metadata (those are the dangling MemberRefs), whereas a closure on a
+        // NON-generic type has its old name fully gone.
+        // Nested types of a generic type redeclare its parameters, so HasGenericParameters covers them.
+        static bool DeclaredOnGenericType(MethodDef md)
+            => md.DeclaringType?.HasGenericParameters == true;
 
         static bool HasAttr(MethodDef md, string fullName)
         {
