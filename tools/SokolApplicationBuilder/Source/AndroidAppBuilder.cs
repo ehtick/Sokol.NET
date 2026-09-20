@@ -1173,6 +1173,30 @@ namespace SokolApplicationBuilder
         };
 
         /// <summary>
+        /// Gradle argument that narrows the APK to the same ABIs <c>--device-archs</c> narrowed the
+        /// .NET publish to. Returns "" when nothing was narrowed (and therefore for every AAB).
+        ///
+        /// Without this, <c>--device-archs</c> is unusable for any project whose build.gradle pins
+        /// <c>abiFilters</c>: only the connected device's ABI gets published, but Gradle still tries
+        /// to build every filtered ABI and its CMake step dies on the managed library that was never
+        /// produced - "ninja: error: '.../libs/armeabi-v7a/libApp.so', needed by '.../libsokol.so',
+        /// missing and no known rule to make it" - failing the whole APK step.
+        ///
+        /// <c>android.injected.build.abi</c> is the Android Gradle Plugin's own injected property,
+        /// the one Android Studio sets for "deploy to connected device". It restricts the external
+        /// native build AND packaging, so no project build.gradle has to change.
+        /// </summary>
+        private string GetGradleAbiFilterArg()
+        {
+            var abis = GetTargetArchitectures().Select(a => a.abiName).Distinct().ToArray();
+            if (abis.Length == 0 || abis.Length == AllArchitectures.Length) return "";
+
+            string list = string.Join(",", abis);
+            Log.LogMessage(MessageImportance.High, $"\U0001F4E6 --device-archs: restricting the APK to {list}");
+            return $"-Pandroid.injected.build.abi={list}";
+        }
+
+        /// <summary>
         /// Locates the adb executable via the Android SDK path or system PATH.
         /// Returns an empty string if adb cannot be found.
         /// </summary>
@@ -1214,7 +1238,12 @@ namespace SokolApplicationBuilder
         /// </summary>
         private (string runtimeId, string abiName)[] GetTargetArchitectures()
         {
-            if (!opts.DeviceArchs)
+            // An AAB is what gets uploaded to the Google Play Console, and the bundle must contain
+            // EVERY ABI - Play is what splits it per device, not us. Honouring --device-archs here
+            // would publish a store bundle silently missing armeabi-v7a/x86_64, which Play accepts
+            // and which then simply has no build for those phones. --device-archs is a local
+            // iteration shortcut, so it is ignored outright for a bundle build.
+            if (!opts.DeviceArchs || string.Equals(opts.SubTask, "aab", StringComparison.OrdinalIgnoreCase))
                 return AllArchitectures;
 
             string adbPath = FindAdbPath();
@@ -2063,7 +2092,11 @@ link_directories(${{PREBUILT_LIB_PATH}}/${{ANDROID_ABI}})
             
             // Build CMake arguments
             string cmakeArgs = $"-DAPP_NAME={appName}";
-            
+
+            // Keep Gradle's ABI set in step with what --device-archs actually published. APK only:
+            // BuildAndroidAAB deliberately never narrows (see GetTargetArchitectures).
+            string abiFilterArg = GetGradleAbiFilterArg();
+
             if (!string.IsNullOrEmpty(DETECTED_NDK_VERSION))
             {
                 Log.LogMessage(MessageImportance.High, $"📦 Configuring Gradle to use NDK version: {DETECTED_NDK_VERSION}");
@@ -2076,7 +2109,7 @@ link_directories(${{PREBUILT_LIB_PATH}}/${{ANDROID_ABI}})
                 Log.LogMessage(MessageImportance.Normal, $"Using gradlew path: {gradlewPath}");
 
                 var result = Cli.Wrap(gradlewPath)
-                    .WithArguments($"assembleRelease -PcmakeArgs=\"{cmakeArgs}\" {ndkVersionArg}")
+                    .WithArguments($"assembleRelease -PcmakeArgs=\"{cmakeArgs}\" {ndkVersionArg} {abiFilterArg}")
                     .WithWorkingDirectory(androidPath)
                     .WithStandardOutputPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
                     .WithStandardErrorPipe(PipeTarget.ToDelegate(s => Log.LogError(s)))
@@ -2093,7 +2126,7 @@ link_directories(${{PREBUILT_LIB_PATH}}/${{ANDROID_ABI}})
                 Log.LogMessage(MessageImportance.Normal, $"Using gradlew path: {gradlewPath}");
 
                 var result = Cli.Wrap(gradlewPath)
-                    .WithArguments($"assembleDebug -PcmakeArgs=\"{cmakeArgs}\" {ndkVersionArg}")
+                    .WithArguments($"assembleDebug -PcmakeArgs=\"{cmakeArgs}\" {ndkVersionArg} {abiFilterArg}")
                     .WithWorkingDirectory(androidPath)
                     .WithStandardOutputPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
                     .WithStandardErrorPipe(PipeTarget.ToDelegate(s => Log.LogError(s)))
@@ -3266,7 +3299,11 @@ KeyAlias={keystoreInfo.KeyAlias}
                 }
                 
                 var installResult = Cli.Wrap("adb")
-                    .WithArguments($"-s {selectedDeviceId} install -r \"{apkPath}\"")  
+                    // -t when --device-archs was used: android.injected.build.abi makes the Android
+                    // Gradle Plugin emit its IDE-deploy APK, which carries android:testOnly="true"
+                    // (that is what stops a single-ABI build being distributed). Without -t adb
+                    // refuses it with INSTALL_FAILED_TEST_ONLY.
+                    .WithArguments($"-s {selectedDeviceId} install {(opts.DeviceArchs ? "-t " : "")}-r \"{apkPath}\"")  
                     .WithStandardOutputPipe(PipeTarget.ToDelegate(s => Log.LogMessage(MessageImportance.Normal, s)))
                     .WithStandardErrorPipe(PipeTarget.ToDelegate(s => Log.LogError(s)))
                     .ExecuteAsync()
@@ -3731,11 +3768,27 @@ KeyAlias={keystoreInfo.KeyAlias}
                 string apkSubPath = buildType == "release" ? "release" : "debug";
                 sourceFile = Path.Combine(androidPath, "app", "build", "outputs", "apk", apkSubPath, $"app-{apkSubPath}.apk");
                 fileName = $"{appName}-{buildType}.apk";
+
+                // When --device-archs narrowed the build we pass android.injected.build.abi, and the
+                // Android Gradle Plugin then writes the APK to its IDE-deploy location under
+                // intermediates/ instead of outputs/. Same APK, different folder.
+                if (!File.Exists(sourceFile))
+                {
+                    string injected = Path.Combine(androidPath, "app", "build", "intermediates", "apk", apkSubPath, $"app-{apkSubPath}.apk");
+                    if (File.Exists(injected))
+                    {
+                        Log.LogMessage(MessageImportance.Normal, $"APK found at the injected-ABI location: {injected}");
+                        sourceFile = injected;
+                    }
+                }
             }
 
             if (!File.Exists(sourceFile))
             {
-                Log.LogWarning($"Build output file not found: {sourceFile}");
+                // Must be an ERROR, not a warning. Warning + return leaves whatever is ALREADY in
+                // output/ untouched, so the next install silently deploys the PREVIOUS build - and
+                // an APK gives you no way to tell by looking at it. Fail the build instead.
+                Log.LogError($"Build output file not found: {sourceFile} - the Gradle step produced no {(isAAB ? "AAB" : "APK")}. Refusing to leave a stale artifact in output/.");
                 return;
             }
 
