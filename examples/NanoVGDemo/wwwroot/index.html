@@ -28,7 +28,12 @@
     canvas#canvas
     {
       width: 100vw;
+      /* 100dvh = the VISIBLE viewport. On a mobile browser 100vh is the LARGE viewport
+         (browser UI retracted), so a 100vh canvas runs under the toolbar and its bottom
+         strip can never be shown or touched. 100vh first = fallback for browsers
+         without dvh (Safari < 15.4). */
       height: 100vh;
+      height: 100dvh;
       outline: none;
       margin: 0;
       position: absolute;
