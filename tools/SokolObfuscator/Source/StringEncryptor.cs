@@ -34,6 +34,7 @@ namespace SokolObfuscator
                     if (!config.InScope(ctxOf(m))) continue;
 
                     var instrs = m.Body.Instructions;
+                    bool touched = false;
                     for (int i = 0; i < instrs.Count; i++)
                     {
                         if (instrs[i].OpCode.Code != Code.Ldstr) continue;
@@ -44,7 +45,22 @@ namespace SokolObfuscator
                         instrs.Insert(i + 1, Instruction.Create(OpCodes.Call, decryptor));
                         i++;                                                     // skip the inserted call
                         count++;
+                        touched = true;
                         if (verbose) Console.WriteLine($"  encrypt  \"{Trunc(value)}\"   ({m.DeclaringType.FullName})");
+                    }
+
+                    // ⛔ Every inserted `call` adds 5 bytes to the body, which pushes branch targets
+                    // further apart. A short branch (br.s and friends) encodes its target in ONE signed
+                    // byte, so in a large method the extra bytes can put the target out of range and the
+                    // module writer aborts the WHOLE build with "Target instruction is too far away for
+                    // a short branch". This is not hypothetical: it reproduced on the first big app this
+                    // was pointed at, on a long string-heavy Draw method. Re-form the branches —
+                    // SimplifyBranches widens every one to the long encoding, which is always valid, and
+                    // OptimizeBranches then shrinks back only the ones that provably still fit.
+                    if (touched)
+                    {
+                        m.Body.SimplifyBranches();
+                        m.Body.OptimizeBranches();
                     }
                 }
             }
