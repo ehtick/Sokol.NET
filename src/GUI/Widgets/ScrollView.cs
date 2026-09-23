@@ -4,10 +4,16 @@ namespace Sokol.GUI;
 
 /// <summary>
 /// Scrollable container with vertical (and optionally horizontal) scrollbars.
+/// <para><see cref="ScrollX"/> is measured from the content's START edge: the left in left-to-right, the RIGHT in
+/// right-to-left, where the content is laid out mirrored and begins at its right edge. So 0 always shows the start
+/// (like a browser's RTL <c>scrollLeft</c>), and the start stays in view when the content grows. The physical offset
+/// used for drawing, the scrollbar and <see cref="ScrollOffset"/> is derived from it; in left-to-right the two are
+/// the same number.</para>
 /// </summary>
 public class ScrollView : Panel
 {
     private float _scrollX, _scrollY;
+    private float _maxScrollX;   // the last Draw's horizontal scroll range — maps an RTL ScrollX to a physical offset between draws
     private bool  _dragV, _dragH;
     private float _dragStartY, _dragStartScrollY;
     private float _dragStartX, _dragStartScrollX;
@@ -68,6 +74,8 @@ public class ScrollView : Panel
         float maxScrollX = MathF.Max(0, contentW - Bounds.Width  + (showV ? sb : 0));
         _scrollY = MathF.Min(_scrollY, maxScrollY);
         _scrollX = MathF.Min(_scrollX, maxScrollX);
+        _maxScrollX = maxScrollX;
+        float physX = PhysicalScrollX(rtl);
 
         // RTL: vertical scrollbar goes on the left
         float sbLeft  = showV && rtl  ? sb : 0;
@@ -78,7 +86,7 @@ public class ScrollView : Panel
 
         renderer.Save();
         renderer.IntersectClip(viewport);
-        renderer.Translate(sbLeft - _scrollX, -_scrollY);
+        renderer.Translate(sbLeft - physX, -_scrollY);
 
         if (Content != null)
         {
@@ -112,7 +120,7 @@ public class ScrollView : Panel
         {
             float cW = MathF.Max(post.X, 1f);
             ScrollbarRenderer.DrawHorizontal(renderer, sbLeft, viewport.Height, viewport.Width, sb,
-                _scrollX, cW, viewport.Width, _sbHoveredH);
+                physX, cW, viewport.Width, _sbHoveredH);
         }
     }
 
@@ -129,6 +137,8 @@ public class ScrollView : Panel
     /// clamped to the content extent. Returns true if it actually moved.</summary>
     public bool DragScrollBy(float dx, float dy)
     {
+        // dx is a physical pan (content moves left for dx > 0); in RTL ScrollX runs the other way (see the class summary)
+        bool rtl = ResolvedFlowDirection == FlowDirection.RightToLeft;
         bool moved = false;
         if (CanScrollVertical && ContentHeight > Bounds.Height)
         {
@@ -138,15 +148,29 @@ public class ScrollView : Panel
         }
         if (CanScrollHorizontal && ContentWidth > Bounds.Width)
         {
-            float max = MathF.Max(0f, ContentWidth - Bounds.Width);
-            float nx  = MathF.Min(max, MathF.Max(0f, _scrollX + dx));
+            float max = rtl ? RtlMaxScrollX() : MathF.Max(0f, ContentWidth - Bounds.Width);
+            float nx  = MathF.Min(max, MathF.Max(0f, _scrollX + (rtl ? -dx : dx)));
             if (nx != _scrollX) { _scrollX = nx; moved = true; }
         }
         return moved;
     }
 
-    // ScrollOffset tells ScreenPosition to subtract our scroll from children's positions.
-    public override Vector2 ScrollOffset => new Vector2(_scrollX, _scrollY);
+    // ScrollOffset tells ScreenPosition to subtract our scroll from children's positions — the PHYSICAL offset.
+    // (No horizontal range — nearly every vertical list — means both are the same: skip the direction walk, it runs per hit-test.)
+    public override Vector2 ScrollOffset =>
+        new Vector2(_maxScrollX > 0f ? PhysicalScrollX(ResolvedFlowDirection == FlowDirection.RightToLeft) : _scrollX, _scrollY);
+
+    /// <summary>The physical offset of the content's left edge: <see cref="ScrollX"/> itself in LTR; in RTL, where
+    /// ScrollX counts from the right edge, the rest of the range (the last Draw's).</summary>
+    private float PhysicalScrollX(bool rtl) => rtl ? MathF.Max(0f, _maxScrollX - _scrollX) : _scrollX;
+
+    /// <summary>The horizontal scroll range exactly as <see cref="Draw"/> computes it (a vertical scrollbar narrows
+    /// the viewport) — the RTL mapping must use the same range, or the start edge would sit a scrollbar short.</summary>
+    private float RtlMaxScrollX()
+    {
+        bool showV = CanScrollVertical && ContentHeight > Bounds.Height;
+        return MathF.Max(0f, ContentWidth - Bounds.Width + (showV ? ThemeManager.Current.ScrollBarWidth : 0f));
+    }
 
     // ─── Hit testing ─────────────────────────────────────────────────────
     public override Widget? HitTestDeep(Vector2 screenPoint)
@@ -182,7 +206,10 @@ public class ScrollView : Panel
     {
         float spd = ThemeManager.Current.ScrollSpeed;
         if (CanScrollVertical)   ScrollY = MathF.Max(0, _scrollY - e.Scroll.Y * spd);
-        if (CanScrollHorizontal) ScrollX = MathF.Max(0, _scrollX - e.Scroll.X * spd);
+        if (CanScrollHorizontal)   // the wheel pans physically; RTL's ScrollX runs the other way
+            ScrollX = ResolvedFlowDirection == FlowDirection.RightToLeft
+                ? MathF.Min(RtlMaxScrollX(), _scrollX + e.Scroll.X * spd)
+                : MathF.Max(0, _scrollX - e.Scroll.X * spd);
         return true;
     }
 
@@ -239,7 +266,10 @@ public class ScrollView : Panel
             float cW = MathF.Max(ContentWidth, 1f);
             float ratio = Bounds.Width / cW;
             float dx = (e.LocalPosition.X - _dragStartX) / ratio;
-            ScrollX = MathF.Max(0, _dragStartScrollX + dx);
+            // the thumb moves physically; in RTL ScrollX counts from the right, so it runs the other way
+            ScrollX = ResolvedFlowDirection == FlowDirection.RightToLeft
+                ? MathF.Max(0, _dragStartScrollX - dx)
+                : MathF.Max(0, _dragStartScrollX + dx);
             return true;
         }
         return false;
