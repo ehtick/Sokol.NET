@@ -16,14 +16,14 @@ public static class BidiHelper
     public static string ToVisual(string logicalText)
     {
         if (string.IsNullOrEmpty(logicalText)) return logicalText;
-        if (!ContainsRTL(logicalText)) return logicalText;
+        if (!ContainsRTL(logicalText)) return StripMarks(logicalText);
 
         // Process each paragraph (line) independently so each gets its own
         // paragraph embedding level.  Without this, a single RTL line makes
         // ALL subsequent neutral-only lines (e.g. "?") inherit RTL order.
         var lines = logicalText.Split('\n');
         if (lines.Length <= 1)
-            return Bidi.LogicalToVisual(ArabicShaper.Shape(logicalText));
+            return StripMarks(Bidi.LogicalToVisual(ArabicShaper.Shape(logicalText)));
 
         var sb = new System.Text.StringBuilder(logicalText.Length);
         for (int i = 0; i < lines.Length; i++)
@@ -32,8 +32,18 @@ public static class BidiHelper
             var line = lines[i];
             sb.Append(ContainsRTL(line) ? Bidi.LogicalToVisual(ArabicShaper.Shape(line)) : line);
         }
-        return sb.ToString();
+        return StripMarks(sb.ToString());
     }
+
+    /// <summary>
+    /// The directional marks (U+200E LRM, U+200F RLM) steer the reordering but have no visual form; the fonts carry
+    /// no empty glyph for them, so a mark left in the visual string was drawn as a bar before the text. Also the
+    /// minus sign .NET formats for he/ar cultures ("\u200E-").
+    /// </summary>
+    static string StripMarks(string visual)
+        => visual.IndexOf('\u200E') < 0 && visual.IndexOf('\u200F') < 0
+            ? visual
+            : visual.Replace("\u200E", "").Replace("\u200F", "");
 
     /// <summary>
     /// Quick scan for any Unicode RTL codepoints to skip BiDi processing on pure-LTR text.
@@ -67,6 +77,10 @@ public static class BidiHelper
         for (int i = 0; i < text.Length; i++)
         {
             char c = text[i];
+            // Directional marks are strong characters too (UAX #9): an app puts U+200E before a line that must
+            // read left-to-right although it opens with a Hebrew/Arabic name ("{name}'s turn").
+            if (c == '\u200E') return false;   // LRM
+            if (c == '\u200F') return true;    // RLM
             // RTL strong characters
             if (c >= '\u0590' && c <= '\u05FF') return true;
             if (c >= '\u0600' && c <= '\u06FF') return true;
