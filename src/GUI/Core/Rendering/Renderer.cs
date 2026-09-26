@@ -737,7 +737,7 @@ public sealed class Renderer
         foreach (var line in BreakLogicalLines(text, maxW))
         {
             if (line.Length > 0) nvgTextBox(_vg, x, lineY, maxW, BidiHelper.ToVisual(line), null);
-            lineY += metrics.lineHeight;
+            lineY += metrics.lineHeight * _lineHeight;   // the SetLineHeight factor, as nvgTextBox applies it to LTR rows
         }
     }
 
@@ -799,7 +799,9 @@ public sealed class Renderer
             float widest = 0f;
             foreach (var line in lines)
                 if (line.Length > 0) widest = MathF.Max(widest, MeasureText(BidiHelper.ToVisual(line)));
-            return (widest, lines.Count * metrics.lineHeight);
+            // As nvgTextBoxBounds measures LTR rows: every row but the last steps by lineHeight × the SetLineHeight
+            // factor, the last row is one line tall (so a factor of 1 is lines × lineHeight, as before).
+            return (widest, lines.Count == 0 ? 0f : (lines.Count - 1) * metrics.lineHeight * _lineHeight + metrics.lineHeight);
         }
         var visual = BidiHelper.ToVisual(text);
         unsafe

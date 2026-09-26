@@ -227,7 +227,7 @@ public class Label : Widget
             foreach (var line in renderer.BreakLogicalLines(text, maxW))
             {
                 if (line.Length > 0) _lines.Add((BidiHelper.ToVisual(line), lineY));
-                lineY += m.lineHeight;
+                lineY += step;   // honour the SetLineHeight factor, like the LTR rows below
             }
         }
 
