@@ -14,6 +14,7 @@ public class ScrollView : Panel
 {
     private float _scrollX, _scrollY;
     private float _maxScrollX;   // the last Draw's horizontal scroll range — maps an RTL ScrollX to a physical offset between draws
+    private float _sbLeft;       // the last Draw's content shift for a vertical scrollbar on the LEFT (RTL) — hit-testing must shift the same way
     private bool  _dragV, _dragH;
     private float _dragStartY, _dragStartScrollY;
     private float _dragStartX, _dragStartScrollX;
@@ -80,6 +81,7 @@ public class ScrollView : Panel
         // RTL: vertical scrollbar goes on the left
         float sbLeft  = showV && rtl  ? sb : 0;
         float sbRight = showV && !rtl ? sb : 0;
+        _sbLeft = sbLeft;
         var viewport = new Rect(sbLeft, 0,
             Bounds.Width  - sbLeft - sbRight,
             Bounds.Height - (showH ? sb : 0));
@@ -157,8 +159,11 @@ public class ScrollView : Panel
 
     // ScrollOffset tells ScreenPosition to subtract our scroll from children's positions — the PHYSICAL offset.
     // (No horizontal range — nearly every vertical list — means both are the same: skip the direction walk, it runs per hit-test.)
+    // ⛔ Minus the RTL scrollbar shift: Draw moves the content right by the left-side scrollbar's width, and without it here
+    // every child was hit one scrollbar-width LEFT of where it is drawn — a right-edge checkbox in Hebrew Settings only
+    // toggled when touched to the left of its box (owner, 2026-09-26). 0 in LTR.
     public override Vector2 ScrollOffset =>
-        new Vector2(_maxScrollX > 0f ? PhysicalScrollX(ResolvedFlowDirection == FlowDirection.RightToLeft) : _scrollX, _scrollY);
+        new Vector2((_maxScrollX > 0f ? PhysicalScrollX(ResolvedFlowDirection == FlowDirection.RightToLeft) : _scrollX) - _sbLeft, _scrollY);
 
     /// <summary>The physical offset of the content's left edge: <see cref="ScrollX"/> itself in LTR; in RTL, where
     /// ScrollX counts from the right edge, the rest of the range (the last Draw's).</summary>
