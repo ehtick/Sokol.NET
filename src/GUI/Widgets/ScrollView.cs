@@ -23,6 +23,10 @@ public class ScrollView : Panel
     public bool CanScrollHorizontal { get; set; } = true;
     public bool CanScrollVertical   { get; set; } = true;
 
+    /// <summary>Draw the sunken input-box frame. Off: no frame — only <see cref="Panel.BackgroundColor"/> is filled,
+    /// when set — so scrolling body text doesn't read as a text field.</summary>
+    public bool DrawFrame { get; set; } = true;
+
     public float ScrollX { get => _scrollX; set => _scrollX = MathF.Max(0, value); }
     public float ScrollY { get => _scrollY; set => _scrollY = MathF.Max(0, value); }
 
@@ -47,17 +51,21 @@ public class ScrollView : Panel
 
         // NanoGUI-style sunken container
         float cr = theme.InputCornerRadius;
-        var bg = BackgroundColor ?? theme.InputBackColor;
-        renderer.FillRoundedRect(bounds, cr, bg);
-        var svInset = renderer.BoxGradient(
-            new Rect(1, 2, bounds.Width - 2, bounds.Height - 2), cr, 4f,
-            new UIColor(1f, 1f, 1f, 0.06f),
-            new UIColor(0f, 0f, 0f, 0.15f));
-        renderer.FillRoundedRectWithPaint(bounds, cr, svInset);
-        renderer.StrokeRoundedRect(
-            new Rect(0.5f, 0.5f, bounds.Width - 1f, bounds.Height - 1f),
-            MathF.Max(cr - 0.5f, 0f), 1f,
-            IsFocused ? theme.AccentColor : UIColor.Black.WithAlpha(0.188f));
+        if (DrawFrame)
+        {
+            var bg = BackgroundColor ?? theme.InputBackColor;
+            renderer.FillRoundedRect(bounds, cr, bg);
+            var svInset = renderer.BoxGradient(
+                new Rect(1, 2, bounds.Width - 2, bounds.Height - 2), cr, 4f,
+                new UIColor(1f, 1f, 1f, 0.06f),
+                new UIColor(0f, 0f, 0f, 0.15f));
+            renderer.FillRoundedRectWithPaint(bounds, cr, svInset);
+            renderer.StrokeRoundedRect(
+                new Rect(0.5f, 0.5f, bounds.Width - 1f, bounds.Height - 1f),
+                MathF.Max(cr - 0.5f, 0f), 1f,
+                IsFocused ? theme.AccentColor : UIColor.Black.WithAlpha(0.188f));
+        }
+        else if (BackgroundColor is { } bgOnly) renderer.FillRoundedRect(bounds, cr, bgOnly);
 
         // ⛔ Performance: the content's preferred size is a full measure of everything in it, on screen or
         // not — take it ONCE before the layout below (it was evaluated up to six times here), and once more
