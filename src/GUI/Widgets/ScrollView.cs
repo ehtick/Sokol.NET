@@ -23,9 +23,10 @@ public class ScrollView : Panel
     public bool CanScrollHorizontal { get; set; } = true;
     public bool CanScrollVertical   { get; set; } = true;
 
-    /// <summary>Draw the sunken input-box frame. Off: no frame — only <see cref="Panel.BackgroundColor"/> is filled,
-    /// when set — so scrolling body text doesn't read as a text field.</summary>
-    public bool DrawFrame { get; set; } = true;
+    /// <summary>Draw the sunken frame only while the content overflows (a scrollbar shows). When everything fits there
+    /// is nothing to scroll, and the frame only makes body text read as a text field; then only
+    /// <see cref="Panel.BackgroundColor"/> is filled, when set. Off (default): the frame is always drawn.</summary>
+    public bool FrameOnlyWhenScrolling { get; set; }
 
     public float ScrollX { get => _scrollX; set => _scrollX = MathF.Max(0, value); }
     public float ScrollY { get => _scrollY; set => _scrollY = MathF.Max(0, value); }
@@ -49,9 +50,20 @@ public class ScrollView : Panel
         var bounds = new Rect(0, 0, Bounds.Width, Bounds.Height);
         float sb   = theme.ScrollBarWidth;
 
+        // ⛔ Performance: the content's preferred size is a full measure of everything in it, on screen or
+        // not — take it ONCE before the layout below (it was evaluated up to six times here), and once more
+        // after it for the scrollbars, which have always shown the post-layout size.
+        var   pre      = ContentSize;
+        float contentH = pre.Y, contentW = pre.X;
+
+        // Clip to viewport (shrunk for scrollbars if visible)
+        bool showV = CanScrollVertical   && contentH > Bounds.Height;
+        bool showH = CanScrollHorizontal && contentW > Bounds.Width;
+        bool rtl   = ResolvedFlowDirection == FlowDirection.RightToLeft;
+
         // NanoGUI-style sunken container
         float cr = theme.InputCornerRadius;
-        if (DrawFrame)
+        if (!FrameOnlyWhenScrolling || showV || showH)
         {
             var bg = BackgroundColor ?? theme.InputBackColor;
             renderer.FillRoundedRect(bounds, cr, bg);
@@ -66,17 +78,6 @@ public class ScrollView : Panel
                 IsFocused ? theme.AccentColor : UIColor.Black.WithAlpha(0.188f));
         }
         else if (BackgroundColor is { } bgOnly) renderer.FillRoundedRect(bounds, cr, bgOnly);
-
-        // ⛔ Performance: the content's preferred size is a full measure of everything in it, on screen or
-        // not — take it ONCE before the layout below (it was evaluated up to six times here), and once more
-        // after it for the scrollbars, which have always shown the post-layout size.
-        var   pre      = ContentSize;
-        float contentH = pre.Y, contentW = pre.X;
-
-        // Clip to viewport (shrunk for scrollbars if visible)
-        bool showV = CanScrollVertical   && contentH > Bounds.Height;
-        bool showH = CanScrollHorizontal && contentW > Bounds.Width;
-        bool rtl   = ResolvedFlowDirection == FlowDirection.RightToLeft;
 
         // Clamp scroll offset so content doesn't stay shifted when viewport grows
         float maxScrollY = MathF.Max(0, contentH - Bounds.Height + (showH ? sb : 0));
