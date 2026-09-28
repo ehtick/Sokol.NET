@@ -208,7 +208,19 @@ public class TextBox : Widget
 
         // Text or placeholder
         if (_sb.Length == 0 && !string.IsNullOrEmpty(Placeholder))
-            renderer.DrawText(inner.X, cy, Placeholder, PlaceholderColor ?? theme.PlaceholderColor);
+        {
+            // _alignOffset is measured on the EMPTY text (it places the caret), so a right-aligned (RTL) or centred box put
+            // the placeholder's start at the far edge / middle — outside the clip in RTL, where it never showed (Hebrew and
+            // Arabic, 2026-09-28). Align the placeholder by its own width instead; the caret and hit-testing are unchanged.
+            float phW = renderer.MeasureText(Placeholder);
+            float phOffset = effAlign switch
+            {
+                TextAlign.Center => MathF.Max(0f, (inner.Width - phW) * 0.5f),
+                TextAlign.Right  => MathF.Max(0f, inner.Width - phW),
+                _                => 0f,
+            };
+            renderer.DrawText(inner.X + phOffset - _alignOffset, cy, Placeholder, PlaceholderColor ?? theme.PlaceholderColor);
+        }
         else
             renderer.DrawText(inner.X, cy, display, ForeColor ?? theme.TextColor);
 
